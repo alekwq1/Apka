@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Delivery Assistant MVP</string>
+    <string name="accessibility_description">Odczytuje tekst widocznej oferty kurierskiej i pokazuje lokalnie wyliczoną opłacalność. Nie klika i nie akceptuje zleceń.</string>
+</resources>
