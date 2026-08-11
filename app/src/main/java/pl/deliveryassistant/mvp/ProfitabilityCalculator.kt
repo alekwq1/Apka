@@ -13,20 +13,26 @@ object ProfitabilityCalculator {
         currentMinuteOfDay: Int
     ): Profitability {
         val duration = resolveDuration(offer, currentMinuteOfDay)
-        val net = offer.amountPln - offer.distanceKm * rules.vehicleCostPerKm
-        val perKm = if (offer.distanceKm > 0.0) net / offer.distanceKm else null
-        val perHour = duration.minutes?.takeIf { it > 0 }?.let { net / it * 60.0 }
+
+        // Progi nie maja prawa zatrzymac analizy oferty. Nawet gdy do kalkulatora
+        // trafi nieprawidlowa wartosc, uzywamy bezpiecznego fallbacku.
+        val vehicleCostPerKm = rules.vehicleCostPerKm.nonNegativeOr(0.35)
+        val minimumPerKm = rules.minimumNetPerKm.nonNegativeOr(2.50)
+        val minimumPerHour = rules.minimumNetPerHour.nonNegativeOr(35.0)
+
+        val afterCosts = offer.amountPln - offer.distanceKm * vehicleCostPerKm
+        val perKm = if (offer.distanceKm > 0.0) afterCosts / offer.distanceKm else null
+        val perHour = duration.minutes?.takeIf { it > 0 }?.let { afterCosts / it * 60.0 }
 
         val profitable = if (perKm != null && perHour != null) {
-            perKm >= rules.minimumNetPerKm &&
-                perHour >= rules.minimumNetPerHour
+            perKm >= minimumPerKm && perHour >= minimumPerHour
         } else {
             null
         }
 
         return Profitability(
             grossPln = offer.amountPln,
-            netPln = net,
+            netPln = afterCosts,
             distanceKm = offer.distanceKm,
             durationMinutes = duration.minutes,
             netPerKm = perKm,
@@ -79,10 +85,13 @@ object ProfitabilityCalculator {
         val target = targetMinuteOfDay.floorModDay()
         val delta = (target - now + MINUTES_PER_DAY) % MINUTES_PER_DAY
 
-        // Gdy termin wypada dokładnie teraz, przyjmujemy 1 minutę,
-        // żeby nie dzielić przez zero przy stawce godzinowej.
+        // Gdy termin wypada dokladnie teraz, przyjmujemy 1 minute,
+        // zeby nie dzielic przez zero przy stawce godzinowej.
         return if (delta == 0) 1 else delta
     }
+
+    private fun Double.nonNegativeOr(defaultValue: Double): Double =
+        takeIf { it.isFinite() && it >= 0.0 } ?: defaultValue
 
     private fun Int.floorModDay(): Int =
         ((this % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY

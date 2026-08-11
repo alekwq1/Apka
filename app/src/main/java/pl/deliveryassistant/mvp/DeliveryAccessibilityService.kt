@@ -16,13 +16,27 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import java.time.LocalTime
 
 class DeliveryAccessibilityService : AccessibilityService() {
+
+    companion object {
+        @Volatile
+        private var activeInstance: DeliveryAccessibilityService? = null
+
+        /**
+         * AccessibilityService moze wylaczyc sam siebie. Activity uzywa tego do
+         * przycisku "Wylacz analizowanie ofert" bez szukania uslugi w ustawieniach.
+         */
+        fun requestDisable(): Boolean {
+            val service = activeInstance ?: return false
+            service.disableSelf()
+            return true
+        }
+    }
 
     private lateinit var overlay: OverlayController
     private lateinit var prefs: AppPrefs
@@ -47,6 +61,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        activeInstance = this
         prefs = AppPrefs(this)
         overlay = OverlayController(this)
         recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
@@ -74,6 +89,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
     override fun onInterrupt() = Unit
 
     override fun onDestroy() {
+        if (activeInstance === this) activeInstance = null
         handler.removeCallbacks(pollRunnable)
         pendingImmediateScan?.let { handler.removeCallbacks(it) }
         pendingThrottledScan?.let { handler.removeCallbacks(it) }
@@ -223,13 +239,13 @@ class DeliveryAccessibilityService : AccessibilityService() {
         scanner
             .process(InputImage.fromBitmap(bitmap, 0))
             .addOnSuccessListener { result ->
-                // Zamiast polegać wyłącznie na result.text, składamy tekst z linii
-                // posortowanych wg położenia na ekranie. To pomaga przy kartach ofert,
-                // gdzie OCR czasem miesza kolejność elementów.
-                val text = buildOcrText(result)
+                // Probujemy kilku reprezentacji tekstu z ML Kit. Gdy OCR pomiesza
+                // kolejnosc linii, parser nadal ma szanse znalezc kompletna oferte.
+                val resolved = OcrTextResolver.resolve(result)
+                val recognitionText = OcrTextResolver.recognitionText(result)
                 val configuredPackage = prefs.targetPackage.trim()
 
-                val recognizedName = recognizeCourier(sourcePackageName, text)
+                val recognizedName = recognizeCourier(sourcePackageName, recognitionText)
                     ?: if (
                         configuredPackage.isNotBlank() &&
                         sourcePackageName == configuredPackage
@@ -239,17 +255,14 @@ class DeliveryAccessibilityService : AccessibilityService() {
                         null
                     }
 
-                if (recognizedName != null) {
-                    val offer = OfferParser.parse(text)
-                    if (offer != null) {
-                        misses = 0
-                        showOffer(
-                            offer = offer,
-                            applicationName = recognizedName,
-                            packageName = sourcePackageName
-                        )
-                        return@addOnSuccessListener
-                    }
+                if (recognizedName != null && resolved != null) {
+                    misses = 0
+                    showOffer(
+                        offer = resolved.offer,
+                        applicationName = recognizedName,
+                        packageName = sourcePackageName
+                    )
+                    return@addOnSuccessListener
                 }
 
                 if (!scanAccessibilityOnly(hideOnFailure = false)) {
@@ -265,25 +278,6 @@ class DeliveryAccessibilityService : AccessibilityService() {
                 bitmap.recycle()
                 ocrBusy = false
             }
-    }
-
-    private fun buildOcrText(result: Text): String {
-        val lines = result.textBlocks
-            .flatMap { it.lines }
-            .map { line ->
-                val bounds = line.boundingBox
-                OcrLine(
-                    text = line.text.trim(),
-                    top = bounds?.top ?: Int.MAX_VALUE,
-                    left = bounds?.left ?: Int.MAX_VALUE
-                )
-            }
-            .filter { it.text.isNotBlank() }
-            .sortedWith(compareBy<OcrLine> { it.top }.thenBy { it.left })
-
-        if (lines.isEmpty()) return result.text
-
-        return lines.joinToString("\n") { it.text }
     }
 
     private fun prepareScreenshot(
@@ -633,9 +627,5 @@ class DeliveryAccessibilityService : AccessibilityService() {
         val bottom: Int
     )
 
-    private data class OcrLine(
-        val text: String,
-        val top: Int,
-        val left: Int
-    )
+
 }

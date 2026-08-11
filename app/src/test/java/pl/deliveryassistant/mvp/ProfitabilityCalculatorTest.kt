@@ -102,4 +102,44 @@ class ProfitabilityCalculatorTest {
         assertNull(result.netPerHour)
         assertNull(result.profitable)
     }
+    @Test
+    fun veryHighThresholdsStillReturnVisibleUnprofitableResult() {
+        val result = ProfitabilityCalculator.calculate(
+            offer = Offer(
+                amountPln = 25.42,
+                distanceKm = 5.4,
+                durationMinutes = 26
+            ),
+            rules = ProfitabilityCalculator.Rules(
+                vehicleCostPerKm = 0.35,
+                minimumNetPerKm = 999.0,
+                minimumNetPerHour = 999.0
+            ),
+            currentMinuteOfDay = 12 * 60
+        )
+
+        assertEquals(26, result.durationMinutes)
+        assertFalse(result.profitable!!)
+    }
+
+    @Test
+    fun invalidRulesFallBackInsteadOfPoisoningCalculation() {
+        val result = ProfitabilityCalculator.calculate(
+            offer = Offer(
+                amountPln = 25.42,
+                distanceKm = 5.4,
+                durationMinutes = 26
+            ),
+            rules = ProfitabilityCalculator.Rules(
+                vehicleCostPerKm = Double.NaN,
+                minimumNetPerKm = Double.POSITIVE_INFINITY,
+                minimumNetPerHour = -1.0
+            ),
+            currentMinuteOfDay = 12 * 60
+        )
+
+        assertEquals(23.53, result.netPln, 0.01)
+        assertEquals(26, result.durationMinutes)
+    }
+
 }

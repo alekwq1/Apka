@@ -10,30 +10,42 @@ class AppPrefs(context: Context) {
         set(value) = prefs.edit().putString("target_package", value.trim()).apply()
 
     var vehicleCostPerKm: Double
-        get() = getDouble("vehicle_cost_km", 0.35)
-        set(value) = putDouble("vehicle_cost_km", value)
+        get() = getNonNegativeDouble("vehicle_cost_km", DEFAULT_VEHICLE_COST_PER_KM)
+        set(value) = putNonNegativeDouble("vehicle_cost_km", value, DEFAULT_VEHICLE_COST_PER_KM)
 
     var minimumNetPerKm: Double
-        get() = getDouble("min_net_km", 2.50)
-        set(value) = putDouble("min_net_km", value)
+        get() = getNonNegativeDouble("min_net_km", DEFAULT_MIN_PER_KM)
+        set(value) = putNonNegativeDouble("min_net_km", value, DEFAULT_MIN_PER_KM)
 
     var minimumNetPerHour: Double
-        get() = getDouble("min_net_hour", 35.0)
-        set(value) = putDouble("min_net_hour", value)
+        get() = getNonNegativeDouble("min_net_hour", DEFAULT_MIN_PER_HOUR)
+        set(value) = putNonNegativeDouble("min_net_hour", value, DEFAULT_MIN_PER_HOUR)
 
     /**
-     * Stare wersje zapisywały wartości jako Float, stąd np. 0.349999994...
-     * Czytamy oba formaty, a nowe wartości zapisujemy jako String z pełną precyzją Double.
+     * Stare wersje zapisywaly wartosci jako Float, stad np. 0.349999994...
+     * Czytamy Number i String. Nieprawidlowa, ujemna, NaN lub nieskonczona
+     * wartosc nie moze zatrzymac analizy - wracamy wtedy do wartosci domyslnej.
      */
-    private fun getDouble(key: String, defaultValue: Double): Double {
-        return when (val stored = prefs.all[key]) {
+    private fun getNonNegativeDouble(key: String, defaultValue: Double): Double {
+        val parsed = when (val stored = prefs.all[key]) {
             is Number -> stored.toDouble()
-            is String -> stored.toDoubleOrNull() ?: defaultValue
-            else -> defaultValue
+            is String -> stored.toDoubleOrNull()
+            else -> null
         }
+
+        return parsed
+            ?.takeIf { it.isFinite() && it >= 0.0 }
+            ?: defaultValue
     }
 
-    private fun putDouble(key: String, value: Double) {
-        prefs.edit().putString(key, value.toString()).apply()
+    private fun putNonNegativeDouble(key: String, value: Double, defaultValue: Double) {
+        val safe = value.takeIf { it.isFinite() && it >= 0.0 } ?: defaultValue
+        prefs.edit().putString(key, safe.toString()).apply()
+    }
+
+    private companion object {
+        const val DEFAULT_VEHICLE_COST_PER_KM = 0.35
+        const val DEFAULT_MIN_PER_KM = 2.50
+        const val DEFAULT_MIN_PER_HOUR = 35.0
     }
 }
