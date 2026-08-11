@@ -1,6 +1,7 @@
 package pl.deliveryassistant.mvp
 
 object ProfitabilityCalculator {
+
     data class Rules(
         val vehicleCostPerKm: Double = 0.35,
         val minimumNetPerKm: Double = 2.50,
@@ -14,35 +15,101 @@ object ProfitabilityCalculator {
         rules: Rules,
         currentMinuteOfDay: Int
     ): Profitability {
-        val duration = resolveDuration(offer, currentMinuteOfDay)
-        val net = offer.amountPln - offer.distanceKm * rules.vehicleCostPerKm
-        val perKm = if (offer.distanceKm > 0.0) net / offer.distanceKm else null
-        val perHour = duration.minutes?.takeIf { it > 0 }?.let { net / it * 60.0 }
+
+        val duration = resolveDuration(
+            offer = offer,
+            currentMinuteOfDay = currentMinuteOfDay
+        )
+
+        /*
+         * Zabezpieczamy wszystkie ustawienia.
+         *
+         * Jeśli z SharedPreferences / formularza trafi:
+         * NaN, Infinity albo wartość ujemna,
+         * kalkulator nadal działa i używa wartości domyślnej.
+         */
+        val vehicleCostPerKm =
+            rules.vehicleCostPerKm.nonNegativeOr(DEFAULT_VEHICLE_COST)
+
+        val minimumPerKm =
+            rules.minimumNetPerKm.nonNegativeOr(DEFAULT_MIN_PER_KM)
+
+        val tolerancePerKm =
+            rules.toleranceNetPerKm.nonNegativeOr(DEFAULT_TOLERANCE_PER_KM)
+
+        val minimumPerHour =
+            rules.minimumNetPerHour.nonNegativeOr(DEFAULT_MIN_PER_HOUR)
+
+        val tolerancePerHour =
+            rules.toleranceNetPerHour.nonNegativeOr(DEFAULT_TOLERANCE_PER_HOUR)
+
+        /*
+         * "Po kosztach" =
+         * kwota oferty - koszt przejechania kilometrów.
+         *
+         * To NIE jest netto podatkowe.
+         */
+        val afterCosts =
+            offer.amountPln -
+                offer.distanceKm * vehicleCostPerKm
+
+        val perKm =
+            if (offer.distanceKm > 0.0) {
+                afterCosts / offer.distanceKm
+            } else {
+                null
+            }
+
+        val perHour =
+            duration.minutes
+                ?.takeIf { it > 0 }
+                ?.let { minutes ->
+                    afterCosts / minutes * 60.0
+                }
 
         val status = resolveStatus(
             perKm = perKm,
             perHour = perHour,
-            rules = rules
+            minimumPerKm = minimumPerKm,
+            tolerancePerKm = tolerancePerKm,
+            minimumPerHour = minimumPerHour,
+            tolerancePerHour = tolerancePerHour
         )
 
+        /*
+         * Pole profitable zostawiamy dla zgodności
+         * ze starszą częścią aplikacji.
+         *
+         * true  = zielone
+         * false = żółte lub czerwone
+         * null  = brak czasu
+         */
         val profitable = when (status) {
-            ProfitabilityStatus.PROFITABLE -> true
+
+            ProfitabilityStatus.PROFITABLE ->
+                true
+
             ProfitabilityStatus.ALMOST_PROFITABLE,
-            ProfitabilityStatus.UNPROFITABLE -> false
-            ProfitabilityStatus.NO_TIME -> null
+            ProfitabilityStatus.UNPROFITABLE ->
+                false
+
+            ProfitabilityStatus.NO_TIME ->
+                null
         }
 
         return Profitability(
             grossPln = offer.amountPln,
-            netPln = net,
+            netPln = afterCosts,
             distanceKm = offer.distanceKm,
             durationMinutes = duration.minutes,
             netPerKm = perKm,
             netPerHour = perHour,
             profitable = profitable,
             status = status,
-            pickupTimeMinutesOfDay = offer.pickupTimeMinutesOfDay,
-            deliveryTimeMinutesOfDay = offer.deliveryTimeMinutesOfDay,
+            pickupTimeMinutesOfDay =
+                offer.pickupTimeMinutesOfDay,
+            deliveryTimeMinutesOfDay =
+                offer.deliveryTimeMinutesOfDay,
             durationSource = duration.source
         )
     }
@@ -50,27 +117,62 @@ object ProfitabilityCalculator {
     private fun resolveStatus(
         perKm: Double?,
         perHour: Double?,
-        rules: Rules
+        minimumPerKm: Double,
+        tolerancePerKm: Double,
+        minimumPerHour: Double,
+        tolerancePerHour: Double
     ): ProfitabilityStatus {
-        if (perKm == null || perHour == null) {
+
+        /*
+         * Bez czasu nie jesteśmy w stanie uczciwie
+         * policzyć stawki godzinowej.
+         */
+        if (
+            perKm == null ||
+            perHour == null ||
+            !perKm.isFinite() ||
+            !perHour.isFinite()
+        ) {
             return ProfitabilityStatus.NO_TIME
         }
 
-        val minimumKm = rules.minimumNetPerKm.coerceAtLeast(0.0)
-        val minimumHour = rules.minimumNetPerHour.coerceAtLeast(0.0)
-        val toleranceKm = rules.toleranceNetPerKm.coerceAtLeast(0.0)
-        val toleranceHour = rules.toleranceNetPerHour.coerceAtLeast(0.0)
-
+        /*
+         * ZIELONY:
+         *
+         * oba wymagania spełnione.
+         */
         if (
-            perKm >= minimumKm &&
-            perHour >= minimumHour
+            perKm >= minimumPerKm &&
+            perHour >= minimumPerHour
         ) {
             return ProfitabilityStatus.PROFITABLE
         }
 
-        val almostKmThreshold = (minimumKm - toleranceKm).coerceAtLeast(0.0)
-        val almostHourThreshold = (minimumHour - toleranceHour).coerceAtLeast(0.0)
+        /*
+         * Dolna granica żółtego zakresu.
+         *
+         * Przykład:
+         *
+         * minimum km = 3.00
+         * tolerancja = 0.50
+         *
+         * żółty zaczyna się od 2.50.
+         */
+        val almostKmThreshold =
+            (minimumPerKm - tolerancePerKm)
+                .coerceAtLeast(0.0)
 
+        val almostHourThreshold =
+            (minimumPerHour - tolerancePerHour)
+                .coerceAtLeast(0.0)
+
+        /*
+         * ŻÓŁTY:
+         *
+         * oferta nie spełnia pełnego minimum,
+         * ale oba parametry mieszczą się jeszcze
+         * w ustawionej tolerancji.
+         */
         if (
             perKm >= almostKmThreshold &&
             perHour >= almostHourThreshold
@@ -78,6 +180,12 @@ object ProfitabilityCalculator {
             return ProfitabilityStatus.ALMOST_PROFITABLE
         }
 
+        /*
+         * CZERWONY:
+         *
+         * przynajmniej jeden parametr jest
+         * poniżej dopuszczalnej tolerancji.
+         */
         return ProfitabilityStatus.UNPROFITABLE
     }
 
@@ -85,8 +193,15 @@ object ProfitabilityCalculator {
         offer: Offer,
         currentMinuteOfDay: Int
     ): DurationResolution {
+
+        /*
+         * Uber / aplikacje podające bezpośrednio
+         * całkowity czas zlecenia.
+         */
         offer.durationMinutes
-            ?.takeIf { it in 1..360 }
+            ?.takeIf {
+                it in 1..MAX_REASONABLE_DURATION_MINUTES
+            }
             ?.let {
                 return DurationResolution(
                     minutes = it,
@@ -94,19 +209,32 @@ object ProfitabilityCalculator {
                 )
             }
 
-        offer.deliveryTimeMinutesOfDay?.let { plannedDelivery ->
-            val minutes = minutesUntil(
-                currentMinuteOfDay = currentMinuteOfDay,
-                targetMinuteOfDay = plannedDelivery
-            )
+        /*
+         * Pyszne:
+         * jeśli znamy planowaną godzinę dostawy,
+         * liczymy czas od aktualnej godziny telefonu.
+         */
+        offer.deliveryTimeMinutesOfDay
+            ?.let { plannedDelivery ->
 
-            if (minutes in 1..360) {
-                return DurationResolution(
-                    minutes = minutes,
-                    source = DurationSource.PLANNED_DELIVERY
+                val minutes = minutesUntil(
+                    currentMinuteOfDay =
+                        currentMinuteOfDay,
+                    targetMinuteOfDay =
+                        plannedDelivery
                 )
+
+                if (
+                    minutes in
+                    1..MAX_REASONABLE_DURATION_MINUTES
+                ) {
+                    return DurationResolution(
+                        minutes = minutes,
+                        source =
+                            DurationSource.PLANNED_DELIVERY
+                    )
+                }
             }
-        }
 
         return DurationResolution(
             minutes = null,
@@ -118,20 +246,77 @@ object ProfitabilityCalculator {
         currentMinuteOfDay: Int,
         targetMinuteOfDay: Int
     ): Int {
-        val now = currentMinuteOfDay.floorModDay()
-        val target = targetMinuteOfDay.floorModDay()
-        val delta = (target - now + MINUTES_PER_DAY) % MINUTES_PER_DAY
 
-        return if (delta == 0) 1 else delta
+        val now =
+            currentMinuteOfDay.floorModDay()
+
+        val target =
+            targetMinuteOfDay.floorModDay()
+
+        val delta =
+            (
+                target -
+                    now +
+                    MINUTES_PER_DAY
+                ) % MINUTES_PER_DAY
+
+        /*
+         * Gdy godzina dostawy jest dokładnie teraz,
+         * używamy 1 minuty zamiast 0,
+         * żeby nie dzielić przez zero.
+         */
+        return if (delta == 0) {
+            1
+        } else {
+            delta
+        }
+    }
+
+    /*
+     * Przyjmujemy tylko normalną, skończoną
+     * i nieujemną liczbę.
+     *
+     * NaN / Infinity / liczba ujemna
+     * -> wartość domyślna.
+     */
+    private fun Double.nonNegativeOr(
+        defaultValue: Double
+    ): Double {
+
+        return takeIf {
+            it.isFinite() && it >= 0.0
+        } ?: defaultValue
     }
 
     private fun Int.floorModDay(): Int =
-        ((this % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY
+        (
+            (this % MINUTES_PER_DAY) +
+                MINUTES_PER_DAY
+            ) % MINUTES_PER_DAY
 
     private data class DurationResolution(
         val minutes: Int?,
         val source: DurationSource
     )
 
-    private const val MINUTES_PER_DAY = 24 * 60
+    private const val MINUTES_PER_DAY =
+        24 * 60
+
+    private const val MAX_REASONABLE_DURATION_MINUTES =
+        360
+
+    private const val DEFAULT_VEHICLE_COST =
+        0.35
+
+    private const val DEFAULT_MIN_PER_KM =
+        2.50
+
+    private const val DEFAULT_TOLERANCE_PER_KM =
+        0.50
+
+    private const val DEFAULT_MIN_PER_HOUR =
+        35.0
+
+    private const val DEFAULT_TOLERANCE_PER_HOUR =
+        5.0
 }
