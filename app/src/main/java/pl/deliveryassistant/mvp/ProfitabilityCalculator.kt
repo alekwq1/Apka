@@ -4,7 +4,9 @@ object ProfitabilityCalculator {
     data class Rules(
         val vehicleCostPerKm: Double = 0.35,
         val minimumNetPerKm: Double = 2.50,
-        val minimumNetPerHour: Double = 35.0
+        val toleranceNetPerKm: Double = 0.50,
+        val minimumNetPerHour: Double = 35.0,
+        val toleranceNetPerHour: Double = 5.0
     )
 
     fun calculate(
@@ -13,35 +15,70 @@ object ProfitabilityCalculator {
         currentMinuteOfDay: Int
     ): Profitability {
         val duration = resolveDuration(offer, currentMinuteOfDay)
+        val net = offer.amountPln - offer.distanceKm * rules.vehicleCostPerKm
+        val perKm = if (offer.distanceKm > 0.0) net / offer.distanceKm else null
+        val perHour = duration.minutes?.takeIf { it > 0 }?.let { net / it * 60.0 }
 
-        // Progi nie maja prawa zatrzymac analizy oferty. Nawet gdy do kalkulatora
-        // trafi nieprawidlowa wartosc, uzywamy bezpiecznego fallbacku.
-        val vehicleCostPerKm = rules.vehicleCostPerKm.nonNegativeOr(0.35)
-        val minimumPerKm = rules.minimumNetPerKm.nonNegativeOr(2.50)
-        val minimumPerHour = rules.minimumNetPerHour.nonNegativeOr(35.0)
+        val status = resolveStatus(
+            perKm = perKm,
+            perHour = perHour,
+            rules = rules
+        )
 
-        val afterCosts = offer.amountPln - offer.distanceKm * vehicleCostPerKm
-        val perKm = if (offer.distanceKm > 0.0) afterCosts / offer.distanceKm else null
-        val perHour = duration.minutes?.takeIf { it > 0 }?.let { afterCosts / it * 60.0 }
-
-        val profitable = if (perKm != null && perHour != null) {
-            perKm >= minimumPerKm && perHour >= minimumPerHour
-        } else {
-            null
+        val profitable = when (status) {
+            ProfitabilityStatus.PROFITABLE -> true
+            ProfitabilityStatus.ALMOST_PROFITABLE,
+            ProfitabilityStatus.UNPROFITABLE -> false
+            ProfitabilityStatus.NO_TIME -> null
         }
 
         return Profitability(
             grossPln = offer.amountPln,
-            netPln = afterCosts,
+            netPln = net,
             distanceKm = offer.distanceKm,
             durationMinutes = duration.minutes,
             netPerKm = perKm,
             netPerHour = perHour,
             profitable = profitable,
+            status = status,
             pickupTimeMinutesOfDay = offer.pickupTimeMinutesOfDay,
             deliveryTimeMinutesOfDay = offer.deliveryTimeMinutesOfDay,
             durationSource = duration.source
         )
+    }
+
+    private fun resolveStatus(
+        perKm: Double?,
+        perHour: Double?,
+        rules: Rules
+    ): ProfitabilityStatus {
+        if (perKm == null || perHour == null) {
+            return ProfitabilityStatus.NO_TIME
+        }
+
+        val minimumKm = rules.minimumNetPerKm.coerceAtLeast(0.0)
+        val minimumHour = rules.minimumNetPerHour.coerceAtLeast(0.0)
+        val toleranceKm = rules.toleranceNetPerKm.coerceAtLeast(0.0)
+        val toleranceHour = rules.toleranceNetPerHour.coerceAtLeast(0.0)
+
+        if (
+            perKm >= minimumKm &&
+            perHour >= minimumHour
+        ) {
+            return ProfitabilityStatus.PROFITABLE
+        }
+
+        val almostKmThreshold = (minimumKm - toleranceKm).coerceAtLeast(0.0)
+        val almostHourThreshold = (minimumHour - toleranceHour).coerceAtLeast(0.0)
+
+        if (
+            perKm >= almostKmThreshold &&
+            perHour >= almostHourThreshold
+        ) {
+            return ProfitabilityStatus.ALMOST_PROFITABLE
+        }
+
+        return ProfitabilityStatus.UNPROFITABLE
     }
 
     private fun resolveDuration(
@@ -85,13 +122,8 @@ object ProfitabilityCalculator {
         val target = targetMinuteOfDay.floorModDay()
         val delta = (target - now + MINUTES_PER_DAY) % MINUTES_PER_DAY
 
-        // Gdy termin wypada dokladnie teraz, przyjmujemy 1 minute,
-        // zeby nie dzielic przez zero przy stawce godzinowej.
         return if (delta == 0) 1 else delta
     }
-
-    private fun Double.nonNegativeOr(defaultValue: Double): Double =
-        takeIf { it.isFinite() && it >= 0.0 } ?: defaultValue
 
     private fun Int.floorModDay(): Int =
         ((this % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY

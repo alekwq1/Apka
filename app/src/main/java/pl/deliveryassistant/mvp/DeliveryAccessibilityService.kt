@@ -546,7 +546,9 @@ class DeliveryAccessibilityService : AccessibilityService() {
         val rules = ProfitabilityCalculator.Rules(
             vehicleCostPerKm = prefs.vehicleCostPerKm,
             minimumNetPerKm = prefs.minimumNetPerKm,
-            minimumNetPerHour = prefs.minimumNetPerHour
+            toleranceNetPerKm = prefs.toleranceNetPerKm,
+            minimumNetPerHour = prefs.minimumNetPerHour,
+            toleranceNetPerHour = prefs.toleranceNetPerHour
         )
 
         val now = LocalTime.now()

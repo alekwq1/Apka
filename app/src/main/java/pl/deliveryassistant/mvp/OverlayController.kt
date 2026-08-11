@@ -35,6 +35,7 @@ class OverlayController(
 
     private val green = Color.rgb(83, 205, 115)
     private val red = Color.rgb(245, 92, 92)
+    private val yellow = Color.rgb(255, 214, 64)
     private val amber = Color.rgb(255, 184, 77)
     private val white = Color.rgb(245, 247, 250)
     private val gray = Color.rgb(165, 170, 180)
@@ -46,10 +47,11 @@ class OverlayController(
     ) {
         if (root == null) createOverlay()
 
-        val accent = when (result.profitable) {
-            true -> green
-            false -> red
-            null -> amber
+        val accent = when (result.status) {
+            ProfitabilityStatus.PROFITABLE -> green
+            ProfitabilityStatus.ALMOST_PROFITABLE -> yellow
+            ProfitabilityStatus.UNPROFITABLE -> red
+            ProfitabilityStatus.NO_TIME -> amber
         }
 
         appName?.text = applicationName
@@ -62,10 +64,11 @@ class OverlayController(
         }
 
         status?.apply {
-            text = when (result.profitable) {
-                true -> "OPŁACALNE"
-                false -> "NIEOPŁACALNE"
-                null -> "BRAK CZASU"
+            text = when (result.status) {
+                ProfitabilityStatus.PROFITABLE -> "OPŁACALNE"
+                ProfitabilityStatus.ALMOST_PROFITABLE -> "PRAWIE OPŁACALNE"
+                ProfitabilityStatus.UNPROFITABLE -> "NIEOPŁACALNE"
+                ProfitabilityStatus.NO_TIME -> "BRAK CZASU"
             }
             setTextColor(accent)
             background = pillBackground(accent)

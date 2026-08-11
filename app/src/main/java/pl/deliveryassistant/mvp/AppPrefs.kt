@@ -8,10 +8,6 @@ class AppPrefs(context: Context) {
         Context.MODE_PRIVATE
     )
 
-    /**
-     * To jest nasz wewnetrzny wlacznik analizy.
-     * Nie odbiera on uprawnienia Accessibility w Androidzie.
-     */
     var analysisEnabled: Boolean
         get() = prefs.getBoolean("analysis_enabled", true)
         set(value) = prefs.edit()
@@ -32,14 +28,18 @@ class AppPrefs(context: Context) {
         get() = getDouble("min_net_km", 2.50)
         set(value) = putDouble("min_net_km", value)
 
+    var toleranceNetPerKm: Double
+        get() = getDouble("tolerance_net_km", 0.50)
+        set(value) = putDouble("tolerance_net_km", value)
+
     var minimumNetPerHour: Double
         get() = getDouble("min_net_hour", 35.0)
         set(value) = putDouble("min_net_hour", value)
 
-    /**
-     * Starsze wersje zapisywaly wartosci jako Float.
-     * Czytamy zarowno Number, jak i String.
-     */
+    var toleranceNetPerHour: Double
+        get() = getDouble("tolerance_net_hour", 5.0)
+        set(value) = putDouble("tolerance_net_hour", value)
+
     private fun getDouble(
         key: String,
         defaultValue: Double

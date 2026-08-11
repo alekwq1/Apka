@@ -14,6 +14,13 @@ enum class DurationSource {
     UNKNOWN
 }
 
+enum class ProfitabilityStatus {
+    PROFITABLE,
+    ALMOST_PROFITABLE,
+    UNPROFITABLE,
+    NO_TIME
+}
+
 data class Profitability(
     val grossPln: Double,
     val netPln: Double,
@@ -22,6 +29,7 @@ data class Profitability(
     val netPerKm: Double?,
     val netPerHour: Double?,
     val profitable: Boolean?,
+    val status: ProfitabilityStatus,
     val pickupTimeMinutesOfDay: Int?,
     val deliveryTimeMinutesOfDay: Int?,
     val durationSource: DurationSource

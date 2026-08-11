@@ -115,7 +115,9 @@ private fun SettingsScreen(
     var targetPackage by remember { mutableStateOf(prefs.targetPackage) }
     var vehicleCost by remember { mutableStateOf(formatSetting(prefs.vehicleCostPerKm)) }
     var minKm by remember { mutableStateOf(formatSetting(prefs.minimumNetPerKm)) }
+    var toleranceKm by remember { mutableStateOf(formatSetting(prefs.toleranceNetPerKm)) }
     var minHour by remember { mutableStateOf(formatSetting(prefs.minimumNetPerHour)) }
+    var toleranceHour by remember { mutableStateOf(formatSetting(prefs.toleranceNetPerHour)) }
     var saveMessage by remember { mutableStateOf<String?>(null) }
     var showAdvanced by remember { mutableStateOf(false) }
 
@@ -196,6 +198,17 @@ private fun SettingsScreen(
         )
 
         NumberField(
+            label = "Tolerancja na kilometr",
+            value = toleranceKm,
+            suffix = "zl/km",
+            help = "O ile ponizej minimum oferta moze zejsc i nadal byc oznaczona na zolto jako PRAWIE OPLACALNE.",
+            onChange = {
+                toleranceKm = it
+                saveMessage = null
+            }
+        )
+
+        NumberField(
             label = "Minimum po kosztach na godzine",
             value = minHour,
             suffix = "zl/h",
@@ -206,18 +219,39 @@ private fun SettingsScreen(
             }
         )
 
+        NumberField(
+            label = "Tolerancja na godzine",
+            value = toleranceHour,
+            suffix = "zl/h",
+            help = "O ile ponizej minimum oferta moze zejsc i nadal byc oznaczona na zolto jako PRAWIE OPLACALNE.",
+            onChange = {
+                toleranceHour = it
+                saveMessage = null
+            }
+        )
+
         Button(
             onClick = {
                 val vehicle = vehicleCost.toDoublePl()?.takeIf { it >= 0.0 }
                 val km = minKm.toDoublePl()?.takeIf { it >= 0.0 }
+                val kmTolerance = toleranceKm.toDoublePl()?.takeIf { it >= 0.0 }
                 val hour = minHour.toDoublePl()?.takeIf { it >= 0.0 }
+                val hourTolerance = toleranceHour.toDoublePl()?.takeIf { it >= 0.0 }
 
-                if (vehicle == null || km == null || hour == null) {
+                if (
+                    vehicle == null ||
+                    km == null ||
+                    kmTolerance == null ||
+                    hour == null ||
+                    hourTolerance == null
+                ) {
                     saveMessage = "Sprawdz wartosci - wpisz liczby wieksze lub rowne 0."
                 } else {
                     prefs.vehicleCostPerKm = vehicle
                     prefs.minimumNetPerKm = km
+                    prefs.toleranceNetPerKm = kmTolerance
                     prefs.minimumNetPerHour = hour
+                    prefs.toleranceNetPerHour = hourTolerance
                     prefs.targetPackage = targetPackage
                     saveMessage = "Ustawienia zapisane."
                 }
@@ -272,8 +306,9 @@ private fun SettingsScreen(
 
         InfoCard(
             title = "Nakladka nad oferta",
-            body = "Zielony = oferta spelnia oba progi. Czerwony = nie spelnia. " +
-                "Pomarańczowy BRAK CZASU = nie da sie uczciwie policzyc stawki godzinowej. " +
+            body = "Zielony = oferta spelnia oba minima. Zolty PRAWIE OPLACALNE = oferta jest ponizej minimum, " +
+                "ale miesci sie w ustawionej tolerancji. Czerwony = jest ponizej tolerancji. " +
+                "Pomaranczowy BRAK CZASU = nie da sie uczciwie policzyc stawki godzinowej. " +
                 "Nakladka nie przechwytuje dotyku."
         )
     }
