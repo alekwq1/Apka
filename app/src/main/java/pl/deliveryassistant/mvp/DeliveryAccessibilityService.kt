@@ -1,64 +1,136 @@
 package pl.deliveryassistant.mvp
 
 import android.accessibilityservice.AccessibilityService
-import android.accessibilityservice.AccessibilityServiceInfo
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.drawable.Drawable
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.TextRecognizer
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 
 class DeliveryAccessibilityService : AccessibilityService() {
 
     private lateinit var overlay: OverlayController
     private lateinit var prefs: AppPrefs
 
-    private val handler = Handler(Looper.getMainLooper())
-    private var pendingScan: Runnable? = null
+    private val handler =
+        Handler(Looper.getMainLooper())
+
+    private var recognizer: TextRecognizer? = null
+
+    private var ocrBusy = false
+
+    private var misses = 0
+
+    private var pendingImmediateScan: Runnable? = null
+
+    /*
+     * Co ile sprawdzamy ekran.
+     *
+     * 1400 ms = wystarczająco szybko dla ofert,
+     * ale bez robienia kilkunastu screenshotów na sekundę.
+     */
+    private val scanIntervalMs = 1400L
+
+    private val pollRunnable =
+        object : Runnable {
+
+            override fun run() {
+
+                scanVisibleScreen()
+
+                handler.postDelayed(
+                    this,
+                    scanIntervalMs
+                )
+            }
+        }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
 
-        prefs = AppPrefs(this)
-        overlay = OverlayController(this)
+        prefs =
+            AppPrefs(this)
+
+        overlay =
+            OverlayController(this)
+
+        recognizer =
+            TextRecognition.getClient(
+                TextRecognizerOptions.DEFAULT_OPTIONS
+            )
 
         /*
-         * Uber używa pływającego okna.
-         * Chcemy widzieć WSZYSTKIE interaktywne okna,
-         * a nie tylko główną aktywną aplikację.
+         * Pierwszy skan chwilę po włączeniu usługi.
          */
-        val info = serviceInfo
-
-        info.flags =
-            info.flags or
-            AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
-            AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
-            AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
-
-        serviceInfo = info
+        handler.postDelayed(
+            pollRunnable,
+            600L
+        )
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+    override fun onAccessibilityEvent(
+        event: AccessibilityEvent?
+    ) {
+
         event ?: return
 
         /*
-         * Nie analizujemy natychmiast.
-         * Dajemy Uberowi/Pyszne chwilę na narysowanie
-         * całej karty z kwotą, km i czasem.
+         * Ignorujemy własną aplikację/overlay.
          */
-        pendingScan?.let(handler::removeCallbacks)
-
-        pendingScan = Runnable {
-            scanAllWindows()
-        }.also {
-            handler.postDelayed(it, 180)
+        if (
+            event.packageName
+                ?.toString() ==
+            packageName
+        ) {
+            return
         }
+
+        /*
+         * Gdy coś zmieni się na ekranie,
+         * nie czekamy całych 1,4 s.
+         */
+        pendingImmediateScan?.let {
+            handler.removeCallbacks(it)
+        }
+
+        pendingImmediateScan =
+            Runnable {
+
+                scanVisibleScreen()
+
+            }.also {
+
+                handler.postDelayed(
+                    it,
+                    180L
+                )
+            }
     }
 
     override fun onInterrupt() = Unit
 
     override fun onDestroy() {
-        pendingScan?.let(handler::removeCallbacks)
+
+        handler.removeCallbacks(
+            pollRunnable
+        )
+
+        pendingImmediateScan?.let {
+            handler.removeCallbacks(it)
+        }
+
+        recognizer?.close()
+        recognizer = null
 
         if (::overlay.isInitialized) {
             overlay.destroy()
@@ -67,157 +139,594 @@ class DeliveryAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    private fun scanAllWindows() {
+    /*
+     * ============================================================
+     * GŁÓWNY SKAN
+     * ============================================================
+     */
 
-        val configuredPackage =
-            prefs.targetPackage.trim()
+    private fun scanVisibleScreen() {
 
-        val candidates =
-            mutableListOf<WindowOfferCandidate>()
-
-        /*
-         * NAJWAŻNIEJSZA ZMIANA:
-         *
-         * Nie rootInActiveWindow,
-         * tylko wszystkie okna widoczne na ekranie.
-         *
-         * Dzięki temu:
-         *
-         * - Uber może być pływającą kartą,
-         * - mapa może być pod spodem,
-         * - launcher może być aktywnym ekranem,
-         * - a my nadal znajdziemy kartę Ubera.
-         */
-        for ((index, window) in windows.withIndex()) {
-
-            val root = runCatching {
-                window.root
-            }.getOrNull() ?: continue
-
-            val packageName =
-                root.packageName
-                    ?.toString()
-                    .orEmpty()
-
-            /*
-             * Bardzo ważne:
-             * NIE czytamy własnego overlayu,
-             * bo wtedy asystent zacząłby analizować
-             * własne liczby.
-             */
-            if (packageName == this.packageName) {
-                continue
-            }
-
-            /*
-             * Jeżeli użytkownik wpisał konkretny pakiet,
-             * filtrujemy tylko do niego.
-             *
-             * Jeśli pole pakietu jest puste:
-             * Uber + Pyszne + inne aplikacje działają razem.
-             */
-            if (
-                configuredPackage.isNotBlank() &&
-                packageName != configuredPackage
-            ) {
-                continue
-            }
-
-            val text = buildString {
-                collectText(
-                    node = root,
-                    out = this,
-                    depth = 0
-                )
-            }
-
-            if (text.isBlank()) {
-                continue
-            }
-
-            val offer =
-                OfferParser.parse(text)
-                    ?: continue
-
-            candidates += WindowOfferCandidate(
-                packageName = packageName,
-                offer = offer,
-                windowIndex = index,
-                text = text
-            )
-        }
-
-        /*
-         * Awaryjnie sprawdzamy też klasyczne
-         * rootInActiveWindow.
-         *
-         * Przyda się np. dla zwykłych ekranów Pyszne.
-         */
-        val activeRoot =
-            rootInActiveWindow
-
-        if (activeRoot != null) {
-
-            val packageName =
-                activeRoot.packageName
-                    ?.toString()
-                    .orEmpty()
-
-            if (
-                packageName != this.packageName &&
-                (
-                    configuredPackage.isBlank() ||
-                    packageName == configuredPackage
-                )
-            ) {
-
-                val text = buildString {
-                    collectText(
-                        node = activeRoot,
-                        out = this,
-                        depth = 0
-                    )
-                }
-
-                OfferParser.parse(text)?.let { offer ->
-
-                    candidates += WindowOfferCandidate(
-                        packageName = packageName,
-                        offer = offer,
-                        windowIndex = -1,
-                        text = text
-                    )
-                }
-            }
-        }
-
-        /*
-         * Nic nie znaleziono.
-         */
-        if (candidates.isEmpty()) {
-            overlay.hide()
+        if (ocrBusy) {
             return
         }
 
         /*
-         * Jeśli jest kilka okien:
+         * Screenshot Accessibility działa od Androida 11 / API 30.
          *
-         * preferujemy aplikacje kurierskie.
-         *
-         * To zapobiega sytuacji, gdzie np.
-         * pod Uberem jest strona z jakimiś liczbami
-         * i parser wybierze nie ten ekran.
+         * Na starszym telefonie zostajemy przy klasycznym
+         * Accessibility.
          */
-        val selected =
-            candidates.maxByOrNull {
-                scoreCandidate(it)
-            } ?: run {
-                overlay.hide()
-                return
+        if (
+            Build.VERSION.SDK_INT <
+            Build.VERSION_CODES.R
+        ) {
+
+            scanAccessibilityOnly()
+            return
+        }
+
+        ocrBusy = true
+
+        takeScreenshot(
+            Display.DEFAULT_DISPLAY,
+            mainExecutor,
+
+            object :
+                AccessibilityService.TakeScreenshotCallback {
+
+                override fun onSuccess(
+                    screenshot:
+                        AccessibilityService.ScreenshotResult
+                ) {
+
+                    val buffer =
+                        screenshot.hardwareBuffer
+
+                    val hardwareBitmap =
+                        Bitmap.wrapHardwareBuffer(
+                            buffer,
+                            screenshot.colorSpace
+                        )
+
+                    /*
+                     * Robimy zwykłą bitmapę ARGB,
+                     * żeby ML Kit mógł ją spokojnie analizować.
+                     */
+                    val bitmap =
+                        hardwareBitmap?.copy(
+                            Bitmap.Config.ARGB_8888,
+                            true
+                        )
+
+                    buffer.close()
+
+                    if (bitmap == null) {
+
+                        ocrBusy = false
+
+                        scanAccessibilityOnly()
+
+                        return
+                    }
+
+                    val prepared =
+                        prepareScreenshot(bitmap)
+
+                    bitmap.recycle()
+
+                    runOcr(prepared)
+                }
+
+                override fun onFailure(
+                    errorCode: Int
+                ) {
+
+                    ocrBusy = false
+
+                    /*
+                     * Jeśli screenshot się nie uda,
+                     * nadal próbujemy zwykłego Accessibility.
+                     */
+                    scanAccessibilityOnly()
+                }
             }
+        )
+    }
+
+    /*
+     * ============================================================
+     * OCR
+     * ============================================================
+     */
+
+    private fun runOcr(
+        bitmap: Bitmap
+    ) {
+
+        val scanner =
+            recognizer
+
+        if (scanner == null) {
+
+            bitmap.recycle()
+
+            ocrBusy = false
+
+            return
+        }
+
+        val image =
+            InputImage.fromBitmap(
+                bitmap,
+                0
+            )
+
+        scanner
+            .process(image)
+
+            .addOnSuccessListener { result ->
+
+                val text =
+                    result.text
+
+                val source =
+                    recognizeCourierFromScreen(
+                        text
+                    )
+
+                /*
+                 * OCR stosujemy przede wszystkim do ekranów,
+                 * które naprawdę wyglądają jak oferta
+                 * Uber/Pyszne.
+                 *
+                 * Dzięki temu losowe PLN/km z innych aplikacji
+                 * nie powinny uruchamiać overlayu.
+                 */
+                if (source != null) {
+
+                    val offer =
+                        OfferParser.parse(
+                            text
+                        )
+
+                    if (offer != null) {
+
+                        misses = 0
+
+                        showOffer(
+                            offer = offer,
+                            applicationName = source
+                        )
+
+                        return@addOnSuccessListener
+                    }
+                }
+
+                /*
+                 * OCR nic sensownego nie znalazł.
+                 * Próbujemy zwykłego Accessibility.
+                 */
+                val foundAccessibility =
+                    scanAccessibilityOnly(
+                        hideOnFailure = false
+                    )
+
+                if (!foundAccessibility) {
+
+                    misses++
+
+                    /*
+                     * Nie chowamy po jednym nieudanym frame,
+                     * żeby overlay nie migał.
+                     */
+                    if (misses >= 2) {
+                        overlay.hide()
+                    }
+                }
+            }
+
+            .addOnFailureListener {
+
+                scanAccessibilityOnly()
+            }
+
+            .addOnCompleteListener {
+
+                bitmap.recycle()
+
+                ocrBusy = false
+            }
+    }
+
+    /*
+     * ============================================================
+     * PRZYGOTOWANIE SCREENSHOTA
+     * ============================================================
+     */
+
+    private fun prepareScreenshot(
+        source: Bitmap
+    ): Bitmap {
+
+        /*
+         * Robimy kopię, na której możemy rysować.
+         */
+        val mutable =
+            source.copy(
+                Bitmap.Config.ARGB_8888,
+                true
+            )
+
+        /*
+         * Nasz Delivery Assistant siedzi w prawym
+         * górnym rogu.
+         *
+         * Zamazujemy ten fragment przed OCR.
+         *
+         * Inaczej OCR mógłby przeczytać nasze własne:
+         *
+         * 25,42 zł
+         * 5,40 km
+         * 26 min
+         *
+         * i uznać je za nową ofertę.
+         */
+        val canvas =
+            Canvas(mutable)
+
+        val paint =
+            Paint().apply {
+                color = Color.BLACK
+            }
+
+        val maskWidth =
+            dp(240)
+
+        val maskHeight =
+            dp(300)
+
+        val left =
+            (
+                mutable.width -
+                    maskWidth
+                ).coerceAtLeast(0)
+
+        val bottom =
+            maskHeight.coerceAtMost(
+                mutable.height
+            )
+
+        canvas.drawRect(
+            left.toFloat(),
+            0f,
+            mutable.width.toFloat(),
+            bottom.toFloat(),
+            paint
+        )
+
+        /*
+         * Na bardzo dużych ekranach zmniejszamy obraz.
+         * Dla tak dużych napisów jak:
+         *
+         * PLN25.42
+         * 26 min (5.4 km)
+         *
+         * nadal zostaje dużo szczegółów,
+         * a OCR ma mniej pracy.
+         */
+        val maxWidth =
+            900
+
+        if (
+            mutable.width <=
+            maxWidth
+        ) {
+            return mutable
+        }
+
+        val ratio =
+            maxWidth.toFloat() /
+                mutable.width.toFloat()
+
+        val newHeight =
+            (
+                mutable.height *
+                    ratio
+                ).toInt()
+                .coerceAtLeast(1)
+
+        val scaled =
+            Bitmap.createScaledBitmap(
+                mutable,
+                maxWidth,
+                newHeight,
+                true
+            )
+
+        mutable.recycle()
+
+        return scaled
+    }
+
+    /*
+     * ============================================================
+     * ROZPOZNAWANIE TYPU APLIKACJI Z OCR
+     * ============================================================
+     */
+
+    private fun recognizeCourierFromScreen(
+        text: String
+    ): String? {
+
+        val lower =
+            text.lowercase()
+
+        /*
+         * Typowa karta Uber Delivery:
+         *
+         * PLN25.42
+         * 26 min (5.4 km) total
+         * Delivery
+         * Confirm
+         */
+        val looksUber =
+            "pln" in lower &&
+                (
+                    "confirm" in lower ||
+                        "delivery" in lower
+                    ) &&
+                (
+                    "total" in lower ||
+                        "min" in lower
+                    )
+
+        if (looksUber) {
+            return "Uber"
+        }
+
+        /*
+         * Typowa oferta Pyszne.
+         */
+        val looksPyszne =
+            (
+                "zaakceptuj zlecenie" in lower ||
+                    "odbiór:" in lower ||
+                    "odbior:" in lower
+                ) &&
+                (
+                    "zł" in lower ||
+                        "zl" in lower ||
+                        "pln" in lower
+                    )
+
+        if (looksPyszne) {
+            return "Pyszne.pl"
+        }
+
+        return null
+    }
+
+    /*
+     * ============================================================
+     * ACCESSIBILITY - FALLBACK
+     * ============================================================
+     */
+
+    private fun scanAccessibilityOnly(
+        hideOnFailure: Boolean = true
+    ): Boolean {
+
+        val candidates =
+            mutableListOf<AccessibilityCandidate>()
+
+        var deliveryWindowExists =
+            false
+
+        /*
+         * Najpierw wszystkie widoczne/interaktywne okna.
+         */
+        for (window in windows) {
+
+            val root =
+                runCatching {
+                    window.root
+                }.getOrNull()
+                    ?: continue
+
+            val pkg =
+                root.packageName
+                    ?.toString()
+                    .orEmpty()
+
+            if (
+                pkg ==
+                packageName
+            ) {
+                continue
+            }
+
+            if (
+                isDeliveryPackage(pkg)
+            ) {
+                deliveryWindowExists =
+                    true
+            }
+
+            val text =
+                buildString {
+
+                    collectText(
+                        root,
+                        this,
+                        0
+                    )
+                }
+
+            val offer =
+                OfferParser.parse(
+                    text
+                ) ?: continue
+
+            var score =
+                0
+
+            if (
+                isDeliveryPackage(
+                    pkg
+                )
+            ) {
+                score += 1000
+            }
+
+            if (
+                window.isActive
+            ) {
+                score += 200
+            }
+
+            if (
+                window.isFocused
+            ) {
+                score += 200
+            }
+
+            candidates +=
+                AccessibilityCandidate(
+                    packageName = pkg,
+                    text = text,
+                    offer = offer,
+                    score = score
+                )
+        }
+
+        /*
+         * Jeśli na ekranie jest znane okno kurierskie,
+         * nie bierzemy oferty np. z Telegrama pod spodem.
+         */
+        val usableCandidates =
+            if (deliveryWindowExists) {
+
+                candidates.filter {
+                    isDeliveryPackage(
+                        it.packageName
+                    )
+                }
+
+            } else {
+
+                candidates
+            }
+
+        val selected =
+            usableCandidates.maxByOrNull {
+                it.score
+            }
+
+        if (selected != null) {
+
+            misses = 0
+
+            val appName =
+                detectApplicationName(
+                    selected.packageName,
+                    selected.text
+                )
+
+            showOffer(
+                offer = selected.offer,
+                applicationName = appName,
+                packageName =
+                    selected.packageName
+            )
+
+            return true
+        }
+
+        /*
+         * Klasyczny root jako ostatnia próba.
+         */
+        val root =
+            rootInActiveWindow
+
+        if (root != null) {
+
+            val pkg =
+                root.packageName
+                    ?.toString()
+                    .orEmpty()
+
+            if (
+                pkg != packageName &&
+                (
+                    !deliveryWindowExists ||
+                        isDeliveryPackage(pkg)
+                    )
+            ) {
+
+                val text =
+                    buildString {
+
+                        collectText(
+                            root,
+                            this,
+                            0
+                        )
+                    }
+
+                val offer =
+                    OfferParser.parse(
+                        text
+                    )
+
+                if (offer != null) {
+
+                    misses = 0
+
+                    showOffer(
+                        offer = offer,
+
+                        applicationName =
+                            detectApplicationName(
+                                pkg,
+                                text
+                            ),
+
+                        packageName = pkg
+                    )
+
+                    return true
+                }
+            }
+        }
+
+        if (hideOnFailure) {
+
+            misses++
+
+            if (misses >= 2) {
+                overlay.hide()
+            }
+        }
+
+        return false
+    }
+
+    /*
+     * ============================================================
+     * WYLICZENIA + OVERLAY
+     * ============================================================
+     */
+
+    private fun showOffer(
+        offer: Offer,
+        applicationName: String,
+        packageName: String = ""
+    ) {
 
         val rules =
             ProfitabilityCalculator.Rules(
+
                 vehicleCostPerKm =
                     prefs.vehicleCostPerKm,
 
@@ -233,116 +742,184 @@ class DeliveryAccessibilityService : AccessibilityService() {
 
         val result =
             ProfitabilityCalculator.calculate(
-                selected.offer,
+                offer,
                 rules
             )
 
+        val icon =
+            resolveIcon(
+                applicationName,
+                packageName
+            )
+
         /*
-         * Wersja overlayu ze stylem,
-         * który teraz masz.
+         * To pasuje do Twojego nowego,
+         * zielono-czerwonego OverlayController.
          */
         overlay.show(
             result = result,
-            applicationName =
-                getApplicationName(
-                    selected.packageName
-                ),
-            applicationIcon =
-                getApplicationIcon(
-                    selected.packageName
-                )
+            applicationName = applicationName,
+            applicationIcon = icon
         )
     }
 
-    private fun scoreCandidate(
-        candidate: WindowOfferCandidate
-    ): Int {
+    /*
+     * ============================================================
+     * NAZWA APLIKACJI
+     * ============================================================
+     */
 
-        val packageName =
-            candidate.packageName.lowercase()
+    private fun detectApplicationName(
+        packageName: String,
+        text: String
+    ): String {
 
-        var score = 0
+        val lowerPackage =
+            packageName.lowercase()
 
-        /*
-         * Najwyższy priorytet dla aplikacji dostawczych.
-         */
-        if ("ubercab" in packageName) {
-            score += 1000
-        }
+        val lowerText =
+            text.lowercase()
 
-        if ("uber" in packageName) {
-            score += 900
-        }
-
-        if ("takeaway" in packageName) {
-            score += 900
-        }
-
-        if ("pyszne" in packageName) {
-            score += 900
-        }
-
-        if ("justeat" in packageName) {
-            score += 900
-        }
-
-        if ("wolt" in packageName) {
-            score += 900
-        }
-
-        if ("glovo" in packageName) {
-            score += 900
-        }
-
-        if ("bolt" in packageName) {
-            score += 900
-        }
-
-        /*
-         * Oferta z prawdziwym czasem jest bardziej
-         * wiarygodna niż taka, gdzie używamy fallbacku.
-         */
         if (
-            candidate.offer.durationMinutes != null
+            "uber" in lowerPackage ||
+            "ubercab" in lowerPackage ||
+            (
+                "pln" in lowerText &&
+                    "confirm" in lowerText
+                )
         ) {
-            score += 100
-        }
-
-        /*
-         * PLN jest mocną wskazówką przy Uberze.
-         */
-        if (
-            candidate.text.contains(
-                "PLN",
-                ignoreCase = true
-            )
-        ) {
-            score += 30
-        }
-
-        /*
-         * Typowe słowa z ekranu ofert.
-         */
-        if (
-            candidate.text.contains(
-                "Confirm",
-                ignoreCase = true
-            )
-        ) {
-            score += 20
+            return "Uber"
         }
 
         if (
-            candidate.text.contains(
-                "Delivery",
-                ignoreCase = true
-            )
+            "pyszne" in lowerPackage ||
+            "takeaway" in lowerPackage ||
+            "justeat" in lowerPackage ||
+            "zaakceptuj zlecenie" in lowerText
         ) {
-            score += 20
+            return "Pyszne.pl"
         }
 
-        return score
+        if (
+            "wolt" in lowerPackage
+        ) {
+            return "Wolt"
+        }
+
+        if (
+            "glovo" in lowerPackage
+        ) {
+            return "Glovo"
+        }
+
+        if (
+            "bolt" in lowerPackage
+        ) {
+            return "Bolt Food"
+        }
+
+        if (
+            packageName.isBlank()
+        ) {
+            return "Delivery"
+        }
+
+        return runCatching {
+
+            val info =
+                packageManager
+                    .getApplicationInfo(
+                        packageName,
+                        0
+                    )
+
+            packageManager
+                .getApplicationLabel(
+                    info
+                )
+                .toString()
+
+        }.getOrDefault(
+            "Delivery"
+        )
     }
+
+    private fun isDeliveryPackage(
+        packageName: String
+    ): Boolean {
+
+        val lower =
+            packageName.lowercase()
+
+        return (
+            "uber" in lower ||
+                "ubercab" in lower ||
+                "pyszne" in lower ||
+                "takeaway" in lower ||
+                "justeat" in lower ||
+                "wolt" in lower ||
+                "glovo" in lower ||
+                "bolt" in lower
+            )
+    }
+
+    /*
+     * ============================================================
+     * IKONA
+     * ============================================================
+     */
+
+    private fun resolveIcon(
+        applicationName: String,
+        packageName: String
+    ): Drawable? {
+
+        /*
+         * Jeśli znamy prawdziwy package - używamy go.
+         */
+        if (
+            packageName.isNotBlank()
+        ) {
+
+            runCatching {
+
+                packageManager
+                    .getApplicationIcon(
+                        packageName
+                    )
+
+            }.getOrNull()
+                ?.let {
+                    return it
+                }
+        }
+
+        /*
+         * Uber ma znany package.
+         */
+        if (
+            applicationName ==
+            "Uber"
+        ) {
+
+            return runCatching {
+
+                packageManager
+                    .getApplicationIcon(
+                        "com.ubercab.driver"
+                    )
+
+            }.getOrNull()
+        }
+
+        return null
+    }
+
+    /*
+     * ============================================================
+     * ODCZYT ACCESSIBILITY TREE
+     * ============================================================
+     */
 
     private fun collectText(
         node: AccessibilityNodeInfo,
@@ -350,7 +927,9 @@ class DeliveryAccessibilityService : AccessibilityService() {
         depth: Int
     ) {
 
-        if (depth > 60) {
+        if (
+            depth > 60
+        ) {
             return
         }
 
@@ -361,6 +940,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
                 it.isNotBlank()
             }
             ?.let {
+
                 out.append(it)
                     .append('\n')
             }
@@ -372,14 +952,11 @@ class DeliveryAccessibilityService : AccessibilityService() {
                 it.isNotBlank()
             }
             ?.let {
+
                 out.append(it)
                     .append('\n')
             }
 
-        /*
-         * Hint też czasem zawiera dane
-         * w niestandardowych widokach.
-         */
         node.hintText
             ?.toString()
             ?.trim()
@@ -387,101 +964,44 @@ class DeliveryAccessibilityService : AccessibilityService() {
                 it.isNotBlank()
             }
             ?.let {
+
                 out.append(it)
                     .append('\n')
             }
 
         for (
-            i in 0 until node.childCount
+            index in
+            0 until node.childCount
         ) {
 
             val child =
-                node.getChild(i)
+                node.getChild(index)
                     ?: continue
 
             collectText(
-                node = child,
-                out = out,
-                depth = depth + 1
+                child,
+                out,
+                depth + 1
             )
         }
     }
 
-    private fun getApplicationName(
-        packageName: String
-    ): String {
+    private fun dp(
+        value: Int
+    ): Int {
 
-        val lower =
-            packageName.lowercase()
-
-        /*
-         * Rozpoznajemy znane aplikacje po package name.
-         * To działa nawet jeśli Android ograniczy
-         * dostęp PackageManagera do innej aplikacji.
-         */
-        when {
-
-            "ubercab" in lower ||
-            "uber" in lower ->
-                return "Uber"
-
-            "takeaway" in lower ||
-            "pyszne" in lower ||
-            "justeat" in lower ->
-                return "Pyszne.pl"
-
-            "wolt" in lower ->
-                return "Wolt"
-
-            "glovo" in lower ->
-                return "Glovo"
-
-            "bolt" in lower ->
-                return "Bolt Food"
-        }
-
-        if (packageName.isBlank()) {
-            return "Delivery"
-        }
-
-        return runCatching {
-
-            val info =
-                packageManager.getApplicationInfo(
-                    packageName,
-                    0
-                )
-
-            packageManager
-                .getApplicationLabel(info)
-                .toString()
-
-        }.getOrDefault(
-            "Delivery"
-        )
+        return (
+            value *
+                resources
+                    .displayMetrics
+                    .density
+            ).toInt()
     }
 
-    private fun getApplicationIcon(
-        packageName: String
-    ): Drawable? {
-
-        if (packageName.isBlank()) {
-            return null
-        }
-
-        return runCatching {
-
-            packageManager.getApplicationIcon(
-                packageName
-            )
-
-        }.getOrNull()
-    }
-
-    private data class WindowOfferCandidate(
+    private data class AccessibilityCandidate(
         val packageName: String,
+        val text: String,
         val offer: Offer,
-        val windowIndex: Int,
-        val text: String
+        val score: Int
     )
 }
