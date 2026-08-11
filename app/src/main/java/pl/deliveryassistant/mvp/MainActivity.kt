@@ -121,6 +121,12 @@ private fun SettingsScreen(
                 "Jeśli wiarygodnego czasu nie ma, aplikacja go nie zgaduje i pokazuje „BRAK CZASU”."
         )
 
+        InfoCard(
+            title = "Co oznacza „po kosztach”",
+            body = "To nie jest netto podatkowe. Liczymy: kwota oferty − (kilometry × koszt pojazdu/km). " +
+                "W koszcie pojazdu możesz uwzględnić paliwo/prąd, serwis, opony i amortyzację."
+        )
+
         Text(
             text = "Twoje progi opłacalności",
             style = MaterialTheme.typography.titleLarge,
@@ -131,7 +137,7 @@ private fun SettingsScreen(
             label = "Koszt pojazdu",
             value = vehicleCost,
             suffix = "zł/km",
-            help = "Paliwo/prąd + serwis + opony. Ta wartość jest odejmowana od przychodu.",
+            help = "Twój koszt 1 km: np. paliwo/prąd + serwis + opony + amortyzacja. Ta wartość jest odejmowana od kwoty oferty.",
             onChange = {
                 vehicleCost = it
                 saveMessage = null
@@ -139,10 +145,10 @@ private fun SettingsScreen(
         )
 
         NumberField(
-            label = "Minimalne netto na kilometr",
+            label = "Minimum po kosztach na kilometr",
             value = minKm,
             suffix = "zł/km",
-            help = "Oferta musi osiągnąć co najmniej ten wynik po odjęciu kosztu pojazdu.",
+            help = "Kwota po kosztach pojazdu musi osiągnąć co najmniej ten wynik na kilometr.",
             onChange = {
                 minKm = it
                 saveMessage = null
@@ -150,10 +156,10 @@ private fun SettingsScreen(
         )
 
         NumberField(
-            label = "Minimalne netto na godzinę",
+            label = "Minimum po kosztach na godzinę",
             value = minHour,
             suffix = "zł/h",
-            help = "Liczone z rzeczywistego/szacowanego przez aplikację kurierską czasu dostawy.",
+            help = "Stawka po kosztach pojazdu na godzinę. To nie jest netto podatkowe.",
             onChange = {
                 minHour = it
                 saveMessage = null

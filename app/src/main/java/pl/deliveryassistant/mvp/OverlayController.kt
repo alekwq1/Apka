@@ -199,7 +199,7 @@ class OverlayController(
         )
 
         panel.addView(
-            metricRow("KWOTA", "NETTO").also {
+            metricRow("KWOTA", "PO KOSZTACH").also {
                 amountValue = it.first
                 netValue = it.second
             }.third
@@ -213,7 +213,7 @@ class OverlayController(
         )
 
         panel.addView(
-            metricRow("NA GODZ.", "NETTO/KM").also {
+            metricRow("PO KOSZT./H", "PO KOSZT./KM").also {
                 hourlyValue = it.first
                 perKmValue = it.second
             }.third
@@ -238,7 +238,7 @@ class OverlayController(
         panel.addView(timeSourceText)
 
         val params = WindowManager.LayoutParams(
-            dp(218),
+            dp(238),
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or

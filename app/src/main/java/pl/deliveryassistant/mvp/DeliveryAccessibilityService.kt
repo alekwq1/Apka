@@ -16,6 +16,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
@@ -85,7 +86,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
     private fun scanVisibleScreen() {
         if (ocrBusy) return
 
-        // Najpierw próbujemy Accessibility - jest szybsze i nie wymaga screenshotu.
+        // 1) Najpierw próbujemy tekstu dostępności - szybciej i bez screenshotu.
         if (scanAccessibilityOnly(hideOnFailure = false)) return
 
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
@@ -96,14 +97,30 @@ class DeliveryAccessibilityService : AccessibilityService() {
         val screenshotWindow = findBestWindowForScreenshot()
         val configuredPackage = prefs.targetPackage.trim()
 
-        // Jeżeli użytkownik wskazał konkretny pakiet, nie analizujemy innych aplikacji.
-        if (configuredPackage.isNotBlank() && screenshotWindow == null) {
+        // Bez ręcznego filtra robimy OCR tylko dla znanej aplikacji kurierskiej.
+        if (screenshotWindow == null) {
+            registerMiss()
+            return
+        }
+
+        val windowPackage = screenshotWindow.root
+            ?.packageName
+            ?.toString()
+            .orEmpty()
+
+        if (
+            configuredPackage.isNotBlank() &&
+            windowPackage.isNotBlank() &&
+            windowPackage != configuredPackage
+        ) {
             registerMiss()
             return
         }
 
         val now = SystemClock.elapsedRealtime()
-        val waitMs = (minimumScreenshotGapMs - (now - lastScreenshotRequestAt)).coerceAtLeast(0L)
+        val waitMs = (minimumScreenshotGapMs - (now - lastScreenshotRequestAt))
+            .coerceAtLeast(0L)
+
         if (waitMs > 0L) {
             scheduleThrottledScan(waitMs)
             return
@@ -112,29 +129,29 @@ class DeliveryAccessibilityService : AccessibilityService() {
         ocrBusy = true
         lastScreenshotRequestAt = now
 
-        val windowPackage = screenshotWindow?.root
-            ?.packageName
-            ?.toString()
-            .orEmpty()
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && screenshotWindow != null) {
-            // Android 14+: screenshot konkretnego okna nie zawiera naszego accessibility overlayu.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            // Android 14+: screenshot konkretnego okna. Overlay nie trafia do obrazu.
             takeScreenshotOfWindow(
                 screenshotWindow.id,
                 mainExecutor,
                 screenshotCallback(
                     maskOverlay = false,
-                    sourcePackageName = windowPackage
+                    sourcePackageName = windowPackage,
+                    cropBounds = null
                 )
             )
         } else {
-            // Android 11-13: screenshot całego ekranu, ale maskujemy wyłącznie rzeczywisty obszar overlayu.
+            // Android 11-13: screenshot całego ekranu. Przycinamy go do okna aplikacji
+            // kurierskiej i maskujemy tylko obszar naszej nakładki.
+            val windowBounds = Rect().also { screenshotWindow.getBoundsInScreen(it) }
+
             takeScreenshot(
                 Display.DEFAULT_DISPLAY,
                 mainExecutor,
                 screenshotCallback(
                     maskOverlay = true,
-                    sourcePackageName = windowPackage
+                    sourcePackageName = windowPackage,
+                    cropBounds = windowBounds
                 )
             )
         }
@@ -142,12 +159,13 @@ class DeliveryAccessibilityService : AccessibilityService() {
 
     private fun screenshotCallback(
         maskOverlay: Boolean,
-        sourcePackageName: String
+        sourcePackageName: String,
+        cropBounds: Rect?
     ) = object : AccessibilityService.TakeScreenshotCallback {
         override fun onSuccess(screenshot: AccessibilityService.ScreenshotResult) {
             val buffer = screenshot.hardwareBuffer
             val hardwareBitmap = Bitmap.wrapHardwareBuffer(buffer, screenshot.colorSpace)
-            val bitmap = hardwareBitmap?.copy(Bitmap.Config.ARGB_8888, true)
+            val bitmap = hardwareBitmap?.copy(Bitmap.Config.ARGB_8888, false)
             buffer.close()
 
             if (bitmap == null) {
@@ -157,8 +175,13 @@ class DeliveryAccessibilityService : AccessibilityService() {
             }
 
             val maskBounds = if (maskOverlay) overlay.screenBounds() else null
-            val prepared = prepareScreenshot(bitmap, maskBounds)
+            val prepared = prepareScreenshot(
+                source = bitmap,
+                maskBounds = maskBounds,
+                cropBounds = cropBounds
+            )
             bitmap.recycle()
+
             runOcr(prepared, sourcePackageName)
         }
 
@@ -200,8 +223,12 @@ class DeliveryAccessibilityService : AccessibilityService() {
         scanner
             .process(InputImage.fromBitmap(bitmap, 0))
             .addOnSuccessListener { result ->
-                val text = result.text
+                // Zamiast polegać wyłącznie na result.text, składamy tekst z linii
+                // posortowanych wg położenia na ekranie. To pomaga przy kartach ofert,
+                // gdzie OCR czasem miesza kolejność elementów.
+                val text = buildOcrText(result)
                 val configuredPackage = prefs.targetPackage.trim()
+
                 val recognizedName = recognizeCourier(sourcePackageName, text)
                     ?: if (
                         configuredPackage.isNotBlank() &&
@@ -240,21 +267,55 @@ class DeliveryAccessibilityService : AccessibilityService() {
             }
     }
 
+    private fun buildOcrText(result: Text): String {
+        val lines = result.textBlocks
+            .flatMap { it.lines }
+            .map { line ->
+                val bounds = line.boundingBox
+                OcrLine(
+                    text = line.text.trim(),
+                    top = bounds?.top ?: Int.MAX_VALUE,
+                    left = bounds?.left ?: Int.MAX_VALUE
+                )
+            }
+            .filter { it.text.isNotBlank() }
+            .sortedWith(compareBy<OcrLine> { it.top }.thenBy { it.left })
+
+        if (lines.isEmpty()) return result.text
+
+        return lines.joinToString("\n") { it.text }
+    }
+
     private fun prepareScreenshot(
         source: Bitmap,
-        maskBounds: Rect?
+        maskBounds: Rect?,
+        cropBounds: Rect?
     ): Bitmap {
-        val mutable = source.copy(Bitmap.Config.ARGB_8888, true)
+        val crop = validatedCrop(source, cropBounds)
+
+        // Tworzymy niezależny bitmap, żeby bezpiecznie móc zwolnić screenshot źródłowy.
+        val working = Bitmap.createBitmap(
+            crop.width(),
+            crop.height(),
+            Bitmap.Config.ARGB_8888
+        )
+
+        Canvas(working).drawBitmap(
+            source,
+            -crop.left.toFloat(),
+            -crop.top.toFloat(),
+            null
+        )
 
         maskBounds?.let { bounds ->
-            val padding = dp(4)
-            val left = (bounds.left - padding).coerceIn(0, mutable.width)
-            val top = (bounds.top - padding).coerceIn(0, mutable.height)
-            val right = (bounds.right + padding).coerceIn(0, mutable.width)
-            val bottom = (bounds.bottom + padding).coerceIn(0, mutable.height)
+            val padding = dp(5)
+            val left = (bounds.left - crop.left - padding).coerceIn(0, working.width)
+            val top = (bounds.top - crop.top - padding).coerceIn(0, working.height)
+            val right = (bounds.right - crop.left + padding).coerceIn(0, working.width)
+            val bottom = (bounds.bottom - crop.top + padding).coerceIn(0, working.height)
 
             if (right > left && bottom > top) {
-                Canvas(mutable).drawRect(
+                Canvas(working).drawRect(
                     left.toFloat(),
                     top.toFloat(),
                     right.toFloat(),
@@ -264,14 +325,33 @@ class DeliveryAccessibilityService : AccessibilityService() {
             }
         }
 
-        val maxWidth = 1080
-        if (mutable.width <= maxWidth) return mutable
+        // Nie ścinamy już każdego screenshotu do 1080 px. Na ekranach 1440p
+        // zachowujemy więcej pikseli małych cyfr, co poprawia OCR.
+        val maxWidth = 1440
+        if (working.width <= maxWidth) return working
 
-        val ratio = maxWidth.toFloat() / mutable.width.toFloat()
-        val newHeight = (mutable.height * ratio).toInt().coerceAtLeast(1)
-        val scaled = Bitmap.createScaledBitmap(mutable, maxWidth, newHeight, true)
-        mutable.recycle()
+        val ratio = maxWidth.toFloat() / working.width.toFloat()
+        val newHeight = (working.height * ratio).toInt().coerceAtLeast(1)
+        val scaled = Bitmap.createScaledBitmap(working, maxWidth, newHeight, true)
+        working.recycle()
         return scaled
+    }
+
+    private fun validatedCrop(source: Bitmap, requested: Rect?): Rect {
+        if (requested == null) {
+            return Rect(0, 0, source.width, source.height)
+        }
+
+        val left = requested.left.coerceIn(0, source.width)
+        val top = requested.top.coerceIn(0, source.height)
+        val right = requested.right.coerceIn(left, source.width)
+        val bottom = requested.bottom.coerceIn(top, source.height)
+
+        if (right - left < 100 || bottom - top < 100) {
+            return Rect(0, 0, source.width, source.height)
+        }
+
+        return Rect(left, top, right, bottom)
     }
 
     private fun findBestWindowForScreenshot(): AccessibilityWindowInfo? {
@@ -284,7 +364,6 @@ class DeliveryAccessibilityService : AccessibilityService() {
 
                 if (pkg.isBlank() || pkg == packageName) return@mapNotNull null
                 if (configuredPackage.isNotBlank() && pkg != configuredPackage) return@mapNotNull null
-
                 if (configuredPackage.isBlank() && !isDeliveryPackage(pkg)) return@mapNotNull null
 
                 var score = 0
@@ -309,11 +388,11 @@ class DeliveryAccessibilityService : AccessibilityService() {
 
             if (pkg.isBlank() || pkg == packageName) continue
             if (configuredPackage.isNotBlank() && pkg != configuredPackage) continue
+            if (configuredPackage.isBlank() && !isDeliveryPackage(pkg)) continue
 
-            val text = buildString { collectText(root, this, 0) }
+            val text = buildAccessibilityText(root)
             val applicationName = recognizeCourier(pkg, text)
 
-            // Bez ręcznego filtra analizujemy tylko rozpoznane aplikacje kurierskie.
             if (configuredPackage.isBlank() && applicationName == null) continue
 
             val offer = OfferParser.parse(text) ?: continue
@@ -348,10 +427,11 @@ class DeliveryAccessibilityService : AccessibilityService() {
             val pkg = root.packageName?.toString().orEmpty()
             val allowed = pkg.isNotBlank() &&
                 pkg != packageName &&
-                (configuredPackage.isBlank() || pkg == configuredPackage)
+                (configuredPackage.isNotBlank() && pkg == configuredPackage ||
+                    configuredPackage.isBlank() && isDeliveryPackage(pkg))
 
             if (allowed) {
-                val text = buildString { collectText(root, this, 0) }
+                val text = buildAccessibilityText(root)
                 val applicationName = recognizeCourier(pkg, text)
 
                 if (configuredPackage.isNotBlank() || applicationName != null) {
@@ -371,6 +451,62 @@ class DeliveryAccessibilityService : AccessibilityService() {
 
         if (hideOnFailure) registerMiss()
         return false
+    }
+
+    private fun buildAccessibilityText(root: AccessibilityNodeInfo): String {
+        val items = mutableListOf<AccessibilityTextItem>()
+        collectVisibleText(root, items, depth = 0)
+
+        return items
+            .distinctBy { item ->
+                "${item.left}:${item.top}:${item.right}:${item.bottom}:${item.text}"
+            }
+            .sortedWith(
+                compareBy<AccessibilityTextItem> { it.top }
+                    .thenBy { it.left }
+            )
+            .joinToString("\n") { it.text }
+    }
+
+    private fun collectVisibleText(
+        node: AccessibilityNodeInfo,
+        out: MutableList<AccessibilityTextItem>,
+        depth: Int
+    ) {
+        if (depth > 60) return
+
+        val visible = runCatching { node.isVisibleToUser }.getOrDefault(true)
+        if (visible) {
+            val bounds = Rect()
+            node.getBoundsInScreen(bounds)
+
+            addAccessibilityText(node.text?.toString(), bounds, out)
+            addAccessibilityText(node.contentDescription?.toString(), bounds, out)
+            addAccessibilityText(node.hintText?.toString(), bounds, out)
+        }
+
+        // Nawet jeśli rodzic nie jest oznaczony jako widoczny, jego dziecko może mieć
+        // użyteczny tekst, dlatego nadal przechodzimy po potomkach.
+        for (index in 0 until node.childCount) {
+            val child = node.getChild(index) ?: continue
+            collectVisibleText(child, out, depth + 1)
+        }
+    }
+
+    private fun addAccessibilityText(
+        raw: String?,
+        bounds: Rect,
+        out: MutableList<AccessibilityTextItem>
+    ) {
+        val value = raw?.trim()?.takeIf { it.isNotBlank() } ?: return
+
+        out += AccessibilityTextItem(
+            text = value,
+            left = bounds.left,
+            top = bounds.top,
+            right = bounds.right,
+            bottom = bounds.bottom
+        )
     }
 
     private fun showOffer(
@@ -409,7 +545,9 @@ class DeliveryAccessibilityService : AccessibilityService() {
         if (
             "uber" in lowerPackage ||
             "ubercab" in lowerPackage ||
-            ("pln" in lowerText && ("confirm" in lowerText || "delivery" in lowerText) && "min" in lowerText)
+            ("pln" in lowerText &&
+                ("confirm" in lowerText || "delivery" in lowerText) &&
+                "min" in lowerText)
         ) {
             return "Uber"
         }
@@ -467,37 +605,6 @@ class DeliveryAccessibilityService : AccessibilityService() {
             packageManager.getApplicationLabel(info).toString()
         }.getOrDefault("Dostawa")
 
-    private fun collectText(
-        node: AccessibilityNodeInfo,
-        out: StringBuilder,
-        depth: Int
-    ) {
-        if (depth > 60) return
-
-        node.text
-            ?.toString()
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
-            ?.let { out.append(it).append('\n') }
-
-        node.contentDescription
-            ?.toString()
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
-            ?.let { out.append(it).append('\n') }
-
-        node.hintText
-            ?.toString()
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
-            ?.let { out.append(it).append('\n') }
-
-        for (index in 0 until node.childCount) {
-            val child = node.getChild(index) ?: continue
-            collectText(child, out, depth + 1)
-        }
-    }
-
     private fun registerMiss() {
         misses++
         if (misses >= 2 && ::overlay.isInitialized) overlay.hide()
@@ -516,5 +623,19 @@ class DeliveryAccessibilityService : AccessibilityService() {
         val applicationName: String,
         val offer: Offer,
         val score: Int
+    )
+
+    private data class AccessibilityTextItem(
+        val text: String,
+        val left: Int,
+        val top: Int,
+        val right: Int,
+        val bottom: Int
+    )
+
+    private data class OcrLine(
+        val text: String,
+        val top: Int,
+        val left: Int
     )
 }
