@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "DeliveryAssistantMVP"
+rootProject.name = "DeliveryAssistant"
 include(":app")

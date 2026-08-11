@@ -1,33 +1,81 @@
-# Delivery Assistant MVP
+# Delivery Assistant
 
-Prototyp Android/Kotlin, który:
+Android/Kotlin — pomocnik do szybkiej oceny widocznej oferty kurierskiej.
 
-1. odbiera zdarzenia z `AccessibilityService`,
-2. czyta tekst z aktualnie widocznego okna,
-3. wyszukuje kwotę (`17,52 zł`), dystans (`3,8 km`) i opcjonalnie czas (`15 min`),
-4. liczy koszt przejazdu, netto, netto/km i netto/h,
-5. pokazuje małą nakładkę `TYPE_ACCESSIBILITY_OVERLAY` nad aplikacją kuriera.
+Aplikacja:
 
-## Ważne
+1. najpierw odczytuje tekst z `AccessibilityService`,
+2. jeśli trzeba, używa OCR z ML Kit na screenshocie,
+3. rozpoznaje kwotę i dystans,
+4. dla **Pyszne.pl** odczytuje planowany odbiór i dostawę, np. `Odbierz na 20:54` / `Dostarcz na 20:57`,
+5. dla **Ubera** wykorzystuje podany w ofercie czas całkowity, np. `26 min total`,
+6. liczy koszt pojazdu, netto, netto/km i netto/h,
+7. pokazuje wynik w małej nakładce nad aplikacją kuriera.
 
-- To jest MVP do testów lokalnych/sideloadingu.
-- Nie wykonuje kliknięć i nie akceptuje zleceń.
-- Jeśli aplikacja kuriera nie udostępnia danych jako tekst dostępności, parser nic nie pokaże. Wtedy trzeba dodać wariant MediaProjection + OCR.
-- Domyślny czas to 15 min, jeśli na ekranie nie ma tekstu typu `15 min`.
-- Dla prywatności najlepiej wpisać dokładny `package name` aplikacji kuriera w ustawieniach MVP.
+## Jak liczony jest czas
+
+### Pyszne.pl
+
+Nie ma już sztucznego domyślnego czasu 15 minut.
+
+Czas oferty jest liczony jako:
+
+`planowana godzina dostawy - aktualna godzina telefonu`
+
+Przykład:
+
+- teraz: `20:42`,
+- odbiór: `20:54`,
+- planowana dostawa: `20:57`,
+- czas do dostawy: `15 min`.
+
+Obsługiwane jest również przejście przez północ, np. `23:58 -> 00:10 = 12 min`.
+
+### Uber
+
+Jeżeli oferta zawiera np. `26 min (5.4 km) total`, aplikacja używa bezpośrednio `26 min`.
+
+### Brak czasu
+
+Jeżeli nie da się wiarygodnie ustalić czasu, aplikacja **nie zgaduje**. Nakładka pokazuje `BRAK CZASU`, a stawka godzinowa pozostaje pusta.
+
+## Formuły
+
+`netto = kwota - dystans * koszt_pojazdu_na_km`
+
+`netto/km = netto / dystans`
+
+`netto/h = netto / czas_min * 60`
+
+Wartość netto może być ujemna — nie jest już sztucznie ograniczana do zera.
+
+Oferta jest oznaczona jako opłacalna tylko wtedy, gdy znamy czas i jednocześnie spełnia próg netto/km oraz netto/h.
+
+## OCR i nakładka
+
+- Android 14+: aplikacja próbuje robić screenshot konkretnego okna kuriera przez `takeScreenshotOfWindow()`, dzięki czemu własna nakładka nie zasłania OCR.
+- Android 11-13: screenshot całego ekranu maskuje tylko dokładny obszar własnej nakładki, zamiast dużego stałego prostokąta.
+- Screenshoty są ograniczane czasowo, aby nie wywoływać błędu `ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT`.
+- Nakładka ma `FLAG_NOT_TOUCHABLE`, więc nie blokuje przycisków aplikacji kurierskiej.
+
+## Filtrowanie aplikacji
+
+Domyślnie Delivery Assistant próbuje automatycznie rozpoznawać Pyszne.pl i Ubera. W ustawieniach zaawansowanych można wpisać dokładny `package name`, aby ograniczyć analizę tylko do jednej aplikacji.
+
+Jeśli filtr jest ustawiony, jest faktycznie respektowany zarówno podczas odczytu Accessibility, jak i przy wyborze okna do OCR.
 
 ## Uruchomienie
 
-1. Otwórz katalog w aktualnym Android Studio.
+1. Otwórz projekt w aktualnym Android Studio.
 2. Poczekaj na Gradle Sync.
-3. Zbuduj i zainstaluj apkę na telefonie z Androidem 8+.
-4. Otwórz MVP i ustaw progi opłacalności.
-5. Naciśnij **Włącz usługę** i w ustawieniach Androida aktywuj `Delivery Assistant - odczyt oferty`.
-6. Otwórz aplikację kuriera i wyświetl ofertę.
+3. Zbuduj i zainstaluj APK na Androidzie 8+.
+4. Ustaw koszt pojazdu i progi opłacalności.
+5. Naciśnij **Włącz analizę ofert** i aktywuj `Delivery Assistant - odczyt oferty` w ustawieniach dostępności.
+6. Otwórz Pyszne.pl albo Ubera i wyświetl ofertę.
 
-## Jak ustalić package name aplikacji kuriera
+## Package name — opcjonalnie
 
-Najprościej przez ADB na komputerze po otwarciu aplikacji:
+Zwykle nie trzeba nic wpisywać. Jeśli chcesz ograniczyć aplikację do jednego pakietu, możesz ustalić go przez ADB:
 
 ```bash
 adb shell dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'
@@ -39,33 +87,26 @@ albo:
 adb shell pm list packages | grep -i courier
 ```
 
-Wynik w stylu `com.example.courier` wpisz do pola w MVP.
+## Bezpieczeństwo działania
 
-## Formuła MVP
+- aplikacja niczego automatycznie nie akceptuje,
+- nie wykonuje kliknięć,
+- nie wysyła odczytanych ofert na serwer,
+- obliczenia wykonywane są lokalnie na telefonie.
 
-`netto = kwota - dystans * koszt_pojazdu_na_km`
+## Testy
 
-`netto/km = netto / dystans`
+Testy jednostkowe obejmują m.in.:
 
-`netto/h = netto / czas_min * 60`
-
-Zlecenie jest oznaczane jako opłacalne, gdy jednocześnie spełnia próg netto/km i netto/h.
-
-## Co dodać w następnej iteracji
-
-- automatyczne wykrywanie package name,
-- zapamiętywanie historii ofert,
-- pływający przycisk do zmiany progów,
-- pozycjonowanie/przeciąganie overlayu,
-- parser dopasowany do konkretnej aplikacji Pyszne/Just Eat Courier,
-- opcjonalny OCR przez MediaProjection, jeśli Accessibility API nie widzi tekstu,
-- eksport statystyk dziennych.
-
----
+- format Pyszne.pl z godzinami odbioru i dostawy,
+- OCR z kropką zamiast dwukropka w godzinie,
+- format Ubera `PLN25.42 / 26 min / 5.4 km`,
+- kilka ofert na jednym ekranie,
+- liczenie czasu do dostawy przez północ,
+- brak czasu bez wymyślania wartości zastępczej,
+- zachowanie ujemnego netto.
 
 ## APK bez Android Studio
 
-W tej paczce znajduje się gotowy workflow GitHub Actions: `.github/workflows/build-apk.yml`.
-Dokładna instrukcja: **`INSTRUKCJA-GITHUB-APK.md`**.
-
-Ręczne uruchomienie workflow (`Actions -> Build APK -> Run workflow`) buduje testowy APK i publikuje go jako testowy GitHub Release, żeby można było pobrać `.apk` bezpośrednio na telefon.
+Workflow `.github/workflows/build-apk.yml` uruchamia testy i buduje debug APK.
+Szczegóły: `INSTRUKCJA-GITHUB-APK.md`.
