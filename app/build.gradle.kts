@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -18,8 +20,6 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    // Publiczny klucz tylko do naszych testowych APK.
-    // Dzięki temu kolejne buildy z GitHub Actions instalują się jako aktualizacja.
     signingConfigs {
         getByName("debug") {
             storeFile = rootProject.file("debug-test.keystore")
@@ -37,14 +37,17 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+}
 
-    kotlinOptions {
-        jvmTarget = "17"
+kotlin {
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_17
     }
 }
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2026.06.00")
+
     implementation(composeBom)
     androidTestImplementation(composeBom)
 
