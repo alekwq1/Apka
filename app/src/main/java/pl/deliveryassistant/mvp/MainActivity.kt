@@ -1,5 +1,7 @@
 package pl.deliveryassistant.mvp
 
+import pl.fujara.app.BuildConfig
+
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
