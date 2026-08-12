@@ -543,13 +543,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
         applicationName: String,
         packageName: String = ""
     ) {
-        val rules = ProfitabilityCalculator.Rules(
-            vehicleCostPerKm = prefs.vehicleCostPerKm,
-            minimumNetPerKm = prefs.minimumNetPerKm,
-            toleranceNetPerKm = prefs.toleranceNetPerKm,
-            minimumNetPerHour = prefs.minimumNetPerHour,
-            toleranceNetPerHour = prefs.toleranceNetPerHour
-        )
+        val rules = prefs.rulesForCourier(applicationName)
 
         val now = LocalTime.now()
         val currentMinuteOfDay = now.hour * 60 + now.minute
@@ -660,8 +654,10 @@ class DeliveryAccessibilityService : AccessibilityService() {
         }.getOrDefault("Dostawa")
 
     private fun registerMiss() {
+        // The overlay has its own user-configurable timeout. Keeping it visible
+        // for a short moment after the offer disappears makes the result easier
+        // to read and matches the display-time setting.
         misses++
-        if (misses >= 2 && ::overlay.isInitialized) overlay.hide()
     }
 
     private fun dp(value: Int): Int =

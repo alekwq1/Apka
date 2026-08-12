@@ -110,3 +110,18 @@ Testy jednostkowe obejmują m.in.:
 
 Workflow `.github/workflows/build-apk.yml` uruchamia testy i buduje debug APK.
 Szczegóły: `INSTRUKCJA-GITHUB-APK.md`.
+
+## Nowy interfejs 0.4.0
+
+Wersja 0.4.0 dodaje bardziej czytelny przepływ pierwszego uruchomienia i ekran główny inspirowany aplikacjami kurierskimi:
+
+- ekran wyjaśniający dostęp do ekranu przed otwarciem ustawień Androida,
+- kreator konfiguracji Accessibility i ustawień pracy w tle,
+- prosty ekran Start / Stop z informacją czy wykrywanie ofert jest aktywne,
+- osobne progi dla Global / Uber / Wolt / Glovo / Bolt / Pyszne,
+- wybór informacji pokazywanych na nakładce,
+- regulację przezroczystości i czasu wyświetlania nakładki,
+- język interfejsu: polski, angielski, ukraiński i rosyjski,
+- ustawienia zaawansowane schowane domyślnie.
+
+Nakładka nadal pozostaje w prawym górnym rogu i nie przechwytuje dotyku.

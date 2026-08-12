@@ -7,6 +7,8 @@ import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -19,19 +21,21 @@ class OverlayController(
     private val service: AccessibilityService
 ) {
     private val windowManager = service.getSystemService(WindowManager::class.java)
+    private val prefs = AppPrefs(service)
+    private val handler = Handler(Looper.getMainLooper())
 
     private var root: LinearLayout? = null
     private var appIcon: ImageView? = null
     private var appName: TextView? = null
     private var status: TextView? = null
-    private var amountValue: TextView? = null
-    private var netValue: TextView? = null
-    private var routeValue: TextView? = null
-    private var timeValue: TextView? = null
-    private var hourlyValue: TextView? = null
-    private var perKmValue: TextView? = null
+    private var amountRow: MetricRow? = null
+    private var distanceRow: MetricRow? = null
+    private var rateRow: MetricRow? = null
     private var scheduleText: TextView? = null
     private var timeSourceText: TextView? = null
+    private var overlayLanguage = ""
+
+    private val hideRunnable = Runnable { root?.visibility = View.GONE }
 
     private val green = Color.rgb(83, 205, 115)
     private val red = Color.rgb(245, 92, 92)
@@ -45,7 +49,12 @@ class OverlayController(
         applicationName: String,
         applicationIcon: Drawable?
     ) {
-        if (root == null) createOverlay()
+        val language = prefs.languageCode
+        if (root == null || overlayLanguage != language) {
+            removeOverlayView()
+            createOverlay(language)
+            overlayLanguage = language
+        }
 
         val accent = when (result.status) {
             ProfitabilityStatus.PROFITABLE -> green
@@ -65,58 +74,78 @@ class OverlayController(
 
         status?.apply {
             text = when (result.status) {
-                ProfitabilityStatus.PROFITABLE -> "OPŁACALNE"
-                ProfitabilityStatus.ALMOST_PROFITABLE -> "PRAWIE OPŁACALNE"
-                ProfitabilityStatus.UNPROFITABLE -> "NIEOPŁACALNE"
-                ProfitabilityStatus.NO_TIME -> "BRAK CZASU"
+                ProfitabilityStatus.PROFITABLE -> tr(language, "OPŁACALNE", "PROFITABLE", "ВИГІДНО", "ВЫГОДНО")
+                ProfitabilityStatus.ALMOST_PROFITABLE -> tr(language, "PRAWIE OPŁACALNE", "ALMOST OK", "МАЙЖЕ ВИГІДНО", "ПОЧТИ ВЫГОДНО")
+                ProfitabilityStatus.UNPROFITABLE -> tr(language, "NIEOPŁACALNE", "NOT PROFITABLE", "НЕВИГІДНО", "НЕВЫГОДНО")
+                ProfitabilityStatus.NO_TIME -> tr(language, "BRAK CZASU", "NO TIME", "НЕМАЄ ЧАСУ", "НЕТ ВРЕМЕНИ")
             }
             setTextColor(accent)
             background = pillBackground(accent)
         }
 
-        amountValue?.text = money(result.grossPln)
-        netValue?.text = money(result.netPln)
-        routeValue?.text = "${num(result.distanceKm)} km"
-        timeValue?.text = result.durationMinutes?.let { "$it min" } ?: "--"
-        hourlyValue?.text = result.netPerHour?.let { "${money(it)}/h" } ?: "--"
-        perKmValue?.text = result.netPerKm?.let { "${money(it)}/km" } ?: "--"
+        amountRow?.leftValue?.text = money(result.grossPln, language)
+        amountRow?.rightValue?.text = money(result.netPln, language)
+        distanceRow?.leftValue?.text = "${num(result.distanceKm, language)} km"
+        distanceRow?.rightValue?.text = result.durationMinutes?.let { "$it min" } ?: "--"
+        rateRow?.leftValue?.text = result.netPerHour?.let { "${money(it, language)}/h" } ?: "--"
+        rateRow?.rightValue?.text = result.netPerKm?.let { "${money(it, language)}/km" } ?: "--"
 
-        netValue?.setTextColor(accent)
-        hourlyValue?.setTextColor(if (result.netPerHour != null) accent else gray)
-        perKmValue?.setTextColor(if (result.netPerKm != null) accent else gray)
-        amountValue?.setTextColor(white)
-        routeValue?.setTextColor(white)
-        timeValue?.setTextColor(if (result.durationMinutes != null) white else amber)
+        amountRow?.rightValue?.setTextColor(accent)
+        rateRow?.leftValue?.setTextColor(if (result.netPerHour != null) accent else gray)
+        rateRow?.rightValue?.setTextColor(if (result.netPerKm != null) accent else gray)
+        amountRow?.leftValue?.setTextColor(white)
+        distanceRow?.leftValue?.setTextColor(white)
+        distanceRow?.rightValue?.setTextColor(if (result.durationMinutes != null) white else amber)
 
-        val schedule = buildScheduleLabel(result)
+        applyMetricVisibility(
+            amountRow,
+            prefs.showAmount,
+            prefs.showAfterCosts
+        )
+        applyMetricVisibility(
+            distanceRow,
+            prefs.showDistance,
+            prefs.showTime
+        )
+        applyMetricVisibility(
+            rateRow,
+            prefs.showHourly,
+            prefs.showPerKm
+        )
+
+        val schedule = buildScheduleLabel(result, language)
         scheduleText?.apply {
             text = schedule
-            visibility = if (schedule.isBlank()) View.GONE else View.VISIBLE
+            visibility = if (prefs.showTime && schedule.isNotBlank()) View.VISIBLE else View.GONE
         }
 
         timeSourceText?.apply {
             text = when (result.durationSource) {
-                DurationSource.DIRECT_TOTAL -> "czas z oferty"
-                DurationSource.PLANNED_DELIVERY -> "czas: teraz → planowana dostawa"
-                DurationSource.UNKNOWN -> "brak wiarygodnego czasu dostawy"
+                DurationSource.DIRECT_TOTAL -> tr(language, "czas z oferty", "time from offer", "час з пропозиції", "время из предложения")
+                DurationSource.PLANNED_DELIVERY -> tr(language, "czas: teraz → planowana dostawa", "time: now → planned delivery", "час: зараз → планова доставка", "время: сейчас → плановая доставка")
+                DurationSource.UNKNOWN -> tr(language, "brak wiarygodnego czasu dostawy", "no reliable delivery time", "немає надійного часу доставки", "нет надежного времени доставки")
             }
             setTextColor(if (result.durationSource == DurationSource.UNKNOWN) amber else gray)
+            visibility = if (prefs.showTime) View.VISIBLE else View.GONE
         }
 
-        root?.background = panelBackground(accent)
+        root?.background = panelBackground(accent, prefs.overlayOpacityPercent)
         root?.visibility = View.VISIBLE
+
+        handler.removeCallbacks(hideRunnable)
+        handler.postDelayed(hideRunnable, prefs.overlayDisplaySeconds * 1000L)
     }
 
     fun hide() {
+        handler.removeCallbacks(hideRunnable)
         root?.visibility = View.GONE
     }
 
     fun destroy() {
-        root?.let { runCatching { windowManager.removeView(it) } }
-        root = null
+        handler.removeCallbacks(hideRunnable)
+        removeOverlayView()
     }
 
-    /** Dokładny obszar overlayu w pikselach ekranu - używany do maskowania OCR na Androidzie 11-13. */
     fun screenBounds(): Rect? {
         val view = root ?: return null
         if (view.visibility != View.VISIBLE || view.width <= 0 || view.height <= 0) return null
@@ -131,11 +160,19 @@ class OverlayController(
         )
     }
 
-    private fun createOverlay() {
+    private fun removeOverlayView() {
+        root?.let { runCatching { windowManager.removeView(it) } }
+        root = null
+        amountRow = null
+        distanceRow = null
+        rateRow = null
+    }
+
+    private fun createOverlay(language: String) {
         val panel = LinearLayout(service).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(10), dp(9), dp(10), dp(9))
-            background = panelBackground(green)
+            background = panelBackground(green, prefs.overlayOpacityPercent)
         }
 
         val header = LinearLayout(service).apply {
@@ -159,7 +196,7 @@ class OverlayController(
         }
 
         appName = TextView(service).apply {
-            text = "Dostawa"
+            text = tr(language, "Dostawa", "Delivery", "Доставка", "Доставка")
             textSize = 12.5f
             setTextColor(white)
             setTypeface(typeface, Typeface.BOLD)
@@ -182,7 +219,7 @@ class OverlayController(
         panel.addView(header)
 
         status = TextView(service).apply {
-            text = "OPŁACALNE"
+            text = tr(language, "OPŁACALNE", "PROFITABLE", "ВИГІДНО", "ВЫГОДНО")
             textSize = 9f
             setTypeface(typeface, Typeface.BOLD)
             setPadding(dp(7), dp(3), dp(7), dp(3))
@@ -201,26 +238,20 @@ class OverlayController(
             }
         )
 
-        panel.addView(
-            metricRow("KWOTA", "PO KOSZTACH").also {
-                amountValue = it.first
-                netValue = it.second
-            }.third
-        )
+        amountRow = metricRow(
+            tr(language, "KWOTA", "AMOUNT", "СУМА", "СУММА"),
+            tr(language, "PO KOSZTACH", "AFTER COSTS", "ПІСЛЯ ВИТРАТ", "ПОСЛЕ РАСХОДОВ")
+        ).also { panel.addView(it.row) }
 
-        panel.addView(
-            metricRow("TRASA", "DO DOSTAWY").also {
-                routeValue = it.first
-                timeValue = it.second
-            }.third
-        )
+        distanceRow = metricRow(
+            tr(language, "TRASA", "DISTANCE", "ВІДСТАНЬ", "РАССТОЯНИЕ"),
+            tr(language, "DO DOSTAWY", "TIME", "ЧАС", "ВРЕМЯ")
+        ).also { panel.addView(it.row) }
 
-        panel.addView(
-            metricRow("PO KOSZT./H", "PO KOSZT./KM").also {
-                hourlyValue = it.first
-                perKmValue = it.second
-            }.third
-        )
+        rateRow = metricRow(
+            tr(language, "PO KOSZT./H", "AFTER COSTS/H", "ПІСЛЯ ВИТР./Г", "ПОСЛЕ РАСХ./Ч"),
+            tr(language, "PO KOSZT./KM", "AFTER COSTS/KM", "ПІСЛЯ ВИТР./КМ", "ПОСЛЕ РАСХ./КМ")
+        ).also { panel.addView(it.row) }
 
         scheduleText = TextView(service).apply {
             textSize = 8.5f
@@ -232,7 +263,7 @@ class OverlayController(
         panel.addView(scheduleText)
 
         timeSourceText = TextView(service).apply {
-            text = "czas z oferty"
+            text = tr(language, "czas z oferty", "time from offer", "час з пропозиції", "время из предложения")
             textSize = 7.5f
             setTextColor(gray)
             maxLines = 1
@@ -262,7 +293,7 @@ class OverlayController(
     private fun metricRow(
         leftLabel: String,
         rightLabel: String
-    ): Triple<TextView, TextView, LinearLayout> {
+    ): MetricRow {
         val row = LinearLayout(service).apply {
             orientation = LinearLayout.HORIZONTAL
         }
@@ -271,18 +302,24 @@ class OverlayController(
         val right = metricCell(rightLabel)
 
         row.addView(
-            left.first,
+            left.container,
             LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         )
         row.addView(
-            right.first,
+            right.container,
             LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         )
 
-        return Triple(left.second, right.second, row)
+        return MetricRow(
+            row = row,
+            leftCell = left.container,
+            leftValue = left.value,
+            rightCell = right.container,
+            rightValue = right.value
+        )
     }
 
-    private fun metricCell(labelText: String): Pair<LinearLayout, TextView> {
+    private fun metricCell(labelText: String): MetricCell {
         val container = LinearLayout(service).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, dp(2), dp(4), dp(3))
@@ -305,24 +342,42 @@ class OverlayController(
 
         container.addView(label)
         container.addView(value)
-        return Pair(container, value)
+        return MetricCell(container, value)
     }
 
-    private fun buildScheduleLabel(result: Profitability): String {
+    private fun applyMetricVisibility(
+        metricRow: MetricRow?,
+        leftVisible: Boolean,
+        rightVisible: Boolean
+    ) {
+        metricRow ?: return
+        metricRow.row.visibility = if (leftVisible || rightVisible) View.VISIBLE else View.GONE
+        metricRow.leftCell.visibility = if (leftVisible) View.VISIBLE else View.GONE
+        metricRow.rightCell.visibility = if (rightVisible) View.VISIBLE else View.GONE
+    }
+
+    private fun buildScheduleLabel(result: Profitability, language: String): String {
         val pickup = result.pickupTimeMinutesOfDay?.let(::clock)
         val delivery = result.deliveryTimeMinutesOfDay?.let(::clock)
 
         return when {
-            pickup != null && delivery != null -> "Odbiór $pickup  •  Dostawa $delivery"
-            delivery != null -> "Planowana dostawa $delivery"
-            pickup != null -> "Planowany odbiór $pickup"
+            pickup != null && delivery != null -> tr(
+                language,
+                "Odbiór $pickup  •  Dostawa $delivery",
+                "Pickup $pickup  •  Delivery $delivery",
+                "Забір $pickup  •  Доставка $delivery",
+                "Забрать $pickup  •  Доставка $delivery"
+            )
+            delivery != null -> tr(language, "Planowana dostawa $delivery", "Planned delivery $delivery", "Планова доставка $delivery", "Плановая доставка $delivery")
+            pickup != null -> tr(language, "Planowany odbiór $pickup", "Planned pickup $pickup", "Плановий забір $pickup", "Плановый забор $pickup")
             else -> ""
         }
     }
 
-    private fun panelBackground(borderColor: Int): GradientDrawable =
+    private fun panelBackground(borderColor: Int, opacityPercent: Int): GradientDrawable =
         GradientDrawable().apply {
-            setColor(Color.argb(238, 18, 21, 26))
+            val alpha = (255 * opacityPercent.coerceIn(35, 100) / 100f).toInt()
+            setColor(Color.argb(alpha, 18, 21, 26))
             cornerRadius = dp(11).toFloat()
             setStroke(dp(1), borderColor)
         }
@@ -344,11 +399,26 @@ class OverlayController(
     private fun dp(value: Int): Int =
         (value * service.resources.displayMetrics.density).toInt()
 
-    private fun money(value: Double): String =
-        String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", value)
+    private fun money(value: Double, language: String): String =
+        String.format(localeFor(language), "%.2f zł", value)
 
-    private fun num(value: Double): String =
-        String.format(Locale.forLanguageTag("pl-PL"), "%.2f", value)
+    private fun num(value: Double, language: String): String =
+        String.format(localeFor(language), "%.2f", value)
+
+    private fun localeFor(language: String): Locale = when (language) {
+        "en" -> Locale.US
+        "uk" -> Locale.forLanguageTag("uk-UA")
+        "ru" -> Locale.forLanguageTag("ru-RU")
+        else -> Locale.forLanguageTag("pl-PL")
+    }
+
+    private fun tr(language: String, pl: String, en: String, uk: String, ru: String): String =
+        when (language) {
+            "en" -> en
+            "uk" -> uk
+            "ru" -> ru
+            else -> pl
+        }
 
     private fun clock(minutesOfDay: Int): String {
         val normalized = ((minutesOfDay % (24 * 60)) + (24 * 60)) % (24 * 60)
@@ -356,4 +426,17 @@ class OverlayController(
         val minute = normalized % 60
         return String.format(Locale.ROOT, "%02d:%02d", hour, minute)
     }
+
+    private data class MetricCell(
+        val container: LinearLayout,
+        val value: TextView
+    )
+
+    private data class MetricRow(
+        val row: LinearLayout,
+        val leftCell: LinearLayout,
+        val leftValue: TextView,
+        val rightCell: LinearLayout,
+        val rightValue: TextView
+    )
 }
