@@ -32,10 +32,6 @@ class AppPrefs(context: Context) {
         get() = prefs.getInt("overlay_opacity_percent", 88).coerceIn(35, 100)
         set(value) = prefs.edit().putInt("overlay_opacity_percent", value.coerceIn(35, 100)).apply()
 
-    var overlayDisplaySeconds: Int
-        get() = prefs.getInt("overlay_display_seconds", 30).coerceIn(5, 60)
-        set(value) = prefs.edit().putInt("overlay_display_seconds", value.coerceIn(5, 60)).apply()
-
     var showHourly: Boolean
         get() = prefs.getBoolean("overlay_show_hourly", true)
         set(value) = prefs.edit().putBoolean("overlay_show_hourly", value).apply()

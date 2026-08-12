@@ -34,9 +34,12 @@ class DeliveryAccessibilityService : AccessibilityService() {
     private var pendingImmediateScan: Runnable? = null
     private var pendingThrottledScan: Runnable? = null
     private var lastScreenshotRequestAt = 0L
+    private var lastDeliverySignalAt = 0L
+    private var lastDeliveryPackage = ""
 
-    private val scanIntervalMs = 1600L
-    private val minimumScreenshotGapMs = 900L
+    private val scanIntervalMs = 1200L
+    private val minimumScreenshotGapMs = 700L
+    private val deliverySignalKeepAliveMs = 20_000L
 
     private val pollRunnable = object : Runnable {
         override fun run() {
@@ -73,6 +76,20 @@ class DeliveryAccessibilityService : AccessibilityService() {
             return
         }
 
+        if (
+            eventPackage == configuredPackage && configuredPackage.isNotBlank() ||
+            isDeliveryPackage(eventPackage)
+        ) {
+            lastDeliverySignalAt = SystemClock.elapsedRealtime()
+            lastDeliveryPackage = eventPackage
+        } else if (
+            configuredPackage.isBlank() &&
+            !isGalleryPackage(eventPackage) &&
+            !::overlay.isInitialized
+        ) {
+            return
+        }
+
         pendingImmediateScan?.let { handler.removeCallbacks(it) }
         pendingImmediateScan = Runnable {
             pendingImmediateScan = null
@@ -102,39 +119,30 @@ class DeliveryAccessibilityService : AccessibilityService() {
             return
         }
 
-        // First try accessibility text. Gallery screenshots are handled by OCR below.
-        if (scanAccessibilityOnly(hideOnFailure = false)) return
-
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            registerMiss()
+            if (!scanAccessibilityOnly(hideOnFailure = false)) registerMiss()
             return
         }
 
-        val screenshotWindow = findBestWindowForScreenshot()
-        val configuredPackage = prefs.targetPackage.trim()
-
-        // Bez ręcznego filtra robimy OCR tylko dla znanej aplikacji kurierskiej.
-        if (screenshotWindow == null) {
-            registerMiss()
-            return
-        }
-
-        val windowPackage = screenshotWindow.root
-            ?.packageName
-            ?.toString()
-            .orEmpty()
-
-        if (
-            configuredPackage.isNotBlank() &&
-            windowPackage.isNotBlank() &&
-            windowPackage != configuredPackage &&
-            !isGalleryPackage(windowPackage)
-        ) {
-            registerMiss()
-            return
-        }
-
+        val deliveryWindow = findBestWindowForScreenshot()
         val now = SystemClock.elapsedRealtime()
+        val recentDeliverySignal = now - lastDeliverySignalAt <= deliverySignalKeepAliveMs
+        val overlayVisible = ::overlay.isInitialized && overlay.isVisible()
+
+        /*
+         * Na Androidzie 11+ robimy OCR z CALEGO aktualnie widocznego ekranu,
+         * ale tylko wtedy, gdy mamy sygnal z aplikacji kurierskiej, jej okno jest
+         * widoczne albo nasza nakladka nadal pokazuje ostatnia oferte.
+         *
+         * To naprawia przypadek Ubera, w ktorym karta oferty jest wyswietlana nad
+         * ekranem glownym telefonu. takeScreenshotOfWindow() potrafil wtedy zrobic
+         * zrzut launchera bez samej karty. Zrzut calego displayu widzi to, co user.
+         */
+        if (deliveryWindow == null && !recentDeliverySignal && !overlayVisible) {
+            if (!scanAccessibilityOnly(hideOnFailure = false)) registerMiss()
+            return
+        }
+
         val waitMs = (minimumScreenshotGapMs - (now - lastScreenshotRequestAt))
             .coerceAtLeast(0L)
 
@@ -143,35 +151,27 @@ class DeliveryAccessibilityService : AccessibilityService() {
             return
         }
 
+        val windowPackage = deliveryWindow
+            ?.root
+            ?.packageName
+            ?.toString()
+            .orEmpty()
+            .ifBlank { lastDeliveryPackage }
+
         ocrBusy = true
         lastScreenshotRequestAt = now
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            // Android 14+: screenshot konkretnego okna. Overlay nie trafia do obrazu.
-            takeScreenshotOfWindow(
-                screenshotWindow.id,
-                mainExecutor,
-                screenshotCallback(
-                    maskOverlay = false,
-                    sourcePackageName = windowPackage,
-                    cropBounds = null
-                )
+        // Celowo screenshot calego displayu na wszystkich wersjach Androida 11+.
+        // Nasza nakladka jest maskowana przed OCR, wiec nie czytamy wlasnych liczb.
+        takeScreenshot(
+            Display.DEFAULT_DISPLAY,
+            mainExecutor,
+            screenshotCallback(
+                maskOverlay = true,
+                sourcePackageName = windowPackage,
+                cropBounds = null
             )
-        } else {
-            // Android 11-13: screenshot całego ekranu. Przycinamy go do okna aplikacji
-            // kurierskiej i maskujemy tylko obszar naszej nakładki.
-            val windowBounds = Rect().also { screenshotWindow.getBoundsInScreen(it) }
-
-            takeScreenshot(
-                Display.DEFAULT_DISPLAY,
-                mainExecutor,
-                screenshotCallback(
-                    maskOverlay = true,
-                    sourcePackageName = windowPackage,
-                    cropBounds = windowBounds
-                )
-            )
-        }
+        )
     }
 
     private fun screenshotCallback(
@@ -240,37 +240,38 @@ class DeliveryAccessibilityService : AccessibilityService() {
         scanner
             .process(InputImage.fromBitmap(bitmap, 0))
             .addOnSuccessListener { result ->
-                // Zamiast polegać wyłącznie na result.text, składamy tekst z linii
-                // posortowanych wg położenia na ekranie. To pomaga przy kartach ofert,
-                // gdzie OCR czasem miesza kolejność elementów.
-                val text = buildOcrText(result)
                 val configuredPackage = prefs.targetPackage.trim()
+                val recognitionText = OcrTextResolver.recognitionText(result)
+                val resolved = OcrTextResolver.resolve(result)
 
-                val recognizedName = recognizeCourier(sourcePackageName, text)
+                val recognizedName = recognizeCourier(sourcePackageName, recognitionText)
                     ?: if (
                         configuredPackage.isNotBlank() &&
                         sourcePackageName == configuredPackage
                     ) {
                         appLabel(sourcePackageName)
+                    } else if (isDeliveryPackage(sourcePackageName)) {
+                        appLabel(sourcePackageName)
                     } else {
                         null
                     }
 
-                if (recognizedName != null) {
-                    val offer = OfferParser.parse(text)
-                    if (offer != null) {
-                        misses = 0
-                        showOffer(
-                            offer = offer,
-                            applicationName = recognizedName,
-                            packageName = if (isGalleryPackage(sourcePackageName)) {
-                                ""
-                            } else {
-                                sourcePackageName
-                            }
-                        )
-                        return@addOnSuccessListener
+                if (recognizedName != null && resolved != null) {
+                    misses = 0
+                    lastDeliverySignalAt = SystemClock.elapsedRealtime()
+                    if (sourcePackageName.isNotBlank() && isDeliveryPackage(sourcePackageName)) {
+                        lastDeliveryPackage = sourcePackageName
                     }
+                    showOffer(
+                        offer = resolved.offer,
+                        applicationName = recognizedName,
+                        packageName = if (isGalleryPackage(sourcePackageName)) {
+                            ""
+                        } else {
+                            sourcePackageName
+                        }
+                    )
+                    return@addOnSuccessListener
                 }
 
                 if (!scanAccessibilityOnly(hideOnFailure = false)) {
@@ -654,10 +655,14 @@ class DeliveryAccessibilityService : AccessibilityService() {
         }.getOrDefault("Dostawa")
 
     private fun registerMiss() {
-        // The overlay has its own user-configurable timeout. Keeping it visible
-        // for a short moment after the offer disappears makes the result easier
-        // to read and matches the display-time setting.
         misses++
+
+        // Nakladka nie ma juz sztucznego timera. Jest widoczna tak dlugo, jak
+        // wykrywamy karte oferty. Dwa kolejne pudla daja niewielka tolerancje na
+        // pojedyncza klatke OCR, ale po zniknieciu oferty panel sam znika.
+        if (misses >= 2 && ::overlay.isInitialized) {
+            overlay.hide()
+        }
     }
 
     private fun dp(value: Int): Int =

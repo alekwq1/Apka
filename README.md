@@ -1,4 +1,14 @@
-# Delivery Assistant
+# FUJARA — opłacalność dostaw
+
+**Nie bądź fujarą. Sprawdź marżę zanim przyjmiesz zlecenie.**
+
+FUJARA analizuje widoczną kartę oferty kurierskiej, liczy wynik po ustawionych kosztach pojazdu i pokazuje małą, nieklikalną nakładkę z PLN/km, PLN/h, dystansem, czasem i statusem opłacalności.
+
+Wersja 0.5.0 usuwa stały timer nakładki: panel żyje razem z ofertą. Poprawia też odczyt kart Ubera wyświetlanych jako pływające okno oraz wybór prawidłowej kwoty, gdy drzewo Accessibility zawiera ukryte wartości.
+
+---
+
+# FUJARA (stara dokumentacja techniczna)
 
 Android/Kotlin — pomocnik do szybkiej oceny widocznej oferty kurierskiej.
 
@@ -60,7 +70,7 @@ Oferta jest oznaczona jako opłacalna tylko wtedy, gdy znamy czas i jednocześni
 
 ## Filtrowanie aplikacji
 
-Domyślnie Delivery Assistant próbuje automatycznie rozpoznawać Pyszne.pl i Ubera. W ustawieniach zaawansowanych można wpisać dokładny `package name`, aby ograniczyć analizę tylko do jednej aplikacji.
+Domyślnie FUJARA próbuje automatycznie rozpoznawać Pyszne.pl i Ubera. W ustawieniach zaawansowanych można wpisać dokładny `package name`, aby ograniczyć analizę tylko do jednej aplikacji.
 
 Jeśli filtr jest ustawiony, jest faktycznie respektowany zarówno podczas odczytu Accessibility, jak i przy wyborze okna do OCR.
 
@@ -70,7 +80,7 @@ Jeśli filtr jest ustawiony, jest faktycznie respektowany zarówno podczas odczy
 2. Poczekaj na Gradle Sync.
 3. Zbuduj i zainstaluj APK na Androidzie 8+.
 4. Ustaw koszt pojazdu i progi opłacalności.
-5. Naciśnij **Włącz analizę ofert** i aktywuj `Delivery Assistant - odczyt oferty` w ustawieniach dostępności.
+5. Naciśnij **Włącz analizę ofert** i aktywuj `FUJARA - analiza oferty` w ustawieniach dostępności.
 6. Otwórz Pyszne.pl albo Ubera i wyświetl ofertę.
 
 ## Package name — opcjonalnie

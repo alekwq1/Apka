@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Delivery Assistant</string>
-    <string name="accessibility_description">Odczytuje wyłącznie widoczne oferty kurierskie i pokazuje lokalnie wyliczoną opłacalność. Nie klika i nie akceptuje zleceń.</string>
+    <string name="app_name">FUJARA</string>
+    <string name="accessibility_description">Analizuje widoczne karty ofert kurierskich i lokalnie oblicza opłacalność po kosztach pojazdu. Nie klika i nie akceptuje zleceń.</string>
 </resources>

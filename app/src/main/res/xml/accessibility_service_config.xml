@@ -3,7 +3,7 @@
 <accessibility-service
     xmlns:android="http://schemas.android.com/apk/res/android"
 
-    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeWindowsChanged"
 
     android:accessibilityFeedbackType="feedbackGeneric"
 
@@ -12,6 +12,8 @@
     android:canRetrieveWindowContent="true"
 
     android:canTakeScreenshot="true"
+
+    android:isAccessibilityTool="false"
 
     android:description="@string/accessibility_description"
 

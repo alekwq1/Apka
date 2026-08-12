@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:fillColor="#17191C"
+        android:pathData="M0,0H108V108H0Z" />
+
+    <!-- Stylizowana fujarka / miernik. Prosty znak marki, bez tekstu. -->
+    <path
+        android:fillColor="#F7F2E8"
+        android:pathData="M45,18C45,13 49,9 54,9C59,9 63,13 63,18L63,77C63,82 59,86 54,86C49,86 45,82 45,77Z" />
+
+    <path
+        android:fillColor="#F7F2E8"
+        android:pathData="M36,79H72L80,99H28Z" />
+
+    <path
+        android:fillColor="#E65353"
+        android:pathData="M54,29m-4,0a4,4 0,1 0,8 0a4,4 0,1 0,-8 0" />
+    <path
+        android:fillColor="#F0B83F"
+        android:pathData="M54,47m-4,0a4,4 0,1 0,8 0a4,4 0,1 0,-8 0" />
+    <path
+        android:fillColor="#2F9B58"
+        android:pathData="M54,65m-4,0a4,4 0,1 0,8 0a4,4 0,1 0,-8 0" />
+</vector>

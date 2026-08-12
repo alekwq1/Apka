@@ -62,7 +62,7 @@ jobs:
           APK="dist/delivery-assistant-test-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}.apk"
           gh release create "$TAG" "$APK" \
             --target "$GITHUB_SHA" \
-            --title "Delivery Assistant - test #${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}" \
+            --title "FUJARA - test #${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}" \
             --notes "Automatyczny testowy APK z GitHub Actions. Nie jest to wydanie produkcyjne." \
             --prerelease \
             --latest=false

@@ -1,14 +1,16 @@
 package pl.deliveryassistant.mvp
 
 import android.accessibilityservice.AccessibilityService
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
-import android.os.Handler
-import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -22,8 +24,6 @@ class OverlayController(
 ) {
     private val windowManager = service.getSystemService(WindowManager::class.java)
     private val prefs = AppPrefs(service)
-    private val handler = Handler(Looper.getMainLooper())
-
     private var root: LinearLayout? = null
     private var appIcon: ImageView? = null
     private var appName: TextView? = null
@@ -34,8 +34,7 @@ class OverlayController(
     private var scheduleText: TextView? = null
     private var timeSourceText: TextView? = null
     private var overlayLanguage = ""
-
-    private val hideRunnable = Runnable { root?.visibility = View.GONE }
+    private var fujaraGauge: FujaraGaugeView? = null
 
     private val green = Color.rgb(83, 205, 115)
     private val red = Color.rgb(245, 92, 92)
@@ -74,9 +73,9 @@ class OverlayController(
 
         status?.apply {
             text = when (result.status) {
-                ProfitabilityStatus.PROFITABLE -> tr(language, "OPŁACALNE", "PROFITABLE", "ВИГІДНО", "ВЫГОДНО")
-                ProfitabilityStatus.ALMOST_PROFITABLE -> tr(language, "PRAWIE OPŁACALNE", "ALMOST OK", "МАЙЖЕ ВИГІДНО", "ПОЧТИ ВЫГОДНО")
-                ProfitabilityStatus.UNPROFITABLE -> tr(language, "NIEOPŁACALNE", "NOT PROFITABLE", "НЕВИГІДНО", "НЕВЫГОДНО")
+                ProfitabilityStatus.PROFITABLE -> tr(language, "OPŁACA SIĘ", "WORTH IT", "ВИГІДНО", "ВЫГОДНО")
+                ProfitabilityStatus.ALMOST_PROFITABLE -> tr(language, "NA STYK", "BORDERLINE", "НА МЕЖІ", "НА ГРАНИ")
+                ProfitabilityStatus.UNPROFITABLE -> tr(language, "FUJARA ALERT", "FUJARA ALERT", "FUJARA ALERT", "FUJARA ALERT")
                 ProfitabilityStatus.NO_TIME -> tr(language, "BRAK CZASU", "NO TIME", "НЕМАЄ ЧАСУ", "НЕТ ВРЕМЕНИ")
             }
             setTextColor(accent)
@@ -129,20 +128,18 @@ class OverlayController(
             visibility = if (prefs.showTime) View.VISIBLE else View.GONE
         }
 
+        fujaraGauge?.setStatus(result.status)
         root?.background = panelBackground(accent, prefs.overlayOpacityPercent)
         root?.visibility = View.VISIBLE
-
-        handler.removeCallbacks(hideRunnable)
-        handler.postDelayed(hideRunnable, prefs.overlayDisplaySeconds * 1000L)
     }
 
     fun hide() {
-        handler.removeCallbacks(hideRunnable)
         root?.visibility = View.GONE
     }
 
+    fun isVisible(): Boolean = root?.visibility == View.VISIBLE
+
     fun destroy() {
-        handler.removeCallbacks(hideRunnable)
         removeOverlayView()
     }
 
@@ -166,6 +163,7 @@ class OverlayController(
         amountRow = null
         distanceRow = null
         rateRow = null
+        fujaraGauge = null
     }
 
     private fun createOverlay(language: String) {
@@ -180,13 +178,22 @@ class OverlayController(
             gravity = Gravity.CENTER_VERTICAL
         }
 
+        fujaraGauge = FujaraGaugeView(service).also { gauge ->
+            header.addView(
+                gauge,
+                LinearLayout.LayoutParams(dp(22), dp(44)).apply {
+                    marginEnd = dp(7)
+                }
+            )
+        }
+
         appIcon = ImageView(service).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
         }
 
         header.addView(
             appIcon,
-            LinearLayout.LayoutParams(dp(27), dp(27)).apply {
+            LinearLayout.LayoutParams(dp(24), dp(24)).apply {
                 marginEnd = dp(7)
             }
         )
@@ -204,8 +211,8 @@ class OverlayController(
         }
 
         val assistantName = TextView(service).apply {
-            text = "Delivery Assistant"
-            textSize = 8.5f
+            text = tr(language, "FUJARA • marża przed przyjęciem", "FUJARA • check before accepting", "FUJARA • перевірка до прийняття", "FUJARA • проверка до принятия")
+            textSize = 8.2f
             setTextColor(gray)
             maxLines = 1
         }
@@ -219,7 +226,7 @@ class OverlayController(
         panel.addView(header)
 
         status = TextView(service).apply {
-            text = tr(language, "OPŁACALNE", "PROFITABLE", "ВИГІДНО", "ВЫГОДНО")
+            text = tr(language, "OPŁACA SIĘ", "WORTH IT", "ВИГІДНО", "ВЫГОДНО")
             textSize = 9f
             setTypeface(typeface, Typeface.BOLD)
             setPadding(dp(7), dp(3), dp(7), dp(3))
@@ -240,7 +247,7 @@ class OverlayController(
 
         amountRow = metricRow(
             tr(language, "KWOTA", "AMOUNT", "СУМА", "СУММА"),
-            tr(language, "PO KOSZTACH", "AFTER COSTS", "ПІСЛЯ ВИТРАТ", "ПОСЛЕ РАСХОДОВ")
+            tr(language, "ZOSTAJE", "LEFT AFTER COSTS", "ЗАЛИШАЄТЬСЯ", "ОСТАЁТСЯ")
         ).also { panel.addView(it.row) }
 
         distanceRow = metricRow(
@@ -272,7 +279,7 @@ class OverlayController(
         panel.addView(timeSourceText)
 
         val params = WindowManager.LayoutParams(
-            dp(238),
+            dp(252),
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -377,8 +384,8 @@ class OverlayController(
     private fun panelBackground(borderColor: Int, opacityPercent: Int): GradientDrawable =
         GradientDrawable().apply {
             val alpha = (255 * opacityPercent.coerceIn(35, 100) / 100f).toInt()
-            setColor(Color.argb(alpha, 18, 21, 26))
-            cornerRadius = dp(11).toFloat()
+            setColor(Color.argb(alpha, 20, 22, 25))
+            cornerRadius = dp(16).toFloat()
             setStroke(dp(1), borderColor)
         }
 
@@ -431,6 +438,85 @@ class OverlayController(
         val container: LinearLayout,
         val value: TextView
     )
+
+
+    /**
+     * Mały znak FUJARA: abstrakcyjna fujarka / wskaźnik opłacalności.
+     * Wypełnia się od dołu: czerwony = słabo, żółty = na styk, zielony = dobrze.
+     */
+    private class FujaraGaugeView(context: android.content.Context) : View(context) {
+        private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            color = Color.argb(55, 255, 255, 255)
+        }
+        private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            color = Color.rgb(83, 205, 115)
+        }
+        private val holePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            color = Color.argb(190, 20, 22, 25)
+        }
+        private var level = 1f
+
+        fun setStatus(status: ProfitabilityStatus) {
+            when (status) {
+                ProfitabilityStatus.PROFITABLE -> {
+                    level = 1f
+                    fillPaint.color = Color.rgb(83, 205, 115)
+                }
+                ProfitabilityStatus.ALMOST_PROFITABLE -> {
+                    level = 0.68f
+                    fillPaint.color = Color.rgb(255, 214, 64)
+                }
+                ProfitabilityStatus.UNPROFITABLE -> {
+                    level = 0.34f
+                    fillPaint.color = Color.rgb(245, 92, 92)
+                }
+                ProfitabilityStatus.NO_TIME -> {
+                    level = 0.50f
+                    fillPaint.color = Color.rgb(255, 184, 77)
+                }
+            }
+            invalidate()
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val density = resources.displayMetrics.density
+            val tubeWidth = 9f * density
+            val cx = width / 2f
+            val top = 3f * density
+            val bottom = height - 7f * density
+            val left = cx - tubeWidth / 2f
+            val right = cx + tubeWidth / 2f
+            val radius = tubeWidth / 2f
+            val track = RectF(left, top, right, bottom)
+
+            canvas.drawRoundRect(track, radius, radius, trackPaint)
+
+            val fillTop = bottom - (bottom - top) * level
+            val fill = RectF(left, fillTop, right, bottom)
+            canvas.drawRoundRect(fill, radius, radius, fillPaint)
+
+            // Delikatnie rozszerzony "dzwonek" u dołu - znak jest bardziej
+            // charakterystyczny niż zwykły pasek postępu.
+            val bell = Path().apply {
+                moveTo(left - 3f * density, bottom - 1f * density)
+                lineTo(right + 3f * density, bottom - 1f * density)
+                lineTo(right + 5f * density, height - 1f * density)
+                lineTo(left - 5f * density, height - 1f * density)
+                close()
+            }
+            canvas.drawPath(bell, if (level > 0.08f) fillPaint else trackPaint)
+
+            val holeRadius = 1.35f * density
+            listOf(0.31f, 0.48f, 0.65f).forEach { fraction ->
+                val y = top + (bottom - top) * fraction
+                canvas.drawCircle(cx, y, holeRadius, holePaint)
+            }
+        }
+    }
 
     private data class MetricRow(
         val row: LinearLayout,

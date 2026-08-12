@@ -122,4 +122,46 @@ class OfferParserTest {
         assertEquals(5.0, offer.distanceKm, 0.001)
         assertEquals(30, offer.durationMinutes)
     }
+
+    @Test
+    fun ignoresHiddenSmallAmountInsideUberAccessibilityTree() {
+        val text = """
+            Uber
+            Delivery
+            PLN17.71
+            1.00 PLN
+            31 min (22.4 km) total
+            KFC (Matarnia)
+            Confirm
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text)
+
+        assertNotNull(offer)
+        assertEquals(17.71, offer!!.amountPln, 0.001)
+        assertEquals(22.4, offer.distanceKm, 0.001)
+        assertEquals(31, offer.durationMinutes)
+    }
+
+    @Test
+    fun parsesUberFloatingOfferCardShownOverLauncher() {
+        val text = """
+            22:59
+            Uber
+            Delivery
+            PLN15.10
+            27 min (14.9 km) total
+            SUBWAY Gdańsk Ikea
+            Cicha & Północna, Gdansk
+            Confirm
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text)
+
+        assertNotNull(offer)
+        assertEquals(15.10, offer!!.amountPln, 0.001)
+        assertEquals(14.9, offer.distanceKm, 0.001)
+        assertEquals(27, offer.durationMinutes)
+    }
+
 }

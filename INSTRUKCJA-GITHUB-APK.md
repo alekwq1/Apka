@@ -1,4 +1,4 @@
-# Delivery Assistant - budowanie APK przez GitHub
+# FUJARA - budowanie APK przez GitHub
 
 Ta wersja projektu ma gotowy workflow GitHub Actions. Po jednorazowym wrzuceniu kodu do repozytorium możesz budować APK w przeglądarce, bez Android Studio.
 
@@ -38,7 +38,7 @@ Przy ręcznym uruchomieniu `Run workflow` workflow tworzy testowe **Release**.
 
 1. Wejdź na stronę główną repozytorium.
 2. Otwórz **Releases**.
-3. Wybierz najnowszy wpis `Delivery Assistant - test #...`.
+3. Wybierz najnowszy wpis `FUJARA - test #...`.
 4. W `Assets` pobierz plik `delivery-assistant-test-....apk`.
 5. Otwórz APK na telefonie i zezwól przeglądarce/menedżerowi plików na instalowanie aplikacji z tego źródła, jeśli Android o to poprosi.
 

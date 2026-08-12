@@ -10,6 +10,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -47,6 +49,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -86,12 +91,12 @@ class MainActivity : ComponentActivity() {
 
             MaterialTheme(
                 colorScheme = lightColorScheme(
-                    primary = Color(0xFF58AF99),
+                    primary = Color(0xFF2F7D4D),
                     onPrimary = Color.White,
-                    secondary = Color(0xFF42675D),
-                    surface = Color(0xFFFBFCFB),
-                    background = Color(0xFFF4F6F5),
-                    surfaceVariant = Color(0xFFEFF4F2)
+                    secondary = Color(0xFFB46A37),
+                    surface = Color(0xFFFFFCF7),
+                    background = Color(0xFFF6F3ED),
+                    surfaceVariant = Color(0xFFF0ECE4)
                 )
             ) {
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -218,7 +223,7 @@ private fun PrivacyScreen(
 ) {
     ScreenContainer(scrollable = true) {
         Text(
-            text = tx(language, "Delivery Assistant potrzebuje dostępu do ekranu", "Delivery Assistant needs screen access", "Delivery Assistant потребує доступу до екрана", "Delivery Assistant нужен доступ к экрану"),
+            text = tx(language, "FUJARA potrzebuje dostępu do ekranu", "FUJARA needs screen access", "FUJARA потребує доступу до екрана", "FUJARA нужен доступ к экрану"),
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold
         )
@@ -233,10 +238,10 @@ private fun PrivacyScreen(
             title = tx(language, "Co aplikacja odczytuje", "What the app reads", "Що читає застосунок", "Что читает приложение"),
             body = tx(
                 language,
-                "Tylko ekran ofert w obsługiwanych aplikacjach kurierskich. Z oferty odczytywana jest kwota, dystans, czas oraz planowana godzina odbioru/dostawy, jeśli jest dostępna.\n\nDane służą wyłącznie do policzenia opłacalności i pokazania małej nakładki nad ofertą.",
-                "Only offer screens in supported courier apps. The app reads the amount, distance, time and planned pickup/delivery time when available.\n\nThe data is used only to calculate profitability and show a small overlay above the offer.",
-                "Лише екрани пропозицій у підтримуваних кур'єрських застосунках. Зчитуються сума, відстань, час і плановий час забору/доставки, якщо він доступний.\n\nДані використовуються лише для розрахунку вигідності та показу невеликої накладки.",
-                "Только экраны предложений в поддерживаемых курьерских приложениях. Считываются сумма, расстояние, время и плановое время забора/доставки, если оно доступно.\n\nДанные используются только для расчета выгодности и показа небольшой накладки."
+                "FUJARA analizuje widoczny ekran tylko wtedy, gdy szuka karty oferty z obsługiwanej aplikacji kurierskiej. Z oferty odczytuje kwotę, dystans, czas oraz planowaną godzinę odbioru/dostawy, jeśli jest dostępna. Gdy oferta jest pływającą kartą nad innym ekranem, zrzut może obejmować także tło, ale dane spoza oferty nie są używane ani zapisywane.\n\nWszystkie obliczenia są wykonywane lokalnie na telefonie. Aplikacja nie klika i nie przyjmuje zleceń za Ciebie.",
+                "FUJARA analyses the visible screen only while looking for an offer card from a supported courier app. It reads the amount, distance, duration and planned pickup/delivery time when available. If the offer is a floating card over another screen, the screenshot can include the background, but content outside the offer is not used or stored.\n\nAll calculations are performed locally on the phone. The app does not click or accept jobs for you.",
+                "FUJARA аналізує видимий екран лише під час пошуку картки пропозиції з підтримуваного кур'єрського застосунку. Якщо картка плаваюча, знімок може містити фон, але дані поза пропозицією не використовуються й не зберігаються.\n\nУсі обчислення виконуються локально на телефоні.",
+                "FUJARA анализирует видимый экран только при поиске карточки предложения из поддерживаемого курьерского приложения. Если карточка плавающая, снимок может содержать фон, но данные вне предложения не используются и не сохраняются.\n\nВсе вычисления выполняются локально на телефоне."
             )
         )
 
@@ -286,7 +291,7 @@ private fun SetupScreen(
 ) {
     ScreenContainer(scrollable = true) {
         TopBar(
-            title = "Delivery Assistant",
+            title = "FUJARA",
             onBack = onBack
         )
 
@@ -299,7 +304,7 @@ private fun SetupScreen(
         SetupStepCard(
             ok = serviceEnabled,
             title = tx(language, "1. Dostęp do ekranu", "1. Screen access", "1. Доступ до екрана", "1. Доступ к экрану"),
-            body = tx(language, "Włącz Delivery Assistant w Ustawienia → Dostępność → Zainstalowane aplikacje.", "Enable Delivery Assistant in Settings → Accessibility → Installed apps.", "Увімкніть Delivery Assistant у Налаштування → Спеціальні можливості → Встановлені застосунки.", "Включите Delivery Assistant в Настройки → Специальные возможности → Установленные приложения."),
+            body = tx(language, "Włącz FUJARA w Ustawienia → Dostępność → Zainstalowane aplikacje.", "Enable FUJARA in Settings → Accessibility → Installed apps.", "Увімкніть FUJARA у Налаштування → Спеціальні можливості → Встановлені застосунки.", "Включите FUJARA в Настройки → Специальные возможности → Установленные приложения."),
             button = if (serviceEnabled) null else tx(language, "Otwórz ustawienia", "Open settings", "Відкрити налаштування", "Открыть настройки"),
             onClick = onAccessibility
         )
@@ -334,10 +339,10 @@ private fun SetupScreen(
                 title = tx(language, "Samsung: dodatkowe ustawienia", "Samsung: additional settings", "Samsung: додаткові налаштування", "Samsung: дополнительные настройки"),
                 body = tx(
                     language,
-                    "Aby system nie usypiał aplikacji, sprawdź: Ustawienia → Bateria → Limity użycia w tle. Usuń Delivery Assistant z list „Aplikacje w uśpieniu” i „Głębokie uśpienie”. Wyłącz też automatyczne usypianie nieużywanych aplikacji.",
-                    "To reduce background killing, check Settings → Battery → Background usage limits. Remove Delivery Assistant from Sleeping apps and Deep sleeping apps, and disable automatic sleeping for unused apps if needed.",
-                    "Щоб система не присипляла застосунок, перевірте Налаштування → Батарея → Обмеження фонового використання. Приберіть Delivery Assistant зі списків сплячих застосунків.",
-                    "Чтобы система не усыпляла приложение, проверьте Настройки → Батарея → Ограничения фонового использования. Уберите Delivery Assistant из списков спящих приложений."
+                    "Aby system nie usypiał aplikacji, sprawdź: Ustawienia → Bateria → Limity użycia w tle. Usuń FUJARA z list „Aplikacje w uśpieniu” i „Głębokie uśpienie”. Wyłącz też automatyczne usypianie nieużywanych aplikacji.",
+                    "To reduce background killing, check Settings → Battery → Background usage limits. Remove FUJARA from Sleeping apps and Deep sleeping apps, and disable automatic sleeping for unused apps if needed.",
+                    "Щоб система не присипляла застосунок, перевірте Налаштування → Батарея → Обмеження фонового використання. Приберіть FUJARA зі списків сплячих застосунків.",
+                    "Чтобы система не усыпляла приложение, проверьте Настройки → Батарея → Ограничения фонового использования. Уберите FUJARA из списков спящих приложений."
                 ),
                 actionLabel = tx(language, "Otwórz ustawienia baterii", "Open battery settings", "Відкрити налаштування батареї", "Открыть настройки батареи"),
                 onAction = onBatterySettings
@@ -376,55 +381,67 @@ private fun HomeScreen(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = "Delivery Assistant",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f)
-            )
-            TextButton(onClick = onSetup) {
-                Text("✓")
-            }
-            TextButton(onClick = onSettings) {
-                Text("⚙")
-            }
-        }
-
-        Spacer(Modifier.height(40.dp))
-
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFFF4F8F6))
-        ) {
-            Column(
-                modifier = Modifier.padding(vertical = 30.dp, horizontal = 20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = if (active) {
-                        "● ${tx(language, "Aktywny", "Active", "Активний", "Активен")}"
-                    } else {
-                        "● ${tx(language, "Nieaktywny", "Inactive", "Неактивний", "Неактивен")}"
-                    },
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = if (active) Color(0xFF2FA84F) else Color(0xFFE65353)
+                    text = "FUJARA",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Black
                 )
-
                 Text(
-                    text = when {
-                        !serviceEnabled -> tx(language, "Wymaga dokończenia konfiguracji", "Setup required", "Потрібно завершити налаштування", "Требуется завершить настройку")
-                        active -> tx(language, "Wykrywanie ofert", "Offer detection", "Виявлення пропозицій", "Обнаружение предложений")
-                        else -> tx(language, "Zatrzymano", "Stopped", "Зупинено", "Остановлено")
-                    },
-                    style = MaterialTheme.typography.bodyLarge,
+                    text = tx(
+                        language,
+                        "Nie bądź fujarą. Sprawdź marżę zanim przyjmiesz zlecenie.",
+                        "Don’t be a FUJARA. Check the numbers before you accept.",
+                        "Не будь FUJARA. Перевір цифри перед прийняттям.",
+                        "Не будь FUJARA. Проверь цифры до принятия."
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            TextButton(onClick = onSetup) { Text("✓") }
+            TextButton(onClick = onSettings) { Text("⚙") }
         }
 
-        Spacer(Modifier.height(36.dp))
+        Spacer(Modifier.height(26.dp))
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Row(
+                modifier = Modifier.padding(vertical = 24.dp, horizontal = 20.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(18.dp)
+            ) {
+                FujaraBrandMark(
+                    level = if (active) 1f else 0.34f,
+                    color = if (active) Color(0xFF2F9B58) else Color(0xFFE65353)
+                )
+
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = if (active) {
+                            tx(language, "Gotowa na oferty", "Ready for offers", "Готова до пропозицій", "Готова к предложениям")
+                        } else {
+                            tx(language, "Analiza wyłączona", "Analysis off", "Аналіз вимкнено", "Анализ выключен")
+                        },
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (active) Color(0xFF247A45) else Color(0xFFC84343)
+                    )
+                    Text(
+                        text = when {
+                            !serviceEnabled -> tx(language, "Najpierw dokończ konfigurację telefonu.", "Finish phone setup first.", "Спочатку завершіть налаштування телефона.", "Сначала завершите настройку телефона.")
+                            active -> tx(language, "FUJARA czeka na kartę oferty i policzy, ile naprawdę zostaje po kosztach pojazdu.", "FUJARA waits for an offer card and calculates what remains after vehicle costs.", "FUJARA чекає на картку пропозиції та рахує результат після витрат на авто.", "FUJARA ждёт карточку предложения и считает результат после расходов на авто.")
+                            else -> tx(language, "Włącz analizę, gdy zaczynasz jeździć.", "Turn analysis on when you start delivering.", "Увімкніть аналіз, коли починаєте доставку.", "Включите анализ, когда начинаете доставку.")
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
 
         Button(
             onClick = onToggle,
@@ -432,9 +449,9 @@ private fun HomeScreen(
         ) {
             Text(
                 if (active) {
-                    tx(language, "Stop", "Stop", "Стоп", "Стоп")
+                    tx(language, "Wyłącz analizę", "Stop analysis", "Вимкнути аналіз", "Выключить анализ")
                 } else {
-                    tx(language, "Start", "Start", "Старт", "Старт")
+                    tx(language, "Włącz analizę", "Start analysis", "Увімкнути аналіз", "Включить анализ")
                 }
             )
         }
@@ -446,14 +463,15 @@ private fun HomeScreen(
             Text(tx(language, "Sprawdź konfigurację telefonu", "Check phone setup", "Перевірити налаштування телефона", "Проверить настройки телефона"))
         }
 
-        Spacer(Modifier.height(14.dp))
-
-        Text(
-            text = tx(language, "Nakładka pojawi się automatycznie w prawym górnym rogu, gdy aplikacja rozpozna ofertę.", "The overlay appears automatically in the top-right corner when an offer is detected.", "Накладка автоматично з'явиться у правому верхньому куті після розпізнавання пропозиції.", "Накладка автоматически появится в правом верхнем углу после распознавания предложения."),
-            style = MaterialTheme.typography.bodyMedium,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.fillMaxWidth()
+        InfoCard(
+            title = tx(language, "Jak działa FUJARA", "How FUJARA works", "Як працює FUJARA", "Как работает FUJARA"),
+            body = tx(
+                language,
+                "Gdy pojawi się oferta, mały panel w prawym górnym rogu pokaże kwotę, koszty pojazdu, wynik na kilometr i godzinę. Zielony = opłaca się, żółty = na styk, czerwony = FUJARA ALERT. Panel znika razem z ofertą.",
+                "When an offer appears, a small top-right panel shows the amount, vehicle costs, per-km and hourly result. Green = worth it, yellow = borderline, red = FUJARA ALERT. The panel disappears with the offer.",
+                "Коли з’явиться пропозиція, маленька панель покаже суму, витрати, результат на км і годину. Зелений = вигідно, жовтий = на межі, червоний = FUJARA ALERT.",
+                "Когда появится предложение, маленькая панель покажет сумму, расходы, результат на км и час. Зелёный = выгодно, жёлтый = на грани, красный = FUJARA ALERT."
+            )
         )
     }
 }
@@ -480,7 +498,6 @@ private fun SettingsScreen(
     var showTime by remember { mutableStateOf(prefs.showTime) }
     var showDistance by remember { mutableStateOf(prefs.showDistance) }
     var opacity by remember { mutableStateOf(prefs.overlayOpacityPercent.toFloat()) }
-    var displaySeconds by remember { mutableStateOf(prefs.overlayDisplaySeconds.toFloat()) }
     var selectedLanguage by remember { mutableStateOf(AppLanguage.fromCode(prefs.languageCode)) }
     var targetPackage by remember { mutableStateOf(prefs.targetPackage) }
     var showAdvanced by remember { mutableStateOf(false) }
@@ -535,7 +552,6 @@ private fun SettingsScreen(
         prefs.showTime = showTime
         prefs.showDistance = showDistance
         prefs.overlayOpacityPercent = opacity.roundToInt()
-        prefs.overlayDisplaySeconds = displaySeconds.roundToInt()
         prefs.languageCode = selectedLanguage.code
         prefs.targetPackage = targetPackage
         onLanguageChanged(selectedLanguage)
@@ -666,11 +682,16 @@ private fun SettingsScreen(
                 valueRange = 35f..100f
             )
 
-            Text(tx(language, "Czas wyświetlania: ${displaySeconds.roundToInt()} s", "Display time: ${displaySeconds.roundToInt()} s", "Час показу: ${displaySeconds.roundToInt()} с", "Время показа: ${displaySeconds.roundToInt()} с"))
-            Slider(
-                value = displaySeconds,
-                onValueChange = { displaySeconds = it },
-                valueRange = 5f..60f
+            Text(
+                text = tx(
+                    language,
+                    "Nakładka jest widoczna tak długo, jak widoczna jest oferta. Znika automatycznie po zamknięciu lub przyjęciu/odrzuceniu zlecenia.",
+                    "The overlay stays visible while the offer is visible and disappears automatically when the offer closes.",
+                    "Накладка видима, доки видно пропозицію, і зникає автоматично після її закриття.",
+                    "Накладка видна, пока видна заявка, и исчезает автоматически после её закрытия."
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
 
@@ -750,10 +771,58 @@ private fun SettingsScreen(
         HorizontalDivider()
 
         Text(
-            text = "Delivery Assistant ${BuildConfig.VERSION_NAME}",
+            text = "FUJARA ${BuildConfig.VERSION_NAME}",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+@Composable
+private fun FujaraBrandMark(
+    level: Float,
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier.size(width = 46.dp, height = 72.dp)) {
+        val tubeWidth = size.width * 0.30f
+        val left = (size.width - tubeWidth) / 2f
+        val top = size.height * 0.05f
+        val bottom = size.height * 0.84f
+        val radius = tubeWidth / 2f
+        val trackColor = Color(0xFFD8D2C8)
+
+        drawRoundRect(
+            color = trackColor,
+            topLeft = Offset(left, top),
+            size = Size(tubeWidth, bottom - top),
+            cornerRadius = CornerRadius(radius, radius)
+        )
+
+        val safeLevel = level.coerceIn(0f, 1f)
+        val fillTop = bottom - (bottom - top) * safeLevel
+        drawRoundRect(
+            color = color,
+            topLeft = Offset(left, fillTop),
+            size = Size(tubeWidth, bottom - fillTop),
+            cornerRadius = CornerRadius(radius, radius)
+        )
+
+        val bellTop = bottom - size.height * 0.02f
+        drawRoundRect(
+            color = color,
+            topLeft = Offset(size.width * 0.18f, bellTop),
+            size = Size(size.width * 0.64f, size.height * 0.13f),
+            cornerRadius = CornerRadius(size.width * 0.10f, size.width * 0.10f)
+        )
+
+        listOf(0.32f, 0.48f, 0.64f).forEach { fraction ->
+            drawCircle(
+                color = Color(0xFF4E4A44),
+                radius = size.width * 0.045f,
+                center = Offset(size.width / 2f, top + (bottom - top) * fraction)
+            )
+        }
     }
 }
 
@@ -813,7 +882,7 @@ private fun SetupStepCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFF5F9F7))
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
         Row(
             modifier = Modifier.padding(18.dp),

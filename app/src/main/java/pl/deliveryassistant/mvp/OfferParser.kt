@@ -1,10 +1,11 @@
 package pl.deliveryassistant.mvp
 
+
 object OfferParser {
 
     /*
-     * OCR potrafi rozdzielać litery jednostek spacjami, np. "k m" albo "m i n".
-     * Dlatego regexy są trochę bardziej tolerancyjne niż zwykłe "km" / "min".
+     * OCR potrafi rozdzielac litery jednostek spacjami, np. "k m" albo "m i n".
+     * Regexy sa celowo tolerancyjne na taki zapis i typowe pomylki OCR.
      */
     private const val CURRENCY = "(?:P\\s*L\\s*N|z\\s*[łl])"
     private const val KM = "k\\s*(?:m|rn)"
@@ -15,8 +16,8 @@ object OfferParser {
         RegexOption.IGNORE_CASE
     )
 
-    // Fallback, gdy OCR zgubi PLN/zł. Wymagamy dokładnie dwóch miejsc po separatorze,
-    // żeby nie brać np. zwykłego dystansu 5.4 jako ceny.
+    // Fallback, gdy OCR zgubi PLN/zl. Wymagamy dwoch miejsc po separatorze,
+    // zeby nie brac np. zwyklego dystansu 5.4 jako ceny.
     private val bareAmountRegex = Regex(
         """(?<![\d:])(\d{1,3}[.,]\d{2})(?!\d)"""
     )
@@ -42,7 +43,7 @@ object OfferParser {
     )
 
     private val deliveryTimeRegex = Regex(
-        """(?:dostarcz|deliver|delivery|drop\s*off)\s*(?:na|do|by)?\s*(\d{1,2})\s*[:.]\s*(\d{2})""",
+        """(?:(?:dostarcz)\s*(?:na|do)\s*|(?:deliver|delivery|drop\s*off)\s*(?:by|at)\s*)(\d{1,2})\s*[:.]\s*(\d{2})""",
         RegexOption.IGNORE_CASE
     )
 
@@ -51,62 +52,84 @@ object OfferParser {
         RegexOption.IGNORE_CASE
     )
 
+    /*
+     * Uber czesto pokazuje karte w formacie:
+     * PLN17.71
+     * 31 min (22.4 km) total
+     *
+     * Ten wzorzec ma pierwszenstwo. Chroni przed bledem, w ktorym niewidoczny
+     * element drzewa Accessibility zawierajacy np. "1.00 PLN" byl wybierany
+     * zamiast ceny widocznej na karcie.
+     */
+    private val uberDeliveryPrefixedCardRegex = Regex(
+        """(?is)\b(?:delivery|dostawa)\b[\s\S]{0,180}?P\s*L\s*N\s*(\d{1,3}[.,]\d{2})[\s\S]{0,320}?(\d{1,3})\s*$MIN\s*\(\s*(\d{1,4}(?:[.,]\d{1,2})?)\s*$KM\s*\)\s*(?:total|łącznie|lacznie|razem)?"""
+    )
+
+    private val uberDeliveryCardRegex = Regex(
+        """(?is)\b(?:delivery|dostawa)\b[\s\S]{0,180}?(?:$CURRENCY\s*)?(\d{1,3}[.,]\d{2})\s*(?:$CURRENCY)?[\s\S]{0,320}?(\d{1,3})\s*$MIN\s*\(\s*(\d{1,4}(?:[.,]\d{1,2})?)\s*$KM\s*\)\s*(?:total|łącznie|lacznie|razem)?"""
+    )
+
+    private val uberCardRegex = Regex(
+        """(?is)(?:$CURRENCY\s*)?(\d{1,3}[.,]\d{2})\s*(?:$CURRENCY)?[\s\S]{0,320}?(\d{1,3})\s*$MIN\s*\(\s*(\d{1,4}(?:[.,]\d{1,2})?)\s*$KM\s*\)\s*(?:total|łącznie|lacznie|razem)?"""
+    )
+
     fun parse(text: String): Offer? {
         val normalized = normalize(text)
-        val amountMatches = findAmountMatches(normalized)
 
+        parseUberCard(normalized, uberDeliveryPrefixedCardRegex)?.let { return it }
+        parseUberCard(normalized, uberDeliveryCardRegex)?.let { return it }
+        parseUberCard(normalized, uberCardRegex)?.let { return it }
+
+        val amountMatches = findAmountMatches(normalized)
         if (amountMatches.isEmpty()) return null
 
-        val candidates = mutableListOf<Candidate>()
+        val distances = distanceRegex.findAll(normalized).toList()
+        if (distances.isEmpty()) return null
 
-        for ((index, amountMatch) in amountMatches.withIndex()) {
-            val amount = amountMatch.value.toNumber() ?: continue
-            if (amount !in 0.01..1000.0) continue
+        val candidates = amountMatches.mapNotNull { amountMatch ->
+            val amount = amountMatch.value.toNumber() ?: return@mapNotNull null
+            if (amount !in 0.01..1000.0) return@mapNotNull null
 
-            val nextAmountStart = amountMatches
-                .getOrNull(index + 1)
-                ?.start
-                ?: normalized.length
+            val distanceMatch = distances
+                .filter { matchDistance(it, amountMatch) <= 900 }
+                .minByOrNull { matchDistance(it, amountMatch) }
+                ?: return@mapNotNull null
 
-            val blockStart = amountMatch.endExclusive
-            val searchEnd = minOf(
-                nextAmountStart,
-                blockStart + 1400,
-                normalized.length
-            )
+            val distance = distanceMatch.groupValues.getOrNull(1)?.toNumber()
+                ?: return@mapNotNull null
+            if (distance !in 0.01..500.0) return@mapNotNull null
 
-            if (searchEnd <= blockStart) continue
+            val localStart = if (distanceMatch.range.first < amountMatch.start) {
+                (distanceMatch.range.first - 80).coerceAtLeast(0)
+            } else {
+                amountMatch.start
+            }
+            val localEnd = maxOf(amountMatch.endExclusive, distanceMatch.range.last + 1)
+                .plus(650)
+                .coerceAtMost(normalized.length)
+            val block = normalized.substring(localStart, localEnd)
 
-            val block = normalized.substring(blockStart, searchEnd)
-
-            val distance = distanceRegex
-                .find(block)
-                ?.groupValues
-                ?.getOrNull(1)
-                ?.toNumber()
-                ?: continue
-
-            if (distance !in 0.01..500.0) continue
-
-            val pickupTime = pickupTimeRegex
-                .find(block)
-                ?.toMinuteOfDay()
-
-            val deliveryTime = deliveryTimeRegex
-                .find(block)
-                ?.toMinuteOfDay()
+            val pickupTime = pickupTimeRegex.find(block)?.toMinuteOfDay()
+            val deliveryTime = deliveryTimeRegex.find(block)?.toMinuteOfDay()
 
             val directDuration = if (deliveryTime == null) {
                 findTotalDuration(block)
                     ?: findDurationOnDistanceLine(block)
                     ?: findBestNonPickupDuration(block)
             } else {
-                // Pyszne ma planowaną godzinę dostawy. Nie podmieniamy jej przypadkowym
-                // "3 min" z innej części ekranu.
                 null
             }
 
-            candidates += Candidate(
+            val score = candidateScore(
+                text = normalized,
+                amountMatch = amountMatch,
+                distanceMatch = distanceMatch,
+                durationMinutes = directDuration,
+                localBlock = block
+            )
+
+            Candidate(
+                score = score,
                 startPosition = amountMatch.start,
                 offer = Offer(
                     amountPln = amount,
@@ -118,8 +141,73 @@ object OfferParser {
             )
         }
 
-        // Przy kilku kartach ofert aktualna zwykle jest niżej / później w tekście.
-        return candidates.maxByOrNull { it.startPosition }?.offer
+        return candidates.maxWithOrNull(
+            compareBy<Candidate> { it.score }
+                .thenBy { it.startPosition }
+        )?.offer
+    }
+
+    private fun parseUberCard(text: String, regex: Regex): Offer? {
+        for (match in regex.findAll(text)) {
+            val amount = match.groupValues.getOrNull(1)?.toNumber() ?: continue
+            val duration = match.groupValues.getOrNull(2)?.toIntOrNull() ?: continue
+            val distance = match.groupValues.getOrNull(3)?.toNumber() ?: continue
+
+            if (amount !in 0.01..1000.0) continue
+            if (duration !in 1..360) continue
+            if (distance !in 0.01..500.0) continue
+
+            val contextStart = (match.range.first - 180).coerceAtLeast(0)
+            val contextEnd = (match.range.last + 220).coerceAtMost(text.length)
+            val context = text.substring(contextStart, contextEnd)
+
+            return Offer(
+                amountPln = amount,
+                distanceKm = distance,
+                durationMinutes = duration,
+                pickupTimeMinutesOfDay = pickupTimeRegex.find(context)?.toMinuteOfDay(),
+                deliveryTimeMinutesOfDay = deliveryTimeRegex.find(context)?.toMinuteOfDay()
+            )
+        }
+        return null
+    }
+
+    private fun candidateScore(
+        text: String,
+        amountMatch: AmountMatch,
+        distanceMatch: MatchResult,
+        durationMinutes: Int?,
+        localBlock: String
+    ): Int {
+        var score = 0
+
+        if (amountMatch.explicitCurrency) score += 60
+
+        val gap = matchDistance(distanceMatch, amountMatch)
+        score += (45 - gap / 18).coerceAtLeast(0)
+
+        if (durationMinutes != null) score += 25
+        if (totalRegex.containsMatchIn(localBlock)) score += 18
+
+        val lower = localBlock.lowercase()
+        if ("confirm" in lower || "zaakceptuj" in lower) score += 8
+        if ("delivery" in lower || "dostawa" in lower) score += 6
+
+        val line = lineContaining(text, amountMatch.start).lowercase()
+        if ("pln" in line || "zł" in line || "zl" in line) score += 12
+
+        val amount = amountMatch.value.toNumber() ?: 0.0
+        if (amount >= 4.0) score += 3
+
+        return score
+    }
+
+    private fun matchDistance(match: MatchResult, amount: AmountMatch): Int {
+        return when {
+            match.range.first >= amount.endExclusive -> match.range.first - amount.endExclusive
+            amount.start >= match.range.last + 1 -> amount.start - (match.range.last + 1)
+            else -> 0
+        }
     }
 
     private fun normalize(text: String): String =
@@ -143,16 +231,14 @@ object OfferParser {
             AmountMatch(
                 value = value,
                 start = match.range.first,
-                endExclusive = match.range.last + 1
+                endExclusive = match.range.last + 1,
+                explicitCurrency = true
             )
         }.toList()
 
-        if (withCurrency.isNotEmpty()) return withCurrency
-
-        return bareAmountRegex.findAll(text).mapNotNull { match ->
+        val bare = bareAmountRegex.findAll(text).mapNotNull { match ->
             val line = lineContaining(text, match.range.first)
 
-            // Nie traktujemy jako ceny wartości z linii czasu, dystansu albo minut.
             if (
                 distanceRegex.containsMatchIn(line) ||
                 durationRegex.containsMatchIn(line) ||
@@ -169,15 +255,16 @@ object OfferParser {
             AmountMatch(
                 value = value,
                 start = match.range.first,
-                endExclusive = match.range.last + 1
+                endExclusive = match.range.last + 1,
+                explicitCurrency = false
             )
         }.toList()
+
+        return (withCurrency + bare)
+            .distinctBy { "${it.start}:${it.endExclusive}" }
+            .sortedBy { it.start }
     }
 
-    /**
-     * Najwyższy priorytet ma czas powiązany ze słowem "total" / "łącznie".
-     * Obsługuje zarówno "26 min ... total", jak i "total 26 min".
-     */
     private fun findTotalDuration(block: String): Int? {
         val durations = durationRegex.findAll(block).toList()
         if (durations.isEmpty()) return null
@@ -205,11 +292,6 @@ object OfferParser {
         return null
     }
 
-    /**
-     * Bardzo ważny fallback dla Ubera: OCR czasem zgubi słowo "total", ale nadal
-     * odczyta np. "26 min (5.4 km)". Czas z tej samej linii co dystans ma wtedy
-     * większy sens niż "Pickup in 3 min".
-     */
     private fun findDurationOnDistanceLine(block: String): Int? {
         for (line in block.lines()) {
             if (!distanceRegex.containsMatchIn(line)) continue
@@ -221,10 +303,6 @@ object OfferParser {
         return null
     }
 
-    /**
-     * Ostatni fallback: bierzemy czas w minutach tylko z linii, która nie wygląda
-     * jak ETA do odbioru. Dzięki temu "Pickup in 3 min" nie stanie się czasem całej dostawy.
-     */
     private fun findBestNonPickupDuration(block: String): Int? {
         for (line in block.lines()) {
             if (pickupEtaRegex.containsMatchIn(line)) continue
@@ -265,10 +343,12 @@ object OfferParser {
     private data class AmountMatch(
         val value: String,
         val start: Int,
-        val endExclusive: Int
+        val endExclusive: Int,
+        val explicitCurrency: Boolean
     )
 
     private data class Candidate(
+        val score: Int,
         val startPosition: Int,
         val offer: Offer
     )
