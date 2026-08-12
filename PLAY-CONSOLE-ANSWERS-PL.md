@@ -1,6 +1,6 @@
 # FUJARA — propozycje odpowiedzi w Play Console
 
-Stan dla wersji 0.5.1. Odpowiedzi muszą zawsze odpowiadać faktycznemu buildowi.
+Stan dla wersji 0.6.0. Odpowiedzi muszą zawsze odpowiadać faktycznemu buildowi.
 
 ## Ads
 **Does your app contain ads?** → `No`
@@ -61,6 +61,6 @@ Nagraj około 30–60 sekund:
 4. `Otwórz ustawienia`,
 5. pokaż ręczne włączenie FUJARA w Accessibility,
 6. wróć do aplikacji,
-7. pokaż ekran główny i `Pokaż demo obliczeń`.
+7. pokaż ekran główny i `Pokaż podgląd nakładki`.
 
 Nie pokazuj w filmie prywatnych powiadomień ani danych innych osób.

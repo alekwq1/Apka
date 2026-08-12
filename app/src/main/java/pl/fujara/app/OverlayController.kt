@@ -11,6 +11,7 @@ import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -73,9 +74,9 @@ class OverlayController(
 
         status?.apply {
             text = when (result.status) {
-                ProfitabilityStatus.PROFITABLE -> tr(language, "OPŁACA SIĘ", "WORTH IT", "ВИГІДНО", "ВЫГОДНО")
+                ProfitabilityStatus.PROFITABLE -> tr(language, "DOBRA", "GOOD", "ДОБРЕ", "ХОРОШО")
                 ProfitabilityStatus.ALMOST_PROFITABLE -> tr(language, "NA STYK", "BORDERLINE", "НА МЕЖІ", "НА ГРАНИ")
-                ProfitabilityStatus.UNPROFITABLE -> tr(language, "FUJARA ALERT", "FUJARA ALERT", "FUJARA ALERT", "FUJARA ALERT")
+                ProfitabilityStatus.UNPROFITABLE -> tr(language, "SŁABA", "POOR", "СЛАБА", "СЛАБАЯ")
                 ProfitabilityStatus.NO_TIME -> tr(language, "BRAK CZASU", "NO TIME", "НЕМАЄ ЧАСУ", "НЕТ ВРЕМЕНИ")
             }
             setTextColor(accent)
@@ -169,7 +170,7 @@ class OverlayController(
     private fun createOverlay(language: String) {
         val panel = LinearLayout(service).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(10), dp(9), dp(10), dp(9))
+            setPadding(dp(11), dp(10), dp(11), dp(10))
             background = panelBackground(green, prefs.overlayOpacityPercent)
         }
 
@@ -181,21 +182,18 @@ class OverlayController(
         fujaraGauge = FujaraGaugeView(service).also { gauge ->
             header.addView(
                 gauge,
-                LinearLayout.LayoutParams(dp(22), dp(44)).apply {
-                    marginEnd = dp(7)
-                }
+                LinearLayout.LayoutParams(dp(20), dp(48)).apply { marginEnd = dp(7) }
             )
         }
 
         appIcon = ImageView(service).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
+            background = iconBackground()
+            setPadding(dp(2), dp(2), dp(2), dp(2))
         }
-
         header.addView(
             appIcon,
-            LinearLayout.LayoutParams(dp(24), dp(24)).apply {
-                marginEnd = dp(7)
-            }
+            LinearLayout.LayoutParams(dp(25), dp(25)).apply { marginEnd = dp(7) }
         )
 
         val titleContainer = LinearLayout(service).apply {
@@ -204,82 +202,87 @@ class OverlayController(
 
         appName = TextView(service).apply {
             text = tr(language, "Dostawa", "Delivery", "Доставка", "Доставка")
-            textSize = 12.5f
+            textSize = 11.5f
             setTextColor(white)
             setTypeface(typeface, Typeface.BOLD)
             maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
         }
 
         val assistantName = TextView(service).apply {
-            text = tr(language, "FUJARA • marża przed przyjęciem", "FUJARA • check before accepting", "FUJARA • перевірка до прийняття", "FUJARA • проверка до принятия")
-            textSize = 8.2f
+            text = tr(language, "FUJARA · policz zanim przyjmiesz", "FUJARA · check before accepting", "FUJARA · перевір до прийняття", "FUJARA · проверь до принятия")
+            textSize = 7.5f
             setTextColor(gray)
             maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
         }
 
         titleContainer.addView(appName)
         titleContainer.addView(assistantName)
         header.addView(
             titleContainer,
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(6) }
         )
-        panel.addView(header)
 
         status = TextView(service).apply {
-            text = tr(language, "OPŁACA SIĘ", "WORTH IT", "ВИГІДНО", "ВЫГОДНО")
-            textSize = 9f
+            text = tr(language, "DOBRA", "GOOD", "ДОБРЕ", "ХОРОШО")
+            textSize = 7.8f
+            gravity = Gravity.CENTER
             setTypeface(typeface, Typeface.BOLD)
-            setPadding(dp(7), dp(3), dp(7), dp(3))
+            setPadding(dp(7), dp(4), dp(7), dp(4))
             setTextColor(green)
             background = pillBackground(green)
+            maxLines = 1
         }
+        header.addView(status)
+        panel.addView(header)
 
+        val divider = View(service).apply { setBackgroundColor(Color.rgb(48, 53, 60)) }
         panel.addView(
-            status,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = dp(6)
-                bottomMargin = dp(5)
+            divider,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)).apply {
+                topMargin = dp(7)
+                bottomMargin = dp(7)
             }
         )
 
         amountRow = metricRow(
             tr(language, "KWOTA", "AMOUNT", "СУМА", "СУММА"),
-            tr(language, "ZOSTAJE", "LEFT AFTER COSTS", "ЗАЛИШАЄТЬСЯ", "ОСТАЁТСЯ")
-        ).also { panel.addView(it.row) }
-
-        distanceRow = metricRow(
-            tr(language, "TRASA", "DISTANCE", "ВІДСТАНЬ", "РАССТОЯНИЕ"),
-            tr(language, "DO DOSTAWY", "TIME", "ЧАС", "ВРЕМЯ")
+            tr(language, "PO KOSZTACH", "AFTER COSTS", "ПІСЛЯ ВИТРАТ", "ПОСЛЕ РАСХОДОВ")
         ).also { panel.addView(it.row) }
 
         rateRow = metricRow(
-            tr(language, "PO KOSZT./H", "AFTER COSTS/H", "ПІСЛЯ ВИТР./Г", "ПОСЛЕ РАСХ./Ч"),
-            tr(language, "PO KOSZT./KM", "AFTER COSTS/KM", "ПІСЛЯ ВИТР./КМ", "ПОСЛЕ РАСХ./КМ")
+            "PLN/H",
+            "PLN/KM"
+        ).also { panel.addView(it.row) }
+
+        distanceRow = metricRow(
+            tr(language, "DYSTANS", "DISTANCE", "ВІДСТАНЬ", "РАССТОЯНИЕ"),
+            tr(language, "CZAS", "TIME", "ЧАС", "ВРЕМЯ")
         ).also { panel.addView(it.row) }
 
         scheduleText = TextView(service).apply {
-            textSize = 8.5f
+            textSize = 8f
             setTextColor(white)
             maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
             visibility = View.GONE
-            setPadding(0, dp(4), 0, 0)
+            setPadding(dp(2), dp(5), dp(2), 0)
         }
         panel.addView(scheduleText)
 
         timeSourceText = TextView(service).apply {
             text = tr(language, "czas z oferty", "time from offer", "час з пропозиції", "время из предложения")
-            textSize = 7.5f
+            textSize = 7f
             setTextColor(gray)
             maxLines = 1
-            setPadding(0, dp(2), 0, 0)
+            ellipsize = TextUtils.TruncateAt.END
+            setPadding(dp(2), dp(2), dp(2), 0)
         }
         panel.addView(timeSourceText)
 
         val params = WindowManager.LayoutParams(
-            dp(252),
+            dp(238),
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -303,6 +306,7 @@ class OverlayController(
     ): MetricRow {
         val row = LinearLayout(service).apply {
             orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 0, 0, dp(5))
         }
 
         val left = metricCell(leftLabel)
@@ -310,11 +314,11 @@ class OverlayController(
 
         row.addView(
             left.container,
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(3) }
         )
         row.addView(
             right.container,
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(3) }
         )
 
         return MetricRow(
@@ -329,22 +333,25 @@ class OverlayController(
     private fun metricCell(labelText: String): MetricCell {
         val container = LinearLayout(service).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(2), dp(4), dp(3))
+            setPadding(dp(7), dp(6), dp(7), dp(6))
+            background = metricBackground()
         }
 
         val label = TextView(service).apply {
             text = labelText
-            textSize = 7.5f
+            textSize = 7f
             setTextColor(gray)
+            setTypeface(typeface, Typeface.BOLD)
             maxLines = 1
         }
 
         val value = TextView(service).apply {
             text = "--"
-            textSize = 11.5f
+            textSize = 11.8f
             setTextColor(white)
             setTypeface(typeface, Typeface.BOLD)
             maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
         }
 
         container.addView(label)
@@ -384,9 +391,22 @@ class OverlayController(
     private fun panelBackground(borderColor: Int, opacityPercent: Int): GradientDrawable =
         GradientDrawable().apply {
             val alpha = (255 * opacityPercent.coerceIn(35, 100) / 100f).toInt()
-            setColor(Color.argb(alpha, 20, 22, 25))
-            cornerRadius = dp(16).toFloat()
-            setStroke(dp(1), borderColor)
+            setColor(Color.argb(alpha, 11, 15, 18))
+            cornerRadius = dp(18).toFloat()
+            setStroke(dp(1), Color.argb(190, Color.red(borderColor), Color.green(borderColor), Color.blue(borderColor)))
+        }
+
+    private fun metricBackground(): GradientDrawable =
+        GradientDrawable().apply {
+            setColor(Color.argb(150, 27, 32, 38))
+            cornerRadius = dp(10).toFloat()
+            setStroke(dp(1), Color.argb(150, 53, 60, 68))
+        }
+
+    private fun iconBackground(): GradientDrawable =
+        GradientDrawable().apply {
+            setColor(Color.argb(135, 255, 255, 255))
+            cornerRadius = dp(7).toFloat()
         }
 
     private fun pillBackground(accent: Int): GradientDrawable =
@@ -447,35 +467,33 @@ class OverlayController(
     private class FujaraGaugeView(context: android.content.Context) : View(context) {
         private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.FILL
-            color = Color.argb(55, 255, 255, 255)
+            color = Color.argb(70, 255, 255, 255)
         }
-        private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.FILL
-            color = Color.rgb(83, 205, 115)
-        }
+        private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
         private val holePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.FILL
-            color = Color.argb(190, 20, 22, 25)
+            color = Color.rgb(11, 15, 18)
         }
         private var level = 1f
+        private var statusColor = Color.rgb(83, 205, 115)
 
         fun setStatus(status: ProfitabilityStatus) {
             when (status) {
                 ProfitabilityStatus.PROFITABLE -> {
                     level = 1f
-                    fillPaint.color = Color.rgb(83, 205, 115)
+                    statusColor = Color.rgb(83, 205, 115)
                 }
                 ProfitabilityStatus.ALMOST_PROFITABLE -> {
-                    level = 0.68f
-                    fillPaint.color = Color.rgb(255, 214, 64)
+                    level = 0.66f
+                    statusColor = Color.rgb(255, 216, 74)
                 }
                 ProfitabilityStatus.UNPROFITABLE -> {
-                    level = 0.34f
-                    fillPaint.color = Color.rgb(245, 92, 92)
+                    level = 0.33f
+                    statusColor = Color.rgb(255, 101, 101)
                 }
                 ProfitabilityStatus.NO_TIME -> {
                     level = 0.50f
-                    fillPaint.color = Color.rgb(255, 184, 77)
+                    statusColor = Color.rgb(255, 184, 77)
                 }
             }
             invalidate()
@@ -492,15 +510,26 @@ class OverlayController(
             val right = cx + tubeWidth / 2f
             val radius = tubeWidth / 2f
             val track = RectF(left, top, right, bottom)
-
             canvas.drawRoundRect(track, radius, radius, trackPaint)
 
-            val fillTop = bottom - (bottom - top) * level
-            val fill = RectF(left, fillTop, right, bottom)
-            canvas.drawRoundRect(fill, radius, radius, fillPaint)
+            val fullHeight = bottom - top
+            val gap = 1.2f * density
+            val segmentHeight = (fullHeight - gap * 2f) / 3f
+            val fillBoundary = bottom - fullHeight * level
+            val segments = listOf(
+                Triple(bottom - segmentHeight, bottom, Color.rgb(255, 101, 101)),
+                Triple(bottom - segmentHeight * 2f - gap, bottom - segmentHeight - gap, Color.rgb(255, 216, 74)),
+                Triple(top, top + segmentHeight, Color.rgb(83, 205, 115))
+            )
 
-            // Delikatnie rozszerzony "dzwonek" u dołu - znak jest bardziej
-            // charakterystyczny niż zwykły pasek postępu.
+            segments.forEach { (segmentTop, segmentBottom, segmentColor) ->
+                val visibleTop = maxOf(segmentTop, fillBoundary)
+                if (visibleTop < segmentBottom) {
+                    fillPaint.color = segmentColor
+                    canvas.drawRoundRect(RectF(left, visibleTop, right, segmentBottom), radius, radius, fillPaint)
+                }
+            }
+
             val bell = Path().apply {
                 moveTo(left - 3f * density, bottom - 1f * density)
                 lineTo(right + 3f * density, bottom - 1f * density)
@@ -508,13 +537,17 @@ class OverlayController(
                 lineTo(left - 5f * density, height - 1f * density)
                 close()
             }
-            canvas.drawPath(bell, if (level > 0.08f) fillPaint else trackPaint)
+            fillPaint.color = if (level > 0.02f) Color.rgb(255, 101, 101) else trackPaint.color
+            canvas.drawPath(bell, fillPaint)
 
             val holeRadius = 1.35f * density
             listOf(0.31f, 0.48f, 0.65f).forEach { fraction ->
                 val y = top + (bottom - top) * fraction
                 canvas.drawCircle(cx, y, holeRadius, holePaint)
             }
+
+            fillPaint.color = statusColor
+            canvas.drawCircle(right + 3.5f * density, top + 2f * density, 1.6f * density, fillPaint)
         }
     }
 

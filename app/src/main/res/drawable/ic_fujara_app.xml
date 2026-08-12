@@ -5,26 +5,16 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <path
-        android:fillColor="#17191C"
-        android:pathData="M0,0H108V108H0Z" />
+    <path android:fillColor="#090C0F" android:pathData="M0,0H108V108H0Z" />
+    <path android:fillColor="#171D23" android:pathData="M12,12H96V96H12Z" />
 
-    <!-- Stylizowana fujarka / miernik. Prosty znak marki, bez tekstu. -->
-    <path
-        android:fillColor="#F7F2E8"
-        android:pathData="M45,18C45,13 49,9 54,9C59,9 63,13 63,18L63,77C63,82 59,86 54,86C49,86 45,82 45,77Z" />
+    <!-- Wskaźnik rośnie od czerwonego przez żółty do zielonego. -->
+    <path android:fillColor="#82E46B" android:pathData="M43,17C43,11 48,8 54,8C60,8 65,11 65,17L65,36H43Z" />
+    <path android:fillColor="#FFD84A" android:pathData="M43,36H65V59H43Z" />
+    <path android:fillColor="#FF6565" android:pathData="M43,59H65V82C65,87 60,90 54,90C48,90 43,87 43,82Z" />
+    <path android:fillColor="#FF6565" android:pathData="M34,82H74L80,98H28Z" />
 
-    <path
-        android:fillColor="#F7F2E8"
-        android:pathData="M36,79H72L80,99H28Z" />
-
-    <path
-        android:fillColor="#E65353"
-        android:pathData="M54,29m-4,0a4,4 0,1 0,8 0a4,4 0,1 0,-8 0" />
-    <path
-        android:fillColor="#F0B83F"
-        android:pathData="M54,47m-4,0a4,4 0,1 0,8 0a4,4 0,1 0,-8 0" />
-    <path
-        android:fillColor="#2F9B58"
-        android:pathData="M54,65m-4,0a4,4 0,1 0,8 0a4,4 0,1 0,-8 0" />
+    <path android:fillColor="#090C0F" android:pathData="M54,27m-3.5,0a3.5,3.5 0,1 0,7 0a3.5,3.5 0,1 0,-7 0" />
+    <path android:fillColor="#090C0F" android:pathData="M54,47m-3.5,0a3.5,3.5 0,1 0,7 0a3.5,3.5 0,1 0,-7 0" />
+    <path android:fillColor="#090C0F" android:pathData="M54,69m-3.5,0a3.5,3.5 0,1 0,7 0a3.5,3.5 0,1 0,-7 0" />
 </vector>

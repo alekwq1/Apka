@@ -30,4 +30,4 @@ Przy pływającej karcie techniczny screenshot może obejmować tło, ale FUJARA
 Przed przejściem do ustawień Accessibility użytkownik widzi osobny ekran opisujący AccessibilityService, zakres odczytu i cel. Musi nacisnąć `Rozumiem`. Dopiero potem aplikacja kieruje do systemowych ustawień Androida, gdzie użytkownik samodzielnie włącza usługę.
 
 ## Film do deklaracji
-Film powinien pokazać pełny disclosure, zgodę użytkownika i ręczne włączenie usługi w ustawieniach Androida. Warto na końcu pokazać ekran główny i przycisk `Pokaż demo obliczeń`.
+Film powinien pokazać pełny disclosure, zgodę użytkownika i ręczne włączenie usługi w ustawieniach Androida. Warto na końcu pokazać ekran główny i przycisk `Pokaż podgląd nakładki`.
