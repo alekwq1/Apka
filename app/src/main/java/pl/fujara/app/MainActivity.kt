@@ -920,7 +920,7 @@ private fun SettingsScreen(
         }
 
         Text(
-            text = "FUJARA ${BuildConfig.VERSION_NAME}",
+            text = "FUJARA 0.5.1",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
