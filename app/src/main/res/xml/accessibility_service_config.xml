@@ -19,4 +19,4 @@
 
     android:notificationTimeout="100"
 
-    android:settingsActivity="pl.deliveryassistant.mvp.MainActivity" />
+    android:settingsActivity="pl.fujara.app.MainActivity" />

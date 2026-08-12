@@ -7,25 +7,41 @@ plugins {
 }
 
 android {
-    namespace = "pl.deliveryassistant.mvp"
+    namespace = "pl.fujara.app"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "pl.deliveryassistant.mvp"
+        applicationId = "pl.fujara.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.5.0"
+        versionCode = 6
+        versionName = "0.5.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    val uploadStoreFile = System.getenv("FUJARA_UPLOAD_STORE_FILE")
+    val uploadStorePassword = System.getenv("FUJARA_UPLOAD_STORE_PASSWORD")
+    val uploadKeyAlias = System.getenv("FUJARA_UPLOAD_KEY_ALIAS")
+    val uploadKeyPassword = System.getenv("FUJARA_UPLOAD_KEY_PASSWORD")
+
     signingConfigs {
-        getByName("debug") {
-            storeFile = rootProject.file("debug-test.keystore")
-            storePassword = "deliverytest"
-            keyAlias = "deliverytest"
-            keyPassword = "deliverytest"
+        create("release") {
+            if (!uploadStoreFile.isNullOrBlank()) {
+                storeFile = file(uploadStoreFile)
+            }
+            storePassword = uploadStorePassword
+            keyAlias = uploadKeyAlias
+            keyPassword = uploadKeyPassword
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            isMinifyEnabled = false
+            if (!uploadStoreFile.isNullOrBlank()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

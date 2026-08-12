@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "DeliveryAssistant"
+rootProject.name = "FUJARA"
 include(":app")

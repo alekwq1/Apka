@@ -1,19 +1,33 @@
-# Google Play — AccessibilityService / prominent disclosure
+# FUJARA — AccessibilityService / Google Play declaration
 
-FUJARA nie jest narzędziem dostępności dla osób z niepełnosprawnościami. AccessibilityService jest używany do wykrywania widocznych kart ofert kurierskich i wykonania lokalnego OCR, aby odczytać kwotę, dystans i czas potrzebne do obliczenia opłacalności.
+FUJARA **nie jest** narzędziem dostępności dla osób z niepełnosprawnościami (`isAccessibilityTool=false`).
 
-## Co użytkownik widzi przed włączeniem usługi
-Aplikacja pokazuje osobny ekran zgody przed otwarciem ustawień Dostępności. Ekran wyjaśnia:
-- jakie dane z widocznej oferty są odczytywane,
-- że przy pływającej karcie zrzut może obejmować tło ekranu,
-- że dane spoza oferty nie są używane ani zapisywane,
-- że obliczenia odbywają się lokalnie,
-- że aplikacja nie klika i nie akceptuje zleceń,
-- że użytkownik musi samodzielnie wyrazić zgodę i włączyć usługę w ustawieniach Androida.
+## Cel użycia AccessibilityService
+Usługa jest używana do rozpoznania widocznej karty oferty z obsługiwanej aplikacji kurierskiej. FUJARA odczytuje informacje potrzebne do lokalnego obliczenia opłacalności i wyświetla wynik użytkownikowi przed jego własną decyzją.
 
-## Do formularza deklaracji
-Cel użycia: analiza widocznej karty oferty i pokazanie użytkownikowi lokalnie obliczonej opłacalności przed jego własną decyzją o przyjęciu lub odrzuceniu zlecenia.
+## Dane dostępne dla funkcji
+Z widocznej oferty mogą być odczytane:
+- kwota,
+- dystans,
+- czas,
+- planowana godzina odbioru/dostawy, jeśli jest pokazana,
+- tekst potrzebny do rozpoznania platformy/oferty.
 
-Dostępne dane: tekst widoczny na karcie oferty, w szczególności kwota, dystans, czas i planowana godzina odbioru/dostawy, jeśli jest pokazana.
+Przy pływającej karcie techniczny screenshot może obejmować tło, ale FUJARA nie wykorzystuje treści spoza rozpoznanej oferty do innych celów i nie zapisuje historii ekranu.
 
-Udostępnianie danych: brak. Dane nie są wysyłane na serwer i nie są używane do reklam lub profilowania.
+## Co aplikacja robi z danymi
+- lokalnie rozpoznaje tekst,
+- lokalnie oblicza wynik po kosztach, zł/km i zł/h,
+- wyświetla wynik w nakładce.
+
+## Czego nie robi
+- nie klika,
+- nie przyjmuje i nie odrzuca zleceń,
+- nie wysyła ofert na serwer,
+- nie używa danych do reklam ani profilowania.
+
+## Prominent disclosure
+Przed przejściem do ustawień Accessibility użytkownik widzi osobny ekran opisujący AccessibilityService, zakres odczytu i cel. Musi nacisnąć `Rozumiem`. Dopiero potem aplikacja kieruje do systemowych ustawień Androida, gdzie użytkownik samodzielnie włącza usługę.
+
+## Film do deklaracji
+Film powinien pokazać pełny disclosure, zgodę użytkownika i ręczne włączenie usługi w ustawieniach Androida. Warto na końcu pokazać ekran główny i przycisk `Pokaż demo obliczeń`.

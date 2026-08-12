@@ -1,38 +1,37 @@
-# FUJARA — propozycja Google Play
+# FUJARA — Google Play listing
 
 ## Nazwa aplikacji
-FUJARA – opłacalność dostaw
+FUJARA
 
 ## Krótki opis
 Sprawdź, ile zostaje po kosztach, zanim przyjmiesz zlecenie.
 
 ## Pełny opis
-Nie bądź fujarą. Sprawdź marżę zanim przyjmiesz zlecenie.
+FUJARA pomaga kurierom szybko ocenić opłacalność widocznej oferty przed podjęciem decyzji.
 
-FUJARA to prosty kalkulator opłacalności ofert dla kurierów. Gdy na ekranie pojawi się karta zlecenia, aplikacja odczytuje widoczną kwotę, dystans i czas, a następnie pokazuje mały panel z najważniejszymi liczbami przed podjęciem decyzji.
+Gdy na ekranie pojawi się karta zlecenia z obsługiwanej aplikacji kurierskiej, FUJARA może odczytać widoczną kwotę, dystans i czas, a następnie pokazać mały panel z najważniejszymi liczbami.
 
-FUJARA może pokazać:
+Możesz zobaczyć m.in.:
 - kwotę oferty,
-- kwotę, która zostaje po ustawionym koszcie pojazdu,
+- wynik po ustawionym koszcie pojazdu,
 - wynik w zł/km,
 - wynik w zł/h,
 - dystans i czas,
-- prosty status: zielony, żółty albo czerwony.
+- prosty status opłacalności oznaczony kolorem.
 
-Sam ustawiasz koszt przejazdu 1 km oraz własne minima na kilometr i godzinę. Dzięki temu wynik jest dopasowany do Twojego auta, skutera, motocykla albo roweru elektrycznego.
+Sam ustawiasz koszt przejazdu 1 km oraz własne minimalne wyniki na kilometr i godzinę. Możesz też ustawić inne progi dla obsługiwanych platform.
 
-„Po kosztach” oznacza w FUJARA: kwota oferty minus ustawiony koszt przejazdu. To nie jest dochód netto po podatkach ani pełny rachunek księgowy.
+„Po kosztach” oznacza w FUJARA kwotę oferty pomniejszoną o ustawiony koszt przejazdu. Nie jest to dochód netto po podatkach ani pełny wynik księgowy.
 
-FUJARA nie klika przycisków, nie akceptuje i nie odrzuca zleceń za Ciebie. Odczyt i obliczenia wykonywane są lokalnie na telefonie. Dane ofert nie są wysyłane na serwer ani używane do reklam lub profilowania.
+FUJARA nie klika przycisków, nie akceptuje i nie odrzuca zleceń za Ciebie. Decyzja zawsze należy do użytkownika.
 
-Mały panel znika automatycznie, gdy karta oferty przestaje być widoczna.
+Rozpoznawanie oferty i obliczenia wykonywane są lokalnie na telefonie. FUJARA nie wysyła odczytanych ofert na serwer i nie wykorzystuje ich do reklam ani profilowania.
 
-FUJARA ma pomagać w jednej rzeczy: szybko sprawdzić liczby przed przyjęciem zlecenia.
+Panel jest widoczny tak długo, jak karta oferty pozostaje na ekranie, i znika po jej zamknięciu.
 
-## Hasło marki
+FUJARA — sprawdź liczby, zanim klikniesz „przyjmij”.
+
+## Hasło marki używane poza metadanymi sklepu
 Nie bądź fujarą. Sprawdź marżę zanim przyjmiesz zlecenie.
 
-Alternatywa angielska: Don’t be a FUJARA. Deliver smarter.
-
-## Uwaga przed publikacją
-Słowo „FUJARA” i hasło „Nie bądź fujarą” są celowo zaczepne. W samym sklepie warto zostawić neutralny krótki opis, a mocniejsze hasło używać ostrożnie w grafice lub pełnym opisie po sprawdzeniu, czy nie zostanie uznane za nieodpowiednie dla ogólnej grupy odbiorców.
+Angielski: Don’t be a FUJARA. Deliver smarter.

@@ -3,3 +3,8 @@
 local.properties
 **/build/
 *.iml
+*.jks
+*.keystore
+keystore.properties
+upload-key*.txt
+*.base64.txt

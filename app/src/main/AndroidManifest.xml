@@ -7,7 +7,7 @@
         android:roundIcon="@drawable/ic_fujara_app"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.DeliveryAssistant">
+        android:theme="@style/Theme.Fujara">
 
         <activity
             android:name=".MainActivity"
