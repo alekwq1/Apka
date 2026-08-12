@@ -7,7 +7,7 @@ plugins {
 }
 
 android {
-    namespace = "pl.fujara.app"
+    namespace = "pl.deliveryassistant.mvp"
     compileSdk = 36
 
     defaultConfig {
