@@ -12,6 +12,7 @@ class AppPrefs(private val context: Context) {
     init {
         migrateOverlayDefaultsIfNeeded()
         clearDeprecatedTargetPackageIfNeeded()
+        migrateProfitabilityDefaultsV077()
     }
 
     var analysisEnabled: Boolean
@@ -89,20 +90,20 @@ class AppPrefs(private val context: Context) {
 
     /** Gorna granica zoltego zakresu. Od niej oferta jest zielona. */
     var minimumNetPerKm: Double
-        get() = getDouble("min_net_km", 2.50)
+        get() = getDouble("min_net_km", 3.00)
         set(value) = putDouble("min_net_km", value)
 
     /** Szerokosc zoltego zakresu ponizej zielonego progu. */
     var toleranceNetPerKm: Double
-        get() = getDouble("tolerance_net_km", 0.50)
+        get() = getDouble("tolerance_net_km", 1.00)
         set(value) = putDouble("tolerance_net_km", value)
 
     var minimumNetPerHour: Double
-        get() = getDouble("min_net_hour", 35.0)
+        get() = getDouble("min_net_hour", 50.0)
         set(value) = putDouble("min_net_hour", value)
 
     var toleranceNetPerHour: Double
-        get() = getDouble("tolerance_net_hour", 5.0)
+        get() = getDouble("tolerance_net_hour", 20.0)
         set(value) = putDouble("tolerance_net_hour", value)
 
     fun globalRules(): ProfitabilityCalculator.Rules = ProfitabilityCalculator.Rules(
@@ -165,6 +166,39 @@ class AppPrefs(private val context: Context) {
     fun clearCustomRules(platform: CourierPlatform) {
         if (platform == CourierPlatform.GLOBAL) return
         prefs.edit().putBoolean("rules_${platform.key}_custom", false).apply()
+    }
+
+    /**
+     * 0.7.7: nowe domyslne zakresy z testow terenowych:
+     * PLN/km: nieoplacalna < 2.00, na granicy 2.00-3.00, oplacalna >= 3.00
+     * PLN/h:  nieoplacalna < 30,   na granicy 30-50,   oplacalna >= 50
+     *
+     * Aktualizujemy istniejaca instalacje tylko wtedy, gdy uzytkownik nadal ma
+     * komplet starych wartosci domyslnych. Wlasne ustawienia pozostaja bez zmian.
+     */
+    private fun migrateProfitabilityDefaultsV077() {
+        if (prefs.getBoolean("profitability_defaults_v077_applied", false)) return
+
+        val oldKmMinimum = getDouble("min_net_km", 2.50)
+        val oldKmTolerance = getDouble("tolerance_net_km", 0.50)
+        val oldHourMinimum = getDouble("min_net_hour", 35.0)
+        val oldHourTolerance = getDouble("tolerance_net_hour", 5.0)
+
+        val stillUsingOldDefaults =
+            oldKmMinimum == 2.50 &&
+                oldKmTolerance == 0.50 &&
+                oldHourMinimum == 35.0 &&
+                oldHourTolerance == 5.0
+
+        val editor = prefs.edit()
+        if (stillUsingOldDefaults) {
+            editor
+                .putString("min_net_km", "3.0")
+                .putString("tolerance_net_km", "1.0")
+                .putString("min_net_hour", "50.0")
+                .putString("tolerance_net_hour", "20.0")
+        }
+        editor.putBoolean("profitability_defaults_v077_applied", true).apply()
     }
 
     private fun clearDeprecatedTargetPackageIfNeeded() {
