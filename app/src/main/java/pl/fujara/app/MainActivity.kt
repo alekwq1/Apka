@@ -916,7 +916,7 @@ private fun SettingsScreen(
                 value = kmYellowRange,
                 onValueChange = { kmYellowRange = it },
                 onValueChangeFinished = { persistRules() },
-                valueRange = 0f..15f,
+                valueRange = 0f..10f,
                 enabled = ruleControlsEnabled
             )
 
@@ -935,7 +935,7 @@ private fun SettingsScreen(
                 value = hourYellowRange,
                 onValueChange = { hourYellowRange = it },
                 onValueChangeFinished = { persistRules() },
-                valueRange = 0f..200f,
+                valueRange = 0f..100f,
                 enabled = ruleControlsEnabled
             )
         }
@@ -1023,7 +1023,7 @@ private fun SettingsScreen(
         TextButton(onClick = { uriHandler.openUri("https://alekwq1.github.io/Apka/privacy.html") }, modifier = Modifier.fillMaxWidth()) {
             Text(tx(language, "Polityka prywatności", "Privacy policy", "Політика конфіденційності", "Политика конфиденциальности"))
         }
-        Text("FUJARA 0.7.5", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+        Text("FUJARA 0.7.6", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
     }
 }
 
