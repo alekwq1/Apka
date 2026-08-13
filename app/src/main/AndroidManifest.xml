@@ -3,8 +3,8 @@
 
     <application
         android:allowBackup="true"
-        android:icon="@drawable/ic_fujara_app"
-        android:roundIcon="@drawable/ic_fujara_app"
+        android:icon="@mipmap/ic_fujara_store"
+        android:roundIcon="@mipmap/ic_fujara_store"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.Fujara">

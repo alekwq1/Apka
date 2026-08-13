@@ -13,6 +13,7 @@ import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.text.TextUtils
 import android.view.Gravity
+import android.util.TypedValue
 import android.view.View
 import android.view.WindowManager
 import android.widget.ImageView
@@ -283,8 +284,10 @@ class OverlayController(
         }
         panel.addView(timeSourceText)
 
+        val availableWidth = (service.resources.displayMetrics.widthPixels - dp(16)).coerceAtLeast(dp(240))
+        val panelWidth = minOf(dp(304), availableWidth)
         val params = WindowManager.LayoutParams(
-            dp(268),
+            panelWidth,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -459,12 +462,31 @@ class OverlayController(
         amountRow?.rightValue?.textSize = 11.8f * scale
         distanceRow?.leftValue?.textSize = 11.8f * scale
         distanceRow?.rightValue?.textSize = 11.8f * scale
-        rateRow?.leftValue?.textSize = when {
+
+        val hourlyMax = when {
             onlyHourly -> 20f * scale
             onlyRates -> 15.5f * scale
             else -> 12.5f * scale
         }
-        rateRow?.rightValue?.textSize = if (onlyRates) 15.5f * scale else 12.5f * scale
+        val perKmMax = if (onlyRates) 15.5f * scale else 12.5f * scale
+
+        // Auto-size zachowuje wybrany przez uzytkownika duzy tekst, ale gdy dwie
+        // stawki sa obok siebie, lekko zmniejsza tylko te wartosc, ktora inaczej
+        // ucielaby koncowke "zl/km" lub "zl/h".
+        rateRow?.leftValue?.let { applyAutoSize(it, hourlyMax) }
+        rateRow?.rightValue?.let { applyAutoSize(it, perKmMax) }
+    }
+
+    private fun applyAutoSize(view: TextView, preferredSp: Float) {
+        val maxSp = preferredSp.coerceIn(11f, 34f).toInt()
+        val minSp = minOf(10, maxSp)
+        view.setAutoSizeTextTypeUniformWithConfiguration(
+            minSp,
+            maxSp,
+            1,
+            TypedValue.COMPLEX_UNIT_SP
+        )
+        view.ellipsize = null
     }
 
     private fun localeFor(language: String): Locale = when (language) {

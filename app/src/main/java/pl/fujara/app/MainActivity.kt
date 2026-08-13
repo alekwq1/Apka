@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Canvas
@@ -40,7 +41,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -50,7 +50,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -62,6 +61,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.graphics.Color
@@ -74,7 +74,6 @@ import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import java.util.Locale
 import kotlin.math.roundToInt
-import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
 
@@ -235,19 +234,20 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openAccessibilitySettings() {
-        val component = ComponentName(this, DeliveryAccessibilityService::class.java)
-        val componentKey = component.flattenToString()
-        val fragmentArgs = Bundle().apply {
-            putString(":settings:fragment_args_key", componentKey)
+        // Publiczne API Androida otwiera ekran Dostepnosci, ale nie daje aplikacji
+        // kontrolowanego sposobu podswietlenia konkretnej pozycji w Ustawieniach.
+        // Pokazujemy wiec krotka instrukcje, ktora pozostaje widoczna po przejsciu
+        // do Ustawien. Jest to stabilniejsze niz nieudokumentowane extra producentow.
+        val hint = when (prefs.languageCode) {
+            "en" -> "Tap Installed apps -> FUJARA -> turn the service on"
+            "uk" -> "Натисніть Встановлені застосунки -> FUJARA -> увімкніть службу"
+            "ru" -> "Нажмите Установленные приложения -> FUJARA -> включите службу"
+            else -> "Kliknij Zainstalowane aplikacje -> FUJARA -> Włącz"
         }
-        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-            // AOSP Settings potrafi przewinac/podswietlic preference przekazana tym kluczem.
-            // Na nakladkach producentow extra moze byc zignorowane, dlatego mamy fallback.
-            putExtra(":settings:fragment_args_key", componentKey)
-            putExtra(":settings:show_fragment_args", fragmentArgs)
-        }
-        runCatching { startActivity(intent) }
-            .onFailure { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+        Toast.makeText(this, hint, Toast.LENGTH_LONG).show()
+
+        runCatching { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+            .onFailure { openAppInfo() }
     }
 
     private fun openAppInfo() {
@@ -712,25 +712,17 @@ private fun SettingsScreen(
     var selectedLanguage by remember { mutableStateOf(AppLanguage.fromCode(prefs.languageCode)) }
     var selectedTheme by remember { mutableStateOf(prefs.themeMode) }
     var decisionBasis by remember { mutableStateOf(prefs.decisionBasis) }
-    var targetPackage by remember { mutableStateOf(prefs.targetPackage) }
-    var showAdvanced by remember { mutableStateOf(false) }
-    var saveMessage by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
 
     fun saved() {
-        saveMessage = tx(
+        val message = tx(
             selectedLanguage,
             "Zapisano automatycznie",
             "Saved automatically",
             "Збережено автоматично",
             "Сохранено автоматически"
         )
-    }
-
-    LaunchedEffect(saveMessage) {
-        if (saveMessage != null) {
-            delay(1100)
-            saveMessage = null
-        }
+        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
     }
 
     fun applyRuleState(rules: ProfitabilityCalculator.Rules) {
@@ -768,22 +760,6 @@ private fun SettingsScreen(
 
     ScreenContainer(scrollable = true) {
         TopBar(title = tx(language, "Ustawienia", "Settings", "Налаштування", "Настройки"), onBack = onBack)
-
-        saveMessage?.let { message ->
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-            ) {
-                Text(
-                    "✓ $message",
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center
-                )
-            }
-        }
 
         SectionCard(step = "UI", title = tx(language, "Wygląd i język", "Appearance & language", "Вигляд і мова", "Вид и язык")) {
             Text(
@@ -928,10 +904,10 @@ private fun SettingsScreen(
             Text("PLN/km", fontWeight = FontWeight.Black)
             Text(
                 tx(language,
-                    "Bieda < ${String.format(Locale.ROOT, "%.2f", kmYellowRange.start)} · żółte ${String.format(Locale.ROOT, "%.2f", kmYellowRange.start)}–${String.format(Locale.ROOT, "%.2f", kmYellowRange.endInclusive)} · super ≥ ${String.format(Locale.ROOT, "%.2f", kmYellowRange.endInclusive)}",
-                    "Poor < ${String.format(Locale.ROOT, "%.2f", kmYellowRange.start)} · yellow ${String.format(Locale.ROOT, "%.2f", kmYellowRange.start)}–${String.format(Locale.ROOT, "%.2f", kmYellowRange.endInclusive)} · great ≥ ${String.format(Locale.ROOT, "%.2f", kmYellowRange.endInclusive)}",
-                    "Слабо < ${String.format(Locale.ROOT, "%.2f", kmYellowRange.start)} · жовте ${String.format(Locale.ROOT, "%.2f", kmYellowRange.start)}–${String.format(Locale.ROOT, "%.2f", kmYellowRange.endInclusive)} · супер ≥ ${String.format(Locale.ROOT, "%.2f", kmYellowRange.endInclusive)}",
-                    "Слабо < ${String.format(Locale.ROOT, "%.2f", kmYellowRange.start)} · жёлтое ${String.format(Locale.ROOT, "%.2f", kmYellowRange.start)}–${String.format(Locale.ROOT, "%.2f", kmYellowRange.endInclusive)} · супер ≥ ${String.format(Locale.ROOT, "%.2f", kmYellowRange.endInclusive)}"
+                    "Nieopłacalna < ${String.format(Locale.ROOT, "%.2f", kmYellowRange.start)} · na granicy ${String.format(Locale.ROOT, "%.2f", kmYellowRange.start)}–${String.format(Locale.ROOT, "%.2f", kmYellowRange.endInclusive)} · opłacalna ≥ ${String.format(Locale.ROOT, "%.2f", kmYellowRange.endInclusive)}",
+                    "Unprofitable < ${String.format(Locale.ROOT, "%.2f", kmYellowRange.start)} · borderline ${String.format(Locale.ROOT, "%.2f", kmYellowRange.start)}–${String.format(Locale.ROOT, "%.2f", kmYellowRange.endInclusive)} · profitable ≥ ${String.format(Locale.ROOT, "%.2f", kmYellowRange.endInclusive)}",
+                    "Невигідна < ${String.format(Locale.ROOT, "%.2f", kmYellowRange.start)} · на межі ${String.format(Locale.ROOT, "%.2f", kmYellowRange.start)}–${String.format(Locale.ROOT, "%.2f", kmYellowRange.endInclusive)} · вигідна ≥ ${String.format(Locale.ROOT, "%.2f", kmYellowRange.endInclusive)}",
+                    "Невыгодная < ${String.format(Locale.ROOT, "%.2f", kmYellowRange.start)} · на грани ${String.format(Locale.ROOT, "%.2f", kmYellowRange.start)}–${String.format(Locale.ROOT, "%.2f", kmYellowRange.endInclusive)} · выгодная ≥ ${String.format(Locale.ROOT, "%.2f", kmYellowRange.endInclusive)}"
                 ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -947,10 +923,10 @@ private fun SettingsScreen(
             Text("PLN/h", fontWeight = FontWeight.Black)
             Text(
                 tx(language,
-                    "Bieda < ${hourYellowRange.start.roundToInt()} · żółte ${hourYellowRange.start.roundToInt()}–${hourYellowRange.endInclusive.roundToInt()} · super ≥ ${hourYellowRange.endInclusive.roundToInt()}",
-                    "Poor < ${hourYellowRange.start.roundToInt()} · yellow ${hourYellowRange.start.roundToInt()}–${hourYellowRange.endInclusive.roundToInt()} · great ≥ ${hourYellowRange.endInclusive.roundToInt()}",
-                    "Слабо < ${hourYellowRange.start.roundToInt()} · жовте ${hourYellowRange.start.roundToInt()}–${hourYellowRange.endInclusive.roundToInt()} · супер ≥ ${hourYellowRange.endInclusive.roundToInt()}",
-                    "Слабо < ${hourYellowRange.start.roundToInt()} · жёлтое ${hourYellowRange.start.roundToInt()}–${hourYellowRange.endInclusive.roundToInt()} · супер ≥ ${hourYellowRange.endInclusive.roundToInt()}"
+                    "Nieopłacalna < ${hourYellowRange.start.roundToInt()} · na granicy ${hourYellowRange.start.roundToInt()}–${hourYellowRange.endInclusive.roundToInt()} · opłacalna ≥ ${hourYellowRange.endInclusive.roundToInt()}",
+                    "Unprofitable < ${hourYellowRange.start.roundToInt()} · borderline ${hourYellowRange.start.roundToInt()}–${hourYellowRange.endInclusive.roundToInt()} · profitable ≥ ${hourYellowRange.endInclusive.roundToInt()}",
+                    "Невигідна < ${hourYellowRange.start.roundToInt()} · на межі ${hourYellowRange.start.roundToInt()}–${hourYellowRange.endInclusive.roundToInt()} · вигідна ≥ ${hourYellowRange.endInclusive.roundToInt()}",
+                    "Невыгодная < ${hourYellowRange.start.roundToInt()} · на грани ${hourYellowRange.start.roundToInt()}–${hourYellowRange.endInclusive.roundToInt()} · выгодная ≥ ${hourYellowRange.endInclusive.roundToInt()}"
                 ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1034,30 +1010,6 @@ private fun SettingsScreen(
             )
         }
 
-        TextButton(onClick = { showAdvanced = !showAdvanced }, modifier = Modifier.fillMaxWidth()) {
-            Text(
-                if (showAdvanced) tx(language, "Ukryj zaawansowane", "Hide advanced", "Сховати розширені", "Скрыть расширенные")
-                else tx(language, "Ustawienia zaawansowane", "Advanced settings", "Розширені налаштування", "Расширенные настройки")
-            )
-        }
-
-        if (showAdvanced) {
-            SectionCard(step = "DEV", title = tx(language, "Zaawansowane", "Advanced", "Розширені", "Расширенные")) {
-                OutlinedTextField(
-                    value = targetPackage,
-                    onValueChange = {
-                        targetPackage = it
-                        prefs.targetPackage = it
-                        saved()
-                    },
-                    label = { Text("Package name") },
-                    supportingText = { Text(tx(language, "Zostaw puste poza testami jednej konkretnej aplikacji.", "Leave blank except when testing one specific app.", "Залиште порожнім, окрім тестів.", "Оставьте пустым, кроме тестов.")) },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
-            }
-        }
-
         Text(
             tx(language, "Zmiany zapisują się automatycznie — nie ma przycisku Zapisz.", "Changes save automatically — there is no Save button.", "Зміни зберігаються автоматично — кнопка Зберегти не потрібна.", "Изменения сохраняются автоматически — кнопка Сохранить не нужна."),
             style = MaterialTheme.typography.bodySmall,
@@ -1069,16 +1021,16 @@ private fun SettingsScreen(
         TextButton(onClick = { uriHandler.openUri("https://alekwq1.github.io/Apka/privacy.html") }, modifier = Modifier.fillMaxWidth()) {
             Text(tx(language, "Polityka prywatności", "Privacy policy", "Політика конфіденційності", "Политика конфиденциальности"))
         }
-        Text("FUJARA 0.7.0", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+        Text("FUJARA 0.7.2", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
     }
 }
 
 @Composable
 private fun ColorLegend(language: AppLanguage) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        LegendItem(Modifier.weight(1f), MaterialTheme.colorScheme.primary, tx(language, "super", "great", "супер", "супер"))
-        LegendItem(Modifier.weight(1f), MaterialTheme.colorScheme.secondary, tx(language, "żółte", "yellow", "жовте", "жёлтое"))
-        LegendItem(Modifier.weight(1f), MaterialTheme.colorScheme.tertiary, tx(language, "bieda", "poor", "слабо", "слабо"))
+        LegendItem(Modifier.weight(1f), MaterialTheme.colorScheme.primary, tx(language, "opłacalna", "profitable", "вигідна", "выгодная"))
+        LegendItem(Modifier.weight(1f), MaterialTheme.colorScheme.secondary, tx(language, "na granicy", "borderline", "на межі", "на грани"))
+        LegendItem(Modifier.weight(1f), MaterialTheme.colorScheme.tertiary, tx(language, "nieopłacalna", "unprofitable", "невигідна", "невыгодная"))
     }
 }
 

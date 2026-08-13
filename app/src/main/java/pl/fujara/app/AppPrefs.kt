@@ -11,6 +11,7 @@ class AppPrefs(private val context: Context) {
 
     init {
         migrateOverlayDefaultsIfNeeded()
+        clearDeprecatedTargetPackageIfNeeded()
     }
 
     var analysisEnabled: Boolean
@@ -164,6 +165,14 @@ class AppPrefs(private val context: Context) {
     fun clearCustomRules(platform: CourierPlatform) {
         if (platform == CourierPlatform.GLOBAL) return
         prefs.edit().putBoolean("rules_${platform.key}_custom", false).apply()
+    }
+
+    private fun clearDeprecatedTargetPackageIfNeeded() {
+        if (prefs.getBoolean("target_package_removed_v071", false)) return
+        prefs.edit()
+            .putString("target_package", "")
+            .putBoolean("target_package_removed_v071", true)
+            .apply()
     }
 
     private fun migrateOverlayDefaultsIfNeeded() {

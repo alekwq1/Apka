@@ -1,12 +1,12 @@
-# FUJARA 0.7.0
+# FUJARA 0.7.2
 
 Android app for local courier-offer profitability analysis.
 
 ## Google Play readiness
 - applicationId / namespace: `pl.fujara.app`
 - targetSdk / compileSdk: 36
-- versionCode: 8
-- versionName: 0.7.0
+- versionCode: 9
+- versionName: 0.7.2
 - signed AAB workflow: `.github/workflows/build-play-aab.yml`
 - debug APK workflow: `.github/workflows/test-apk.yml`
 - privacy page: `docs/privacy.html`
@@ -18,3 +18,8 @@ Start with `PLAY-CONSOLE-START-HERE.md`.
 
 ## Privacy page
 The current support/privacy contact is `aleksanue@gmail.com`. Publish `/docs` using GitHub Pages before submitting the store listing.
+
+
+## Ostatnia zmiana
+
+Wersja 0.7.2 ujednolica ikonę aplikacji na ekranie telefonu z grafiką widoczną w Google Play. Szczegóły: `CHANGES-0.7.2.md`.

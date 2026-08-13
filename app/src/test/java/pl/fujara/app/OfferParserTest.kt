@@ -251,4 +251,40 @@ class OfferParserTest {
         assertNull(offer.durationMinutes)
     }
 
+    @Test
+    fun woltEnglishCardUsesPrefixedPlnAndIgnoresRoadNumber() {
+        val text = """
+            19:28
+            221
+            PLN 10.27
+            Expected earnings for the full delivery
+            Delivery from
+            McDonald's - Gdańsk Świętokrzyska
+            Route distance
+            4.1 km
+            Estimated
+            11 - 14 min
+            Accept
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text, CourierPlatform.WOLT)
+
+        assertNotNull(offer)
+        assertEquals(10.27, offer!!.amountPln, 0.001)
+        assertEquals(4.1, offer.distanceKm, 0.001)
+        assertEquals(14, offer.durationMinutes)
+    }
+
+    @Test
+    fun currencyMarkerDoesNotAttachToNumberFromAnotherLine() {
+        val text = """
+            PLN
+            221
+            Route distance 4.1 km
+            Estimated 14 min
+        """.trimIndent()
+
+        assertNull(OfferParser.parse(text, CourierPlatform.GLOVO))
+    }
+
 }

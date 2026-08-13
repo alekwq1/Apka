@@ -7,12 +7,12 @@ package pl.fujara.app
  * calej oferty.
  */
 object OfferParser {
-    private const val CURRENCY = "(?:P\\s*L\\s*N|z\\s*[łl])"
-    private const val KM = "k\\s*(?:m|rn)"
-    private const val MIN = "(?:m|rn)\\s*i\\s*n"
+    private const val CURRENCY = "(?:P[\\t ]*L[\\t ]*N|z[\\t ]*[łl])"
+    private const val KM = "k[\\t ]*(?:m|rn)"
+    private const val MIN = "(?:m|rn)[\\t ]*i[\\t ]*n"
 
     private val amountRegex = Regex(
-        """(?:(?:$CURRENCY)\s*(\d{1,4}(?:[.,]\d{1,2})?)|(\d{1,4}(?:[.,]\d{1,2})?)\s*(?:$CURRENCY))""",
+        """(?:(?:$CURRENCY)[\t ]*(\d{1,4}(?:[.,]\d{1,2})?)|(\d{1,4}(?:[.,]\d{1,2})?)[\t ]*(?:$CURRENCY))""",
         RegexOption.IGNORE_CASE
     )
     private val bareAmountRegex = Regex("""(?<![\d:])(\d{1,3}[.,]\d{2})(?!\d)""")
@@ -59,8 +59,11 @@ object OfferParser {
         """(?is)(\d{1,3}(?:[.,]\d{1,2})?)\s*$KM\s*[,·|]\s*(\d{1,3})\s*$MIN\s*[,·|]\s*(\d{1,4}(?:[.,]\d{1,2})?)\s*(?:$CURRENCY)"""
     )
 
+    private val woltPrefixedAmountBeforeLabelRegex = Regex(
+        """(?is)(?:$CURRENCY)[\t ]*(\d{1,4}(?:[.,]\d{1,2})?)[\s\S]{0,140}?(?:spodziewany\s+zarobek|estimated\s+earnings|expected\s+earnings)"""
+    )
     private val woltAmountBeforeLabelRegex = Regex(
-        """(?is)(\d{1,4}(?:[.,]\d{1,2})?)\s*(?:$CURRENCY)[\s\S]{0,120}?(?:spodziewany\s+zarobek|estimated\s+earnings|expected\s+earnings)"""
+        """(?is)(\d{1,4}(?:[.,]\d{1,2})?)[\t ]*(?:$CURRENCY)[\s\S]{0,120}?(?:spodziewany\s+zarobek|estimated\s+earnings|expected\s+earnings)"""
     )
     private val woltAmountAfterLabelRegex = Regex(
         """(?is)(?:spodziewany\s+zarobek|estimated\s+earnings|expected\s+earnings)[\s\S]{0,120}?(\d{1,4}(?:[.,]\d{1,2})?)\s*(?:$CURRENCY)"""
@@ -76,11 +79,14 @@ object OfferParser {
     fun parse(text: String, platform: CourierPlatform? = null): Offer? {
         val normalized = normalize(text)
         return when (platform) {
-            CourierPlatform.UBER -> parseUber(normalized) ?: parseGeneric(normalized)
-            CourierPlatform.WOLT -> parseWolt(normalized) ?: parseGeneric(normalized)
-            CourierPlatform.BOLT -> parseBolt(normalized) ?: parseGeneric(normalized)
+            // Dla rozpoznanej platformy wolimy brak wyniku niz pewny falszywy wynik
+            // z mapy/tla. Fallback ogolny zostaje tylko tam, gdzie nie mamy jeszcze
+            // stabilnego formatu platformy (Glovo / tryb globalny).
+            CourierPlatform.UBER -> parseUber(normalized)
+            CourierPlatform.WOLT -> parseWolt(normalized)
+            CourierPlatform.BOLT -> parseBolt(normalized)
             CourierPlatform.PYSZNE -> parsePyszne(normalized)
-            CourierPlatform.STUART -> parseStuart(normalized) ?: parseGeneric(normalized)
+            CourierPlatform.STUART -> parseStuart(normalized)
             CourierPlatform.GLOVO -> parseGeneric(normalized)
             CourierPlatform.GLOBAL, null ->
                 parseUber(normalized)
@@ -117,7 +123,8 @@ object OfferParser {
             "expected earnings" !in lower
         ) return null
 
-        val amount = (woltAmountBeforeLabelRegex.find(text)?.groupValues?.getOrNull(1)
+        val amount = (woltPrefixedAmountBeforeLabelRegex.find(text)?.groupValues?.getOrNull(1)
+            ?: woltAmountBeforeLabelRegex.find(text)?.groupValues?.getOrNull(1)
             ?: woltAmountAfterLabelRegex.find(text)?.groupValues?.getOrNull(1))
             ?.toNumber() ?: return null
 

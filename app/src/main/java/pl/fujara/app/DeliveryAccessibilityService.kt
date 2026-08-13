@@ -259,8 +259,13 @@ class DeliveryAccessibilityService : AccessibilityService() {
             .addOnSuccessListener { result ->
                 val configuredPackage = prefs.targetPackage.trim()
                 val recognitionText = OcrTextResolver.recognitionText(result)
-                val platform = platformForPackage(sourcePackageName)
-                    ?: if (isGalleryPackage(sourcePackageName)) inferPlatformFromText(recognitionText) else null
+                val packagePlatform = platformForPackage(sourcePackageName)
+                val inferredPlatform = inferPlatformFromText(recognitionText)
+
+                // Tekst karty ma pierwszenstwo przed zapamietanym package name. To jest
+                // wazne przy plywajacych kartach i launcherze: poprzednio po Uberze
+                // mogl zostac stary sygnal i ekran Wolt byl opisany jako Uber.
+                val platform = inferredPlatform ?: packagePlatform
                 val resolved = OcrTextResolver.resolve(result, platform)
 
                 val recognizedName = platform?.displayName
@@ -276,13 +281,21 @@ class DeliveryAccessibilityService : AccessibilityService() {
                 if (recognizedName != null && resolved != null) {
                     misses = 0
                     lastDeliverySignalAt = SystemClock.elapsedRealtime()
-                    if (sourcePackageName.isNotBlank() && isDeliveryPackage(sourcePackageName)) {
+                    if (
+                        sourcePackageName.isNotBlank() &&
+                        packagePlatform != null &&
+                        packagePlatform == platform
+                    ) {
                         lastDeliveryPackage = sourcePackageName
                     }
                     showOffer(
                         offer = resolved.offer,
                         applicationName = recognizedName,
-                        packageName = if (isGalleryPackage(sourcePackageName)) {
+                        packageName = if (
+                            isGalleryPackage(sourcePackageName) ||
+                            packagePlatform == null ||
+                            packagePlatform != platform
+                        ) {
                             ""
                         } else {
                             sourcePackageName
@@ -609,7 +622,9 @@ class DeliveryAccessibilityService : AccessibilityService() {
         val lower = text.lowercase()
         return when {
             "estimated earnings" in lower && (" mi total" in lower || "stuart" in lower) -> CourierPlatform.STUART
+            "expected earnings for the full delivery" in lower -> CourierPlatform.WOLT
             "spodziewany zarobek" in lower || ("całkowita kwota reszty" in lower && "akceptuj" in lower) -> CourierPlatform.WOLT
+            "route distance" in lower && "estimated" in lower && "accept" in lower && "pln" in lower -> CourierPlatform.WOLT
             "zaakceptuj zlecenie" in lower || ("odbierz na" in lower && "dostarcz na" in lower) -> CourierPlatform.PYSZNE
             "bolt food" in lower || (Regex("""\d+[.,]?\d*\s*km\s*[,·|]\s*\d+\s*min\s*[,·|]\s*\d+[.,]\d{1,2}\s*z[łl]""", RegexOption.IGNORE_CASE).containsMatchIn(text)) -> CourierPlatform.BOLT
             "delivery" in lower && "confirm" in lower && "pln" in lower -> CourierPlatform.UBER
