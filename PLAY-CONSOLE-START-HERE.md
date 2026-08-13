@@ -1,4 +1,4 @@
-# FUJARA 0.7.2 — start w Google Play od zera
+# FUJARA 0.7.1 — start w Google Play od zera
 
 Ten projekt jest przygotowany do pierwszego wydania jako `pl.fujara.app` i targetuje Android 16 / API 36.
 
@@ -7,7 +7,7 @@ Pliki `*.jks`, `*.keystore`, `*.base64.txt` i `upload-key*.txt` są ignorowane p
 
 Klucz upload jest potrzebny tylko do podpisywania pliku AAB wysyłanego do Google Play. Właściwy klucz podpisujący aplikację może przechowywać Google Play App Signing.
 
-## 1. Wgraj wersję 0.7.2 do GitHuba
+## 1. Wgraj wersję 0.7.1 do GitHuba
 Po aktualizacji repo powinny istnieć workflowy:
 - `.github/workflows/test-apk.yml`
 - `.github/workflows/build-play-aab.yml`
@@ -99,7 +99,7 @@ W release dodaj `app-release.aab` i opis zmian, np.:
 `Pierwsza wersja testowa FUJARA. Lokalna analiza opłacalności ofert kurierskich.`
 
 ## 10. Instrukcja dla recenzenta
-W aplikacji 0.7.2 jest przycisk `Pokaż podgląd nakładki`. Dzięki temu recenzent może zobaczyć sposób prezentacji wyniku bez konta kuriera i bez oczekiwania na prawdziwą ofertę.
+W aplikacji 0.7.1 jest przycisk `Pokaż podgląd nakładki`. Dzięki temu recenzent może zobaczyć sposób prezentacji wyniku bez konta kuriera i bez oczekiwania na prawdziwą ofertę.
 
 Tekst do pola review/app access znajdziesz w `APP-REVIEW-INSTRUCTIONS.md`.
 

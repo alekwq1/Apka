@@ -974,9 +974,11 @@ private fun SettingsScreen(
             }
             Slider(
                 value = fontScale,
-                onValueChange = { fontScale = it },
+                onValueChange = {
+                    fontScale = it
+                    prefs.overlayFontScalePercent = it.roundToInt()
+                },
                 onValueChangeFinished = {
-                    prefs.overlayFontScalePercent = fontScale.roundToInt()
                     saved()
                 },
                 valueRange = 80f..170f
@@ -1021,7 +1023,7 @@ private fun SettingsScreen(
         TextButton(onClick = { uriHandler.openUri("https://alekwq1.github.io/Apka/privacy.html") }, modifier = Modifier.fillMaxWidth()) {
             Text(tx(language, "Polityka prywatności", "Privacy policy", "Політика конфіденційності", "Политика конфиденциальности"))
         }
-        Text("FUJARA 0.7.2", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+        Text("FUJARA 0.7.3", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
     }
 }
 

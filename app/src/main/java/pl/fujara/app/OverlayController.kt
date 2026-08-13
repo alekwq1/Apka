@@ -209,7 +209,8 @@ class OverlayController(
             setTextColor(white)
             setTypeface(typeface, Typeface.BOLD)
             maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
+            ellipsize = null
+            includeFontPadding = false
         }
 
         val assistantName = TextView(service).apply {
@@ -217,7 +218,8 @@ class OverlayController(
             textSize = 7.5f
             setTextColor(gray)
             maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
+            ellipsize = null
+            includeFontPadding = false
         }
 
         titleContainer.addView(appName)
@@ -284,8 +286,8 @@ class OverlayController(
         }
         panel.addView(timeSourceText)
 
-        val availableWidth = (service.resources.displayMetrics.widthPixels - dp(16)).coerceAtLeast(dp(240))
-        val panelWidth = minOf(dp(304), availableWidth)
+        val availableWidth = (service.resources.displayMetrics.widthPixels - dp(24)).coerceAtLeast(dp(220))
+        val panelWidth = minOf(dp(286), availableWidth)
         val params = WindowManager.LayoutParams(
             panelWidth,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -356,7 +358,8 @@ class OverlayController(
             setTextColor(white)
             setTypeface(typeface, Typeface.BOLD)
             maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
+            ellipsize = null
+            includeFontPadding = false
         }
 
         container.addView(label)
@@ -458,28 +461,33 @@ class OverlayController(
         val onlyRates = (prefs.showHourly || prefs.showPerKm) &&
             !prefs.showAmount && !prefs.showAfterCosts && !prefs.showTime && !prefs.showDistance
 
-        amountRow?.leftValue?.textSize = 11.8f * scale
-        amountRow?.rightValue?.textSize = 11.8f * scale
-        distanceRow?.leftValue?.textSize = 11.8f * scale
-        distanceRow?.rightValue?.textSize = 11.8f * scale
+        applyAutoSize(amountRow?.leftValue, 11.8f * scale, 10f)
+        applyAutoSize(amountRow?.rightValue, 11.8f * scale, 10f)
+        applyAutoSize(distanceRow?.leftValue, 11.8f * scale, 10f)
+        applyAutoSize(distanceRow?.rightValue, 11.8f * scale, 10f)
 
         val hourlyMax = when {
-            onlyHourly -> 20f * scale
-            onlyRates -> 15.5f * scale
+            onlyHourly -> 21f * scale
+            onlyRates -> 15f * scale
             else -> 12.5f * scale
         }
-        val perKmMax = if (onlyRates) 15.5f * scale else 12.5f * scale
+        val perKmMax = when {
+            onlyHourly -> 12.5f * scale
+            onlyRates -> 14.5f * scale
+            else -> 12.2f * scale
+        }
 
-        // Auto-size zachowuje wybrany przez uzytkownika duzy tekst, ale gdy dwie
-        // stawki sa obok siebie, lekko zmniejsza tylko te wartosc, ktora inaczej
-        // ucielaby koncowke "zl/km" lub "zl/h".
-        rateRow?.leftValue?.let { applyAutoSize(it, hourlyMax) }
-        rateRow?.rightValue?.let { applyAutoSize(it, perKmMax) }
+        // Keep the selected larger text when possible, but shrink just enough
+        // so the trailing units like "zł/h" and "zł/km" stay visible.
+        applyAutoSize(rateRow?.leftValue, hourlyMax, if (onlyHourly) 12f else 10f)
+        applyAutoSize(rateRow?.rightValue, perKmMax, 10f)
     }
 
-    private fun applyAutoSize(view: TextView, preferredSp: Float) {
-        val maxSp = preferredSp.coerceIn(11f, 34f).toInt()
-        val minSp = minOf(10, maxSp)
+    private fun applyAutoSize(view: TextView?, preferredSp: Float, minSpFloat: Float) {
+        view ?: return
+        val maxSp = preferredSp.coerceIn(minSpFloat, 32f).toInt()
+        val minSp = minSpFloat.coerceAtMost(maxSp.toFloat()).toInt()
+        view.setHorizontallyScrolling(false)
         view.setAutoSizeTextTypeUniformWithConfiguration(
             minSp,
             maxSp,
