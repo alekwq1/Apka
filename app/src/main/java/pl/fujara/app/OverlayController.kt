@@ -11,9 +11,11 @@ import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.text.Spannable
+import android.text.SpannableString
 import android.text.TextUtils
+import android.text.style.RelativeSizeSpan
 import android.view.Gravity
-import android.util.TypedValue
 import android.view.View
 import android.view.WindowManager
 import android.widget.ImageView
@@ -88,8 +90,8 @@ class OverlayController(
         amountRow?.rightValue?.text = earningMoney(result.netPln, language)
         distanceRow?.leftValue?.text = "${num(result.distanceKm, language)} km"
         distanceRow?.rightValue?.text = result.durationMinutes?.let { "$it min" } ?: "--"
-        rateRow?.leftValue?.text = result.netPerHour?.let { hourlyMoney(it, language) } ?: "--"
-        rateRow?.rightValue?.text = result.netPerKm?.let { perKmMoney(it, language) } ?: "--"
+        rateRow?.leftValue?.text = result.netPerHour?.let { compactRateText(hourlyMoney(it, language), "zł/h") } ?: "--"
+        rateRow?.rightValue?.text = result.netPerKm?.let { compactRateText(perKmMoney(it, language), "zł/km") } ?: "--"
 
         applyFontScale()
 
@@ -211,6 +213,7 @@ class OverlayController(
             maxLines = 1
             ellipsize = null
             includeFontPadding = false
+            setHorizontallyScrolling(false)
         }
 
         val assistantName = TextView(service).apply {
@@ -220,6 +223,7 @@ class OverlayController(
             maxLines = 1
             ellipsize = null
             includeFontPadding = false
+            setHorizontallyScrolling(false)
         }
 
         titleContainer.addView(appName)
@@ -286,8 +290,8 @@ class OverlayController(
         }
         panel.addView(timeSourceText)
 
-        val availableWidth = (service.resources.displayMetrics.widthPixels - dp(24)).coerceAtLeast(dp(220))
-        val panelWidth = minOf(dp(286), availableWidth)
+        val availableWidth = (service.resources.displayMetrics.widthPixels - dp(16)).coerceAtLeast(dp(220))
+        val panelWidth = minOf(dp(268), availableWidth)
         val params = WindowManager.LayoutParams(
             panelWidth,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -360,6 +364,7 @@ class OverlayController(
             maxLines = 1
             ellipsize = null
             includeFontPadding = false
+            setHorizontallyScrolling(false)
         }
 
         container.addView(label)
@@ -461,40 +466,33 @@ class OverlayController(
         val onlyRates = (prefs.showHourly || prefs.showPerKm) &&
             !prefs.showAmount && !prefs.showAfterCosts && !prefs.showTime && !prefs.showDistance
 
-        applyAutoSize(amountRow?.leftValue, 11.8f * scale, 10f)
-        applyAutoSize(amountRow?.rightValue, 11.8f * scale, 10f)
-        applyAutoSize(distanceRow?.leftValue, 11.8f * scale, 10f)
-        applyAutoSize(distanceRow?.rightValue, 11.8f * scale, 10f)
-
-        val hourlyMax = when {
-            onlyHourly -> 21f * scale
-            onlyRates -> 15f * scale
+        // Direct textSize scaling is intentional. The previous AutoSize implementation
+        // kept shrinking the text back to fit the cell, so the user's size slider
+        // appeared to do nothing. Units are rendered smaller instead (compactRateText).
+        amountRow?.leftValue?.textSize = 11.8f * scale
+        amountRow?.rightValue?.textSize = 11.8f * scale
+        distanceRow?.leftValue?.textSize = 11.8f * scale
+        distanceRow?.rightValue?.textSize = 11.8f * scale
+        rateRow?.leftValue?.textSize = when {
+            onlyHourly -> 20f * scale
+            onlyRates -> 15.5f * scale
             else -> 12.5f * scale
         }
-        val perKmMax = when {
-            onlyHourly -> 12.5f * scale
-            onlyRates -> 14.5f * scale
-            else -> 12.2f * scale
-        }
-
-        // Keep the selected larger text when possible, but shrink just enough
-        // so the trailing units like "zł/h" and "zł/km" stay visible.
-        applyAutoSize(rateRow?.leftValue, hourlyMax, if (onlyHourly) 12f else 10f)
-        applyAutoSize(rateRow?.rightValue, perKmMax, 10f)
+        rateRow?.rightValue?.textSize = if (onlyRates) 15.5f * scale else 12.5f * scale
     }
 
-    private fun applyAutoSize(view: TextView?, preferredSp: Float, minSpFloat: Float) {
-        view ?: return
-        val maxSp = preferredSp.coerceIn(minSpFloat, 32f).toInt()
-        val minSp = minSpFloat.coerceAtMost(maxSp.toFloat()).toInt()
-        view.setHorizontallyScrolling(false)
-        view.setAutoSizeTextTypeUniformWithConfiguration(
-            minSp,
-            maxSp,
-            1,
-            TypedValue.COMPLEX_UNIT_SP
-        )
-        view.ellipsize = null
+    private fun compactRateText(text: String, unit: String): SpannableString {
+        val result = SpannableString(text)
+        val start = text.lastIndexOf(unit)
+        if (start >= 0) {
+            result.setSpan(
+                RelativeSizeSpan(0.62f),
+                start,
+                text.length,
+                Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+        }
+        return result
     }
 
     private fun localeFor(language: String): Locale = when (language) {
