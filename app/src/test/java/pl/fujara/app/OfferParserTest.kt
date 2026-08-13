@@ -164,4 +164,91 @@ class OfferParserTest {
         assertEquals(27, offer.durationMinutes)
     }
 
+    @Test
+    fun boltUsesWholeRouteSummaryInsteadOfPickupLeg() {
+        val text = """
+            Bolt Food
+            Pizza Hut - Worcella
+            ~3.3 km, ~17 min
+            ~4.4 km, ~18 min
+            7.7 km, 35 min, 20,62 zł
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text, CourierPlatform.BOLT)
+
+        assertNotNull(offer)
+        assertEquals(20.62, offer!!.amountPln, 0.001)
+        assertEquals(7.7, offer.distanceKm, 0.001)
+        assertEquals(35, offer.durationMinutes)
+    }
+
+    @Test
+    fun woltUsesExpectedEarningsAndUpperEtaNotCashChange() {
+        val text = """
+            48,12 zł
+            Spodziewany zarobek za pełną dostawę
+            Dostawa od Warzywina
+            Odległość 24.7 km
+            Szacowany 45 - 48 min
+            Zamówienie gotówkowe
+            Całkowita kwota reszty 1,10 zł
+            Akceptuj
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text, CourierPlatform.WOLT)
+
+        assertNotNull(offer)
+        assertEquals(48.12, offer!!.amountPln, 0.001)
+        assertEquals(24.7, offer.distanceKm, 0.001)
+        assertEquals(48, offer.durationMinutes)
+    }
+
+    @Test
+    fun pyszneHistoryIsNotAnActiveOffer() {
+        val text = """
+            Job history
+            246 jobs
+            167.00 tips (PLN)
+            26.9 km
+            Wed, Aug 12
+            ID: 257325094 5.4 km
+            17:48 Trakt Św. Wojciecha
+            17:58 Spadzista
+        """.trimIndent()
+
+        assertNull(OfferParser.parse(text, CourierPlatform.PYSZNE))
+    }
+
+    @Test
+    fun discordConversationMentioningPyszneIsNotAnOffer() {
+        val text = """
+            # ogólne
+            Ale mnie pyszne wkurwiło teraz
+            jechałem do niego 8 km
+            za anulowane zamówienie jest 3,80
+            paliwo nawet
+        """.trimIndent()
+
+        assertNull(OfferParser.parse(text, CourierPlatform.PYSZNE))
+    }
+
+    @Test
+    fun stuartConvertsMilesToKilometresAndAllowsMissingTime() {
+        val text = """
+            23.66zł
+            Estimated earnings
+            4.55 mi total · Extra large
+            Ugry bbq spot
+            25B Chabrowa
+            Accept
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text, CourierPlatform.STUART)
+
+        assertNotNull(offer)
+        assertEquals(23.66, offer!!.amountPln, 0.001)
+        assertEquals(7.3225, offer.distanceKm, 0.001)
+        assertNull(offer.durationMinutes)
+    }
+
 }

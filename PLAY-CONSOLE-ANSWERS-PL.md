@@ -1,6 +1,6 @@
 # FUJARA — propozycje odpowiedzi w Play Console
 
-Stan dla wersji 0.6.0. Odpowiedzi muszą zawsze odpowiadać faktycznemu buildowi.
+Stan dla wersji 0.7.0. Odpowiedzi muszą zawsze odpowiadać faktycznemu buildowi.
 
 ## Ads
 **Does your app contain ads?** → `No`

@@ -13,7 +13,8 @@ object ProfitabilityCalculator {
     fun calculate(
         offer: Offer,
         rules: Rules,
-        currentMinuteOfDay: Int
+        currentMinuteOfDay: Int,
+        decisionBasis: DecisionBasis = DecisionBasis.MIXED
     ): Profitability {
 
         val duration = resolveDuration(
@@ -73,7 +74,8 @@ object ProfitabilityCalculator {
             minimumPerKm = minimumPerKm,
             tolerancePerKm = tolerancePerKm,
             minimumPerHour = minimumPerHour,
-            tolerancePerHour = tolerancePerHour
+            tolerancePerHour = tolerancePerHour,
+            decisionBasis = decisionBasis
         )
 
         /*
@@ -120,73 +122,47 @@ object ProfitabilityCalculator {
         minimumPerKm: Double,
         tolerancePerKm: Double,
         minimumPerHour: Double,
-        tolerancePerHour: Double
+        tolerancePerHour: Double,
+        decisionBasis: DecisionBasis
     ): ProfitabilityStatus {
+        val almostKmThreshold = (minimumPerKm - tolerancePerKm).coerceAtLeast(0.0)
+        val almostHourThreshold = (minimumPerHour - tolerancePerHour).coerceAtLeast(0.0)
 
-        /*
-         * Bez czasu nie jesteśmy w stanie uczciwie
-         * policzyć stawki godzinowej.
-         */
-        if (
-            perKm == null ||
-            perHour == null ||
-            !perKm.isFinite() ||
-            !perHour.isFinite()
-        ) {
-            return ProfitabilityStatus.NO_TIME
+        fun statusForKm(): ProfitabilityStatus {
+            val value = perKm?.takeIf { it.isFinite() } ?: return ProfitabilityStatus.NO_TIME
+            return when {
+                value >= minimumPerKm -> ProfitabilityStatus.PROFITABLE
+                value >= almostKmThreshold -> ProfitabilityStatus.ALMOST_PROFITABLE
+                else -> ProfitabilityStatus.UNPROFITABLE
+            }
         }
 
-        /*
-         * ZIELONY:
-         *
-         * oba wymagania spełnione.
-         */
-        if (
-            perKm >= minimumPerKm &&
-            perHour >= minimumPerHour
-        ) {
-            return ProfitabilityStatus.PROFITABLE
+        fun statusForHour(): ProfitabilityStatus {
+            val value = perHour?.takeIf { it.isFinite() } ?: return ProfitabilityStatus.NO_TIME
+            return when {
+                value >= minimumPerHour -> ProfitabilityStatus.PROFITABLE
+                value >= almostHourThreshold -> ProfitabilityStatus.ALMOST_PROFITABLE
+                else -> ProfitabilityStatus.UNPROFITABLE
+            }
         }
 
-        /*
-         * Dolna granica żółtego zakresu.
-         *
-         * Przykład:
-         *
-         * minimum km = 3.00
-         * tolerancja = 0.50
-         *
-         * żółty zaczyna się od 2.50.
-         */
-        val almostKmThreshold =
-            (minimumPerKm - tolerancePerKm)
-                .coerceAtLeast(0.0)
-
-        val almostHourThreshold =
-            (minimumPerHour - tolerancePerHour)
-                .coerceAtLeast(0.0)
-
-        /*
-         * ŻÓŁTY:
-         *
-         * oferta nie spełnia pełnego minimum,
-         * ale oba parametry mieszczą się jeszcze
-         * w ustawionej tolerancji.
-         */
-        if (
-            perKm >= almostKmThreshold &&
-            perHour >= almostHourThreshold
-        ) {
-            return ProfitabilityStatus.ALMOST_PROFITABLE
+        return when (decisionBasis) {
+            DecisionBasis.PER_KM -> statusForKm()
+            DecisionBasis.HOURLY -> statusForHour()
+            DecisionBasis.MIXED -> {
+                val kmStatus = statusForKm()
+                val hourStatus = statusForHour()
+                if (kmStatus == ProfitabilityStatus.NO_TIME || hourStatus == ProfitabilityStatus.NO_TIME) {
+                    ProfitabilityStatus.NO_TIME
+                } else if (kmStatus == ProfitabilityStatus.UNPROFITABLE || hourStatus == ProfitabilityStatus.UNPROFITABLE) {
+                    ProfitabilityStatus.UNPROFITABLE
+                } else if (kmStatus == ProfitabilityStatus.ALMOST_PROFITABLE || hourStatus == ProfitabilityStatus.ALMOST_PROFITABLE) {
+                    ProfitabilityStatus.ALMOST_PROFITABLE
+                } else {
+                    ProfitabilityStatus.PROFITABLE
+                }
+            }
         }
-
-        /*
-         * CZERWONY:
-         *
-         * przynajmniej jeden parametr jest
-         * poniżej dopuszczalnej tolerancji.
-         */
-        return ProfitabilityStatus.UNPROFITABLE
     }
 
     private fun resolveDuration(

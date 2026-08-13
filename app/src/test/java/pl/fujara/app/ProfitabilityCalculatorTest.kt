@@ -142,4 +142,29 @@ class ProfitabilityCalculatorTest {
         assertEquals(26, result.durationMinutes)
     }
 
+    @Test
+    fun perKmDecisionWorksEvenWhenOfferHasNoTime() {
+        val result = ProfitabilityCalculator.calculate(
+            offer = Offer(amountPln = 23.66, distanceKm = 7.3225),
+            rules = rules,
+            currentMinuteOfDay = 12 * 60,
+            decisionBasis = DecisionBasis.PER_KM
+        )
+
+        assertEquals(ProfitabilityStatus.PROFITABLE, result.status)
+        assertNull(result.netPerHour)
+    }
+
+    @Test
+    fun hourlyDecisionStillRequiresReliableTime() {
+        val result = ProfitabilityCalculator.calculate(
+            offer = Offer(amountPln = 23.66, distanceKm = 7.3225),
+            rules = rules,
+            currentMinuteOfDay = 12 * 60,
+            decisionBasis = DecisionBasis.HOURLY
+        )
+
+        assertEquals(ProfitabilityStatus.NO_TIME, result.status)
+    }
+
 }

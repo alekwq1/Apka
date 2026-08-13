@@ -31,7 +31,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -42,14 +41,17 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,14 +63,18 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
 
@@ -86,6 +92,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             var languageCode by remember { mutableStateOf(prefs.languageCode) }
+            var themeMode by remember { mutableStateOf(prefs.themeMode) }
             var screen by remember {
                 mutableStateOf(
                     when {
@@ -98,27 +105,59 @@ class MainActivity : ComponentActivity() {
 
             val language = AppLanguage.fromCode(languageCode)
 
-            MaterialTheme(
-                colorScheme = darkColorScheme(
-                    primary = Color(0xFF82E46B),
-                    onPrimary = Color(0xFF071107),
-                    secondary = Color(0xFFFFD84A),
-                    onSecondary = Color(0xFF171300),
-                    tertiary = Color(0xFFFF6565),
-                    background = Color(0xFF090C0F),
-                    onBackground = Color(0xFFF3F6F8),
-                    surface = Color(0xFF11161B),
-                    onSurface = Color(0xFFF3F6F8),
-                    surfaceVariant = Color(0xFF171D23),
-                    onSurfaceVariant = Color(0xFFAAB3BD),
-                    outline = Color(0xFF2A333C),
-                    error = Color(0xFFFF6565)
+            val systemDark = isSystemInDarkTheme()
+            val useDark = when (themeMode) {
+                AppThemeMode.SYSTEM -> systemDark
+                AppThemeMode.LIGHT -> false
+                AppThemeMode.DARK -> true
+            }
+            val colors = if (useDark) {
+                darkColorScheme(
+                    primary = Color(0xFF7CE38B),
+                    onPrimary = Color(0xFF06210C),
+                    secondary = Color(0xFFFFD667),
+                    tertiary = Color(0xFFFF7B73),
+                    background = Color(0xFF0C1115),
+                    onBackground = Color(0xFFF4F7F8),
+                    surface = Color(0xFF131A20),
+                    onSurface = Color(0xFFF4F7F8),
+                    surfaceVariant = Color(0xFF1B242C),
+                    onSurfaceVariant = Color(0xFFB6C0C9),
+                    outline = Color(0xFF35424C)
                 )
-            ) {
+            } else {
+                lightColorScheme(
+                    primary = Color(0xFF176A35),
+                    onPrimary = Color.White,
+                    secondary = Color(0xFF7B5E00),
+                    tertiary = Color(0xFFB3261E),
+                    background = Color(0xFFF6F8F7),
+                    onBackground = Color(0xFF17201A),
+                    surface = Color(0xFFFFFFFF),
+                    onSurface = Color(0xFF17201A),
+                    surfaceVariant = Color(0xFFEDF2EE),
+                    onSurfaceVariant = Color(0xFF536159),
+                    outline = Color(0xFFC7D0C9)
+                )
+            }
+
+            MaterialTheme(colorScheme = colors) {
+                SideEffect {
+                    window.statusBarColor = colors.background.toArgb()
+                    window.navigationBarColor = colors.background.toArgb()
+                    WindowCompat.getInsetsController(window, window.decorView).apply {
+                        isAppearanceLightStatusBars = !useDark
+                        isAppearanceLightNavigationBars = !useDark
+                    }
+                }
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     when (screen) {
                         AppScreen.PRIVACY -> PrivacyScreen(
                             language = language,
+                            onLanguageChanged = { selected ->
+                                prefs.languageCode = selected.code
+                                languageCode = selected.code
+                            },
                             onCancel = { finish() },
                             onAccept = {
                                 prefs.privacyAccepted = true
@@ -172,6 +211,10 @@ class MainActivity : ComponentActivity() {
                             onLanguageChanged = {
                                 languageCode = it.code
                             },
+                            onThemeChanged = { selected ->
+                                prefs.themeMode = selected
+                                themeMode = selected
+                            },
                             onBack = { screen = AppScreen.HOME }
                         )
                     }
@@ -192,7 +235,19 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openAccessibilitySettings() {
-        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        val component = ComponentName(this, DeliveryAccessibilityService::class.java)
+        val componentKey = component.flattenToString()
+        val fragmentArgs = Bundle().apply {
+            putString(":settings:fragment_args_key", componentKey)
+        }
+        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+            // AOSP Settings potrafi przewinac/podswietlic preference przekazana tym kluczem.
+            // Na nakladkach producentow extra moze byc zignorowane, dlatego mamy fallback.
+            putExtra(":settings:fragment_args_key", componentKey)
+            putExtra(":settings:show_fragment_args", fragmentArgs)
+        }
+        runCatching { startActivity(intent) }
+            .onFailure { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
     }
 
     private fun openAppInfo() {
@@ -234,12 +289,26 @@ private enum class AppLanguage(
 @Composable
 private fun PrivacyScreen(
     language: AppLanguage,
+    onLanguageChanged: (AppLanguage) -> Unit,
     onCancel: () -> Unit,
     onAccept: () -> Unit
 ) {
     val uriHandler = LocalUriHandler.current
 
     ScreenContainer(scrollable = true) {
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            AppLanguage.values().forEach { item ->
+                FilterChip(
+                    selected = item == language,
+                    onClick = { onLanguageChanged(item) },
+                    label = { Text(item.label) }
+                )
+            }
+        }
+
         Text(
             text = tx(language, "FUJARA potrzebuje dostępu do ekranu", "FUJARA needs screen access", "FUJARA потребує доступу до екрана", "FUJARA нужен доступ к экрану"),
             style = MaterialTheme.typography.headlineMedium,
@@ -473,29 +542,13 @@ private fun HomeScreen(
             )
         }
 
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            QuickActionCard(
-                modifier = Modifier.weight(1f),
-                eyebrow = "01",
-                title = tx(language, "Telefon", "Phone", "Телефон", "Телефон"),
-                subtitle = if (serviceEnabled) tx(language, "Gotowy", "Ready", "Готово", "Готово") else tx(language, "Wymaga konfiguracji", "Setup required", "Потрібне налаштування", "Нужна настройка"),
-                onClick = onSetup
-            )
-            QuickActionCard(
-                modifier = Modifier.weight(1f),
-                eyebrow = "02",
-                title = tx(language, "Zasady", "Rules", "Правила", "Правила"),
-                subtitle = tx(language, "Koszty i minima", "Costs & thresholds", "Витрати й пороги", "Расходы и пороги"),
-                onClick = onSettings
-            )
-        }
 
         SectionCard(
             step = "LIVE",
             title = tx(language, "Tak wygląda analiza", "This is the analysis", "Так виглядає аналіз", "Так выглядит анализ")
         ) {
             Text(
-                tx(language, "Panel jest widoczny dokładnie tak długo, jak oferta. Bez osobnego czasu wyświetlania.", "The panel stays visible exactly as long as the offer. No separate display timer.", "Панель видима рівно стільки, скільки пропозиція.", "Панель видна ровно столько, сколько предложение."),
+                tx(language, "Podgląd pokazuje wybrane wskaźniki w takim samym układzie jak podczas jazdy.", "The preview shows your selected metrics in the same layout used while delivering.", "Попередній перегляд показує вибрані показники в тому самому макеті.", "Предпросмотр показывает выбранные показатели в том же макете."),
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             OutlinedButton(onClick = { showDemo = !showDemo }, modifier = Modifier.fillMaxWidth()) {
@@ -547,27 +600,6 @@ private fun StatusHeroCard(language: AppLanguage, active: Boolean, serviceEnable
 }
 
 @Composable
-private fun QuickActionCard(
-    modifier: Modifier,
-    eyebrow: String,
-    title: String,
-    subtitle: String,
-    onClick: () -> Unit
-) {
-    Card(
-        modifier = modifier.clickable(onClick = onClick),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            BrandEyebrow(eyebrow)
-            Text(title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-            Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-        }
-    }
-}
-
-@Composable
 private fun CompactAction(label: String, onClick: () -> Unit) {
     Box(
         modifier = Modifier
@@ -587,7 +619,7 @@ private fun DemoAnalysisCard(language: AppLanguage) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF0B0F12)),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.65f))
     ) {
         Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.Top) {
@@ -646,16 +678,27 @@ private fun SettingsScreen(
     prefs: AppPrefs,
     language: AppLanguage,
     onLanguageChanged: (AppLanguage) -> Unit,
+    onThemeChanged: (AppThemeMode) -> Unit,
     onBack: () -> Unit
 ) {
     val uriHandler = LocalUriHandler.current
     var selectedPlatform by remember { mutableStateOf(CourierPlatform.GLOBAL) }
     var useCustomRules by remember { mutableStateOf(true) }
-    var vehicleCost by remember { mutableStateOf(formatSetting(prefs.vehicleCostPerKm)) }
-    var minKm by remember { mutableStateOf(formatSetting(prefs.minimumNetPerKm)) }
-    var toleranceKm by remember { mutableStateOf(formatSetting(prefs.toleranceNetPerKm)) }
-    var minHour by remember { mutableStateOf(formatSetting(prefs.minimumNetPerHour)) }
-    var toleranceHour by remember { mutableStateOf(formatSetting(prefs.toleranceNetPerHour)) }
+
+    val initialRules = prefs.rulesForPlatform(CourierPlatform.GLOBAL)
+    var vehicleCost by remember { mutableStateOf(initialRules.vehicleCostPerKm.toFloat()) }
+    var kmYellowRange by remember {
+        mutableStateOf(
+            (initialRules.minimumNetPerKm - initialRules.toleranceNetPerKm)
+                .coerceAtLeast(0.0).toFloat()..initialRules.minimumNetPerKm.toFloat()
+        )
+    }
+    var hourYellowRange by remember {
+        mutableStateOf(
+            (initialRules.minimumNetPerHour - initialRules.toleranceNetPerHour)
+                .coerceAtLeast(0.0).toFloat()..initialRules.minimumNetPerHour.toFloat()
+        )
+    }
 
     var showHourly by remember { mutableStateOf(prefs.showHourly) }
     var showPerKm by remember { mutableStateOf(prefs.showPerKm) }
@@ -664,76 +707,170 @@ private fun SettingsScreen(
     var showTime by remember { mutableStateOf(prefs.showTime) }
     var showDistance by remember { mutableStateOf(prefs.showDistance) }
     var opacity by remember { mutableStateOf(prefs.overlayOpacityPercent.toFloat()) }
+    var fontScale by remember { mutableStateOf(prefs.overlayFontScalePercent.toFloat()) }
+    var roundEarnings by remember { mutableStateOf(prefs.roundEarnings) }
     var selectedLanguage by remember { mutableStateOf(AppLanguage.fromCode(prefs.languageCode)) }
+    var selectedTheme by remember { mutableStateOf(prefs.themeMode) }
+    var decisionBasis by remember { mutableStateOf(prefs.decisionBasis) }
     var targetPackage by remember { mutableStateOf(prefs.targetPackage) }
     var showAdvanced by remember { mutableStateOf(false) }
     var saveMessage by remember { mutableStateOf<String?>(null) }
 
-    fun loadPlatform(platform: CourierPlatform) {
-        val rules = prefs.rulesForPlatform(platform)
-        vehicleCost = formatSetting(rules.vehicleCostPerKm)
-        minKm = formatSetting(rules.minimumNetPerKm)
-        toleranceKm = formatSetting(rules.toleranceNetPerKm)
-        minHour = formatSetting(rules.minimumNetPerHour)
-        toleranceHour = formatSetting(rules.toleranceNetPerHour)
-        useCustomRules = platform == CourierPlatform.GLOBAL || prefs.hasCustomRules(platform)
+    fun saved() {
+        saveMessage = tx(
+            selectedLanguage,
+            "Zapisano automatycznie",
+            "Saved automatically",
+            "Збережено автоматично",
+            "Сохранено автоматически"
+        )
     }
 
-    fun saveAll() {
-        val rules = ProfitabilityCalculator.Rules(
-            vehicleCostPerKm = vehicleCost.toDoublePl()?.takeIf { it >= 0.0 } ?: run {
-                saveMessage = tx(language, "Sprawdź koszt pojazdu.", "Check vehicle cost.", "Перевірте вартість поїздки.", "Проверьте стоимость поездки.")
-                return
-            },
-            minimumNetPerKm = minKm.toDoublePl()?.takeIf { it >= 0.0 } ?: run {
-                saveMessage = tx(language, "Sprawdź minimum na kilometr.", "Check minimum per km.", "Перевірте мінімум на кілометр.", "Проверьте минимум на километр.")
-                return
-            },
-            toleranceNetPerKm = toleranceKm.toDoublePl()?.takeIf { it >= 0.0 } ?: run {
-                saveMessage = tx(language, "Sprawdź tolerancję na kilometr.", "Check per-km tolerance.", "Перевірте допуск на кілометр.", "Проверьте допуск на километр.")
-                return
-            },
-            minimumNetPerHour = minHour.toDoublePl()?.takeIf { it >= 0.0 } ?: run {
-                saveMessage = tx(language, "Sprawdź minimum na godzinę.", "Check minimum per hour.", "Перевірте мінімум на годину.", "Проверьте минимум в час.")
-                return
-            },
-            toleranceNetPerHour = toleranceHour.toDoublePl()?.takeIf { it >= 0.0 } ?: run {
-                saveMessage = tx(language, "Sprawdź tolerancję na godzinę.", "Check hourly tolerance.", "Перевірте погодинний допуск.", "Проверьте почасовой допуск.")
-                return
-            }
-        )
+    LaunchedEffect(saveMessage) {
+        if (saveMessage != null) {
+            delay(1100)
+            saveMessage = null
+        }
+    }
 
+    fun applyRuleState(rules: ProfitabilityCalculator.Rules) {
+        vehicleCost = rules.vehicleCostPerKm.toFloat()
+        kmYellowRange = (rules.minimumNetPerKm - rules.toleranceNetPerKm)
+            .coerceAtLeast(0.0).toFloat()..rules.minimumNetPerKm.toFloat()
+        hourYellowRange = (rules.minimumNetPerHour - rules.toleranceNetPerHour)
+            .coerceAtLeast(0.0).toFloat()..rules.minimumNetPerHour.toFloat()
+    }
+
+    fun currentRules(): ProfitabilityCalculator.Rules = ProfitabilityCalculator.Rules(
+        vehicleCostPerKm = vehicleCost.toDouble(),
+        minimumNetPerKm = kmYellowRange.endInclusive.toDouble(),
+        toleranceNetPerKm = (kmYellowRange.endInclusive - kmYellowRange.start).coerceAtLeast(0f).toDouble(),
+        minimumNetPerHour = hourYellowRange.endInclusive.toDouble(),
+        toleranceNetPerHour = (hourYellowRange.endInclusive - hourYellowRange.start).coerceAtLeast(0f).toDouble()
+    )
+
+    fun persistRules() {
+        val rules = currentRules()
         if (selectedPlatform == CourierPlatform.GLOBAL) {
             prefs.setRules(CourierPlatform.GLOBAL, rules)
         } else if (useCustomRules) {
             prefs.setRules(selectedPlatform, rules)
-        } else {
-            prefs.clearCustomRules(selectedPlatform)
         }
-
-        prefs.showHourly = showHourly
-        prefs.showPerKm = showPerKm
-        prefs.showAmount = showAmount
-        prefs.showAfterCosts = showAfterCosts
-        prefs.showTime = showTime
-        prefs.showDistance = showDistance
-        prefs.overlayOpacityPercent = opacity.roundToInt()
-        prefs.languageCode = selectedLanguage.code
-        prefs.targetPackage = targetPackage
-        onLanguageChanged(selectedLanguage)
-        saveMessage = tx(selectedLanguage, "Ustawienia zapisane.", "Settings saved.", "Налаштування збережено.", "Настройки сохранены.")
+        saved()
     }
+
+    fun loadPlatform(platform: CourierPlatform) {
+        useCustomRules = platform == CourierPlatform.GLOBAL || prefs.hasCustomRules(platform)
+        applyRuleState(prefs.rulesForPlatform(platform))
+    }
+
+    val ruleControlsEnabled = selectedPlatform == CourierPlatform.GLOBAL || useCustomRules
 
     ScreenContainer(scrollable = true) {
         TopBar(title = tx(language, "Ustawienia", "Settings", "Налаштування", "Настройки"), onBack = onBack)
-        BrandEyebrow(tx(language, "USTAW RAZ, POTEM TYLKO JEDŹ", "SET ONCE, THEN DRIVE", "НАЛАШТУЙТЕ ОДИН РАЗ", "НАСТРОЙТЕ ОДИН РАЗ"))
-        Text(
-            tx(language, "FUJARA ocenia każdą ofertę według Twoich kosztów i minimów.", "FUJARA rates every offer using your costs and thresholds.", "FUJARA оцінює кожну пропозицію за вашими витратами й порогами.", "FUJARA оценивает каждое предложение по вашим расходам и порогам."),
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Black
-        )
 
-        SectionCard(step = "ZAKRES", title = tx(language, "Gdzie mają działać te ustawienia?", "Where should these settings apply?", "Де застосовувати ці налаштування?", "Где применять эти настройки?")) {
+        saveMessage?.let { message ->
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+            ) {
+                Text(
+                    "✓ $message",
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+
+        SectionCard(step = "UI", title = tx(language, "Wygląd i język", "Appearance & language", "Вигляд і мова", "Вид и язык")) {
+            Text(
+                tx(language, "Motyw aplikacji", "App theme", "Тема застосунку", "Тема приложения"),
+                fontWeight = FontWeight.Bold
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                AppThemeMode.values().forEach { mode ->
+                    val label = when (mode) {
+                        AppThemeMode.SYSTEM -> tx(language, "System", "System", "Система", "Система")
+                        AppThemeMode.LIGHT -> tx(language, "Jasny", "Light", "Світлий", "Светлый")
+                        AppThemeMode.DARK -> tx(language, "Ciemny", "Dark", "Темний", "Тёмный")
+                    }
+                    FilterChip(
+                        selected = selectedTheme == mode,
+                        onClick = {
+                            selectedTheme = mode
+                            prefs.themeMode = mode
+                            onThemeChanged(mode)
+                            saved()
+                        },
+                        label = { Text(label) }
+                    )
+                }
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f))
+            Text(
+                tx(language, "Język", "Language", "Мова", "Язык"),
+                fontWeight = FontWeight.Bold
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                AppLanguage.values().forEach { item ->
+                    FilterChip(
+                        selected = selectedLanguage == item,
+                        onClick = {
+                            selectedLanguage = item
+                            prefs.languageCode = item.code
+                            onLanguageChanged(item)
+                            saved()
+                        },
+                        label = { Text(item.label) }
+                    )
+                }
+            }
+        }
+
+        SectionCard(step = "DECYZJA", title = tx(language, "Na czym oprzeć ocenę?", "How should an offer be rated?", "Як оцінювати пропозицію?", "Как оценивать предложение?")) {
+            Text(
+                tx(language, "Wybierz wskaźnik, który ma decydować o kolorze wyniku.", "Choose which metric controls the result color.", "Оберіть показник, що визначає колір результату.", "Выберите показатель, определяющий цвет результата."),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                DecisionBasis.values().forEach { basis ->
+                    val label = when (basis) {
+                        DecisionBasis.HOURLY -> tx(language, "Za godzinę", "Per hour", "За годину", "За час")
+                        DecisionBasis.PER_KM -> tx(language, "Za km", "Per km", "За км", "За км")
+                        DecisionBasis.MIXED -> tx(language, "Mieszane", "Mixed", "Змішано", "Смешанно")
+                    }
+                    FilterChip(
+                        selected = decisionBasis == basis,
+                        onClick = {
+                            decisionBasis = basis
+                            prefs.decisionBasis = basis
+                            saved()
+                        },
+                        label = { Text(label) }
+                    )
+                }
+            }
+            Text(
+                tx(language, "Mieszane = oferta musi przejść oba progi; słabszy wynik decyduje o kolorze.", "Mixed = both thresholds matter; the weaker result decides the color.", "Змішано = враховуються обидва пороги; вирішує слабший результат.", "Смешанно = учитываются оба порога; решает более слабый результат."),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        SectionCard(step = "PROGI", title = tx(language, "Koszty i zakres opłacalności", "Costs & profitability range", "Витрати й діапазон вигідності", "Расходы и диапазон выгоды")) {
             Row(
                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -744,137 +881,175 @@ private fun SettingsScreen(
                         onClick = {
                             selectedPlatform = platform
                             loadPlatform(platform)
-                            saveMessage = null
                         },
                         label = { Text(platformLabel(platform)) }
                     )
                 }
             }
-            Text(
-                if (selectedPlatform == CourierPlatform.GLOBAL) {
-                    tx(language, "Domyślne wartości dla wszystkich platform.", "Default values for all platforms.", "Типові значення для всіх платформ.", "Значения по умолчанию для всех платформ.")
-                } else {
-                    tx(language, "Możesz nadpisać ustawienia tylko dla ${platformLabel(selectedPlatform)}.", "You can override settings only for ${platformLabel(selectedPlatform)}.", "Можна окремо налаштувати ${platformLabel(selectedPlatform)}.", "Можно отдельно настроить ${platformLabel(selectedPlatform)}.")
-                },
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+
             if (selectedPlatform != CourierPlatform.GLOBAL) {
                 SwitchRow(
-                    title = tx(language, "Własne ustawienia dla tej platformy", "Custom settings for this platform", "Власні налаштування для цієї платформи", "Свои настройки для этой платформы"),
+                    title = tx(language, "Osobne progi dla ${platformLabel(selectedPlatform)}", "Separate thresholds for ${platformLabel(selectedPlatform)}", "Окремі пороги для ${platformLabel(selectedPlatform)}", "Отдельные пороги для ${platformLabel(selectedPlatform)}"),
                     checked = useCustomRules,
                     onCheckedChange = { enabled ->
                         useCustomRules = enabled
-                        if (!enabled) {
-                            val global = prefs.globalRules()
-                            vehicleCost = formatSetting(global.vehicleCostPerKm)
-                            minKm = formatSetting(global.minimumNetPerKm)
-                            toleranceKm = formatSetting(global.toleranceNetPerKm)
-                            minHour = formatSetting(global.minimumNetPerHour)
-                            toleranceHour = formatSetting(global.toleranceNetPerHour)
+                        if (enabled) {
+                            val base = prefs.globalRules()
+                            applyRuleState(base)
+                            prefs.setRules(selectedPlatform, base)
+                        } else {
+                            prefs.clearCustomRules(selectedPlatform)
+                            applyRuleState(prefs.globalRules())
                         }
-                        saveMessage = null
+                        saved()
                     }
                 )
             }
-        }
 
-        SectionCard(step = "01", title = tx(language, "Koszt przejazdu", "Driving cost", "Вартість поїздки", "Стоимость поездки")) {
             Text(
-                tx(language, "Wpisz realny koszt 1 km. To od niego liczymy, ile faktycznie zostaje z oferty.", "Enter your real cost per km. This is used to calculate what remains from the offer.", "Вкажіть реальну вартість 1 км.", "Укажите реальную стоимость 1 км."),
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                tx(language, "Koszt pojazdu / 1 km", "Vehicle cost / 1 km", "Вартість авто / 1 км", "Стоимость авто / 1 км"),
+                fontWeight = FontWeight.Bold
             )
-            NumberField(
-                label = tx(language, "Koszt pojazdu", "Vehicle cost", "Вартість поїздки", "Стоимость поездки"),
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(tx(language, "Paliwo, serwis, opony, amortyzacja", "Fuel, service, tyres, depreciation", "Пальне, сервіс, шини, амортизація", "Топливо, сервис, шины, амортизация"), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                Text("${String.format(Locale.ROOT, "%.2f", vehicleCost)} zł/km", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Black)
+            }
+            Slider(
                 value = vehicleCost,
-                suffix = "zł/km",
-                help = tx(language, "Paliwo/prąd + serwis + opony + amortyzacja.", "Fuel/electricity + service + tyres + depreciation.", "Пальне/електрика + сервіс + шини + амортизація.", "Топливо/электричество + сервис + шины + амортизация."),
-                enabled = useCustomRules,
-                onChange = { vehicleCost = it; saveMessage = null }
+                onValueChange = { vehicleCost = it },
+                onValueChangeFinished = { persistRules() },
+                valueRange = 0f..5f,
+                enabled = ruleControlsEnabled
             )
-        }
 
-        SectionCard(step = "02", title = tx(language, "Twoje minima", "Your thresholds", "Ваші пороги", "Ваши пороги")) {
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f))
             ColorLegend(language)
-            NumberField(
-                label = tx(language, "Zielone od", "Green from", "Зелений від", "Зелёный от"),
-                value = minKm,
-                suffix = "zł/km",
-                help = tx(language, "Minimalny wynik po kosztach na kilometr.", "Minimum after-cost result per km.", "Мінімум після витрат на км.", "Минимум после расходов на км."),
-                enabled = useCustomRules,
-                onChange = { minKm = it; saveMessage = null }
-            )
-            NumberField(
-                label = tx(language, "Żółta tolerancja", "Yellow tolerance", "Жовтий допуск", "Жёлтый допуск"),
-                value = toleranceKm,
-                suffix = "zł/km",
-                help = tx(language, "O tyle wynik może spaść poniżej minimum i nadal być żółty.", "How far below the minimum a result may fall and still be yellow.", "Наскільки результат може бути нижчим за мінімум.", "Насколько результат может быть ниже минимума."),
-                enabled = useCustomRules,
-                onChange = { toleranceKm = it; saveMessage = null }
-            )
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-            NumberField(
-                label = tx(language, "Zielone od", "Green from", "Зелений від", "Зелёный от"),
-                value = minHour,
-                suffix = "zł/h",
-                help = tx(language, "Minimalny wynik po kosztach na godzinę.", "Minimum after-cost result per hour.", "Мінімум після витрат за годину.", "Минимум после расходов в час."),
-                enabled = useCustomRules,
-                onChange = { minHour = it; saveMessage = null }
-            )
-            NumberField(
-                label = tx(language, "Żółta tolerancja", "Yellow tolerance", "Жовтий допуск", "Жёлтый допуск"),
-                value = toleranceHour,
-                suffix = "zł/h",
-                help = tx(language, "O tyle stawka godzinowa może spaść poniżej minimum.", "How far the hourly rate may fall below the minimum.", "Наскільки погодинна ставка може бути нижчою.", "Насколько почасовая ставка может быть ниже."),
-                enabled = useCustomRules,
-                onChange = { toleranceHour = it; saveMessage = null }
-            )
-        }
 
-        SectionCard(step = "03", title = tx(language, "Nakładka na ofertę", "Offer overlay", "Накладка на пропозицію", "Накладка на предложение")) {
+            Text("PLN/km", fontWeight = FontWeight.Black)
             Text(
-                tx(language, "Wybierz tylko informacje, które chcesz widzieć podczas decyzji.", "Choose only the information you want while deciding.", "Виберіть лише потрібні дані.", "Выберите только нужные данные."),
+                tx(language,
+                    "Bieda < ${String.format(Locale.ROOT, "%.2f", kmYellowRange.start)} · żółte ${String.format(Locale.ROOT, "%.2f", kmYellowRange.start)}–${String.format(Locale.ROOT, "%.2f", kmYellowRange.endInclusive)} · super ≥ ${String.format(Locale.ROOT, "%.2f", kmYellowRange.endInclusive)}",
+                    "Poor < ${String.format(Locale.ROOT, "%.2f", kmYellowRange.start)} · yellow ${String.format(Locale.ROOT, "%.2f", kmYellowRange.start)}–${String.format(Locale.ROOT, "%.2f", kmYellowRange.endInclusive)} · great ≥ ${String.format(Locale.ROOT, "%.2f", kmYellowRange.endInclusive)}",
+                    "Слабо < ${String.format(Locale.ROOT, "%.2f", kmYellowRange.start)} · жовте ${String.format(Locale.ROOT, "%.2f", kmYellowRange.start)}–${String.format(Locale.ROOT, "%.2f", kmYellowRange.endInclusive)} · супер ≥ ${String.format(Locale.ROOT, "%.2f", kmYellowRange.endInclusive)}",
+                    "Слабо < ${String.format(Locale.ROOT, "%.2f", kmYellowRange.start)} · жёлтое ${String.format(Locale.ROOT, "%.2f", kmYellowRange.start)}–${String.format(Locale.ROOT, "%.2f", kmYellowRange.endInclusive)} · супер ≥ ${String.format(Locale.ROOT, "%.2f", kmYellowRange.endInclusive)}"
+                ),
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            SwitchRow("PLN/h", showHourly) { showHourly = it }
-            SwitchRow("PLN/km", showPerKm) { showPerKm = it }
-            SwitchRow(tx(language, "Kwota oferty", "Offer amount", "Сума пропозиції", "Сумма предложения"), showAmount) { showAmount = it }
-            SwitchRow(tx(language, "Po kosztach", "After costs", "Після витрат", "После расходов"), showAfterCosts) { showAfterCosts = it }
-            SwitchRow(tx(language, "Czas", "Time", "Час", "Время"), showTime) { showTime = it }
-            SwitchRow(tx(language, "Dystans", "Distance", "Відстань", "Расстояние"), showDistance) { showDistance = it }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+            RangeSlider(
+                value = kmYellowRange,
+                onValueChange = { kmYellowRange = it },
+                onValueChangeFinished = { persistRules() },
+                valueRange = 0f..15f,
+                enabled = ruleControlsEnabled
+            )
+
+            Text("PLN/h", fontWeight = FontWeight.Black)
+            Text(
+                tx(language,
+                    "Bieda < ${hourYellowRange.start.roundToInt()} · żółte ${hourYellowRange.start.roundToInt()}–${hourYellowRange.endInclusive.roundToInt()} · super ≥ ${hourYellowRange.endInclusive.roundToInt()}",
+                    "Poor < ${hourYellowRange.start.roundToInt()} · yellow ${hourYellowRange.start.roundToInt()}–${hourYellowRange.endInclusive.roundToInt()} · great ≥ ${hourYellowRange.endInclusive.roundToInt()}",
+                    "Слабо < ${hourYellowRange.start.roundToInt()} · жовте ${hourYellowRange.start.roundToInt()}–${hourYellowRange.endInclusive.roundToInt()} · супер ≥ ${hourYellowRange.endInclusive.roundToInt()}",
+                    "Слабо < ${hourYellowRange.start.roundToInt()} · жёлтое ${hourYellowRange.start.roundToInt()}–${hourYellowRange.endInclusive.roundToInt()} · супер ≥ ${hourYellowRange.endInclusive.roundToInt()}"
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            RangeSlider(
+                value = hourYellowRange,
+                onValueChange = { hourYellowRange = it },
+                onValueChangeFinished = { persistRules() },
+                valueRange = 0f..200f,
+                enabled = ruleControlsEnabled
+            )
+        }
+
+        SectionCard(step = "PANEL", title = tx(language, "Nakładka oferty", "Offer overlay", "Накладка пропозиції", "Накладка предложения")) {
+            Text(
+                tx(language, "Domyślnie pokazujemy tylko zarobek na godzinę i na kilometr.", "By default only hourly and per-km earnings are shown.", "Типово показуємо лише заробіток за годину і км.", "По умолчанию показываем только заработок за час и км."),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            SwitchRow("PLN/h", showHourly) {
+                showHourly = it; prefs.showHourly = it; saved()
+            }
+            SwitchRow("PLN/km", showPerKm) {
+                showPerKm = it; prefs.showPerKm = it; saved()
+            }
+            SwitchRow(tx(language, "Kwota oferty", "Offer amount", "Сума пропозиції", "Сумма предложения"), showAmount) {
+                showAmount = it; prefs.showAmount = it; saved()
+            }
+            SwitchRow(tx(language, "Po kosztach", "After costs", "Після витрат", "После расходов"), showAfterCosts) {
+                showAfterCosts = it; prefs.showAfterCosts = it; saved()
+            }
+            SwitchRow(tx(language, "Czas", "Time", "Час", "Время"), showTime) {
+                showTime = it; prefs.showTime = it; saved()
+            }
+            SwitchRow(tx(language, "Dystans", "Distance", "Відстань", "Расстояние"), showDistance) {
+                showDistance = it; prefs.showDistance = it; saved()
+            }
+            SwitchRow(tx(language, "Zaokrąglaj zarobki do pełnych PLN", "Round earnings to whole PLN", "Округляти заробіток до цілих PLN", "Округлять заработок до целых PLN"), roundEarnings) {
+                roundEarnings = it; prefs.roundEarnings = it; saved()
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(tx(language, "Rozmiar liczb", "Number size", "Розмір чисел", "Размер чисел"), fontWeight = FontWeight.Bold)
+                Text("${fontScale.roundToInt()}%", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Black)
+            }
+            Slider(
+                value = fontScale,
+                onValueChange = { fontScale = it },
+                onValueChangeFinished = {
+                    prefs.overlayFontScalePercent = fontScale.roundToInt()
+                    saved()
+                },
+                valueRange = 80f..170f
+            )
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant
+            ) {
+                Text(
+                    if (showHourly && !showPerKm && !showAmount && !showAfterCosts && !showTime && !showDistance) "48 PLN/h" else "48 PLN/h   ·   3.10 PLN/km",
+                    modifier = Modifier.padding(14.dp),
+                    fontWeight = FontWeight.Black,
+                    fontSize = (18f * (fontScale / 100f)).coerceIn(14f, 31f).sp,
+                    textAlign = TextAlign.Center
+                )
+            }
+
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(tx(language, "Krycie panelu", "Panel opacity", "Прозорість панелі", "Прозрачность панели"), fontWeight = FontWeight.Bold)
-                Text("${opacity.roundToInt()}%", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                Text("${opacity.roundToInt()}%", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Black)
             }
-            Slider(value = opacity, onValueChange = { opacity = it }, valueRange = 35f..100f)
-            InfoCard(
-                title = tx(language, "Bez timera", "No timer", "Без таймера", "Без таймера"),
-                body = tx(language, "Nakładka jest widoczna tak długo, jak widoczna jest oferta. Gdy oferta znika, FUJARA znika razem z nią.", "The overlay stays visible as long as the offer is visible. When the offer disappears, FUJARA disappears with it.", "Накладка видима стільки, скільки пропозиція.", "Накладка видна столько, сколько предложение.")
+            Slider(
+                value = opacity,
+                onValueChange = { opacity = it },
+                onValueChangeFinished = {
+                    prefs.overlayOpacityPercent = opacity.roundToInt()
+                    saved()
+                },
+                valueRange = 45f..100f
             )
-        }
-
-        SectionCard(step = "04", title = tx(language, "Język", "Language", "Мова", "Язык")) {
-            AppLanguage.values().forEach { item ->
-                Row(
-                    modifier = Modifier.fillMaxWidth().clickable { selectedLanguage = item }.padding(vertical = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    RadioButton(selected = selectedLanguage == item, onClick = { selectedLanguage = item })
-                    Text(item.label, modifier = Modifier.weight(1f))
-                    if (selectedLanguage == item) Text("✓", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                }
-            }
         }
 
         TextButton(onClick = { showAdvanced = !showAdvanced }, modifier = Modifier.fillMaxWidth()) {
-            Text(if (showAdvanced) tx(language, "Ukryj zaawansowane", "Hide advanced", "Сховати розширені", "Скрыть расширенные") else tx(language, "Ustawienia zaawansowane", "Advanced settings", "Розширені налаштування", "Расширенные настройки"))
+            Text(
+                if (showAdvanced) tx(language, "Ukryj zaawansowane", "Hide advanced", "Сховати розширені", "Скрыть расширенные")
+                else tx(language, "Ustawienia zaawansowane", "Advanced settings", "Розширені налаштування", "Расширенные настройки")
+            )
         }
 
         if (showAdvanced) {
             SectionCard(step = "DEV", title = tx(language, "Zaawansowane", "Advanced", "Розширені", "Расширенные")) {
                 OutlinedTextField(
                     value = targetPackage,
-                    onValueChange = { targetPackage = it },
+                    onValueChange = {
+                        targetPackage = it
+                        prefs.targetPackage = it
+                        saved()
+                    },
                     label = { Text("Package name") },
                     supportingText = { Text(tx(language, "Zostaw puste poza testami jednej konkretnej aplikacji.", "Leave blank except when testing one specific app.", "Залиште порожнім, окрім тестів.", "Оставьте пустым, кроме тестов.")) },
                     modifier = Modifier.fillMaxWidth(),
@@ -883,38 +1058,27 @@ private fun SettingsScreen(
             }
         }
 
-        Button(
-            onClick = { saveAll() },
+        Text(
+            tx(language, "Zmiany zapisują się automatycznie — nie ma przycisku Zapisz.", "Changes save automatically — there is no Save button.", "Зміни зберігаються автоматично — кнопка Зберегти не потрібна.", "Изменения сохраняются автоматически — кнопка Сохранить не нужна."),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(18.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 16.dp)
-        ) {
-            Text(tx(language, "Zapisz ustawienia", "Save settings", "Зберегти налаштування", "Сохранить настройки"), fontWeight = FontWeight.Bold)
-        }
-
-        saveMessage?.let {
-            Text(
-                text = it,
-                color = if (it.contains("zapis", ignoreCase = true) || it.contains("saved", ignoreCase = true) || it.contains("збереж", ignoreCase = true) || it.contains("сохран", ignoreCase = true)) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                modifier = Modifier.fillMaxWidth(),
-                textAlign = TextAlign.Center,
-                fontWeight = FontWeight.Bold
-            )
-        }
+            textAlign = TextAlign.Center
+        )
 
         TextButton(onClick = { uriHandler.openUri("https://alekwq1.github.io/Apka/privacy.html") }, modifier = Modifier.fillMaxWidth()) {
             Text(tx(language, "Polityka prywatności", "Privacy policy", "Політика конфіденційності", "Политика конфиденциальности"))
         }
-        Text("FUJARA 0.6.0", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+        Text("FUJARA 0.7.0", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
     }
 }
 
 @Composable
 private fun ColorLegend(language: AppLanguage) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        LegendItem(Modifier.weight(1f), MaterialTheme.colorScheme.primary, tx(language, "zielone", "green", "зелений", "зелёный"))
-        LegendItem(Modifier.weight(1f), MaterialTheme.colorScheme.secondary, tx(language, "na styk", "borderline", "на межі", "на грани"))
-        LegendItem(Modifier.weight(1f), MaterialTheme.colorScheme.tertiary, tx(language, "słabe", "poor", "слабо", "слабо"))
+        LegendItem(Modifier.weight(1f), MaterialTheme.colorScheme.primary, tx(language, "super", "great", "супер", "супер"))
+        LegendItem(Modifier.weight(1f), MaterialTheme.colorScheme.secondary, tx(language, "żółte", "yellow", "жовте", "жёлтое"))
+        LegendItem(Modifier.weight(1f), MaterialTheme.colorScheme.tertiary, tx(language, "bieda", "poor", "слабо", "слабо"))
     }
 }
 
@@ -936,6 +1100,7 @@ private fun FujaraBrandMark(
     color: Color,
     modifier: Modifier = Modifier
 ) {
+    val holeColor = MaterialTheme.colorScheme.background
     Canvas(modifier = modifier.size(width = 46.dp, height = 72.dp)) {
         val tubeWidth = size.width * 0.30f
         val left = (size.width - tubeWidth) / 2f
@@ -989,7 +1154,7 @@ private fun FujaraBrandMark(
 
         listOf(0.32f, 0.48f, 0.64f).forEach { fraction ->
             drawCircle(
-                color = Color(0xFF090C0F),
+                color = holeColor,
                 radius = size.width * 0.045f,
                 center = Offset(size.width / 2f, top + (bottom - top) * fraction)
             )
@@ -1165,28 +1330,6 @@ private fun SwitchRow(
     }
 }
 
-@Composable
-private fun NumberField(
-    label: String,
-    value: String,
-    suffix: String,
-    help: String,
-    enabled: Boolean,
-    onChange: (String) -> Unit
-) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = onChange,
-        label = { Text(label) },
-        supportingText = { Text(help) },
-        suffix = { Text(suffix) },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-        singleLine = true,
-        enabled = enabled,
-        modifier = Modifier.fillMaxWidth()
-    )
-}
-
 private fun platformLabel(platform: CourierPlatform): String = when (platform) {
     CourierPlatform.GLOBAL -> "Global"
     CourierPlatform.UBER -> "Uber"
@@ -1194,6 +1337,7 @@ private fun platformLabel(platform: CourierPlatform): String = when (platform) {
     CourierPlatform.GLOVO -> "Glovo"
     CourierPlatform.BOLT -> "Bolt"
     CourierPlatform.PYSZNE -> "Pyszne"
+    CourierPlatform.STUART -> "Stuart"
 }
 
 private fun isAccessibilityServiceEnabled(context: Context): Boolean {
@@ -1214,13 +1358,6 @@ private fun isBatteryUnrestricted(context: Context): Boolean {
         .getOrDefault(false)
 }
 
-private fun String.toDoublePl(): Double? =
-    replace(',', '.').toDoubleOrNull()
-
-private fun formatSetting(value: Double): String =
-    String.format(Locale.ROOT, "%.2f", value)
-        .trimEnd('0')
-        .trimEnd('.')
 
 private fun tx(
     language: AppLanguage,

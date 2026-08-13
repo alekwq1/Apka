@@ -6,70 +6,85 @@
   <title>FUJARA — Polityka prywatności</title>
   <meta name="description" content="Polityka prywatności aplikacji FUJARA.">
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: #f6f3ed; color: #17191d; }
-    main { max-width: 760px; margin: 0 auto; padding: 40px 20px 64px; }
-    .card { background: #fffcf7; border: 1px solid #ded8ce; border-radius: 20px; padding: 24px; margin: 16px 0; }
-    h1 { margin-bottom: 6px; }
-    h2 { margin-top: 0; font-size: 1.2rem; }
-    .muted { color: #666; }
-    .brand { font-weight: 800; letter-spacing: .04em; }
-    a { color: #2f7d4d; }
-    code { background: #eee9df; padding: 2px 5px; border-radius: 5px; }
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: #f5f7f5; color: #172019; line-height: 1.62; }
+    main { max-width: 820px; margin: 0 auto; padding: 40px 20px 72px; }
+    .card { background: #fff; border: 1px solid #dce4dd; border-radius: 20px; padding: 24px; margin: 16px 0; }
+    h1 { margin: 0 0 6px; }
+    h2 { margin-top: 0; font-size: 1.18rem; }
+    .muted { color: #637068; }
+    .brand { font-weight: 900; letter-spacing: .08em; color: #176a35; }
+    a { color: #176a35; font-weight: 700; }
+    ul { padding-left: 1.25rem; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #0c1115; color: #f4f7f8; }
+      .card { background: #131a20; border-color: #35424c; }
+      .muted { color: #b6c0c9; }
+      .brand, a { color: #7ce38b; }
+    }
   </style>
 </head>
 <body>
 <main>
   <p class="brand">FUJARA</p>
   <h1>Polityka prywatności</h1>
-  <p class="muted">Ostatnia aktualizacja: 12 sierpnia 2026 r.</p>
+  <p class="muted">Ostatnia aktualizacja: 13 sierpnia 2026 r.</p>
 
-  <div class="card">
-    <h2>1. O aplikacji</h2>
-    <p>FUJARA jest lokalnym kalkulatorem opłacalności ofert dla kurierów. Aplikacja rozpoznaje widoczne karty ofert w obsługiwanych aplikacjach kurierskich i pokazuje użytkownikowi obliczenia pomagające samodzielnie ocenić ofertę.</p>
-    <p>Podmiot publikujący: <strong>Scenovisofficial</strong>. Nazwa aplikacji: <strong>FUJARA</strong>.</p>
-  </div>
+  <section class="card">
+    <h2>1. Co robi FUJARA</h2>
+    <p>FUJARA pomaga kurierowi ocenić opłacalność widocznej oferty dostawy. Aplikacja może rozpoznawać oferty m.in. z Uber, Wolt, Glovo, Bolt Food, Pyszne.pl i Stuart, a następnie wyliczać wynik po kosztach, stawkę za kilometr i stawkę godzinową zgodnie z ustawieniami użytkownika.</p>
+    <p>FUJARA jest narzędziem informacyjnym. Nie naciska przycisków w aplikacji kurierskiej oraz nie przyjmuje ani nie odrzuca zleceń za użytkownika.</p>
+  </section>
 
-  <div class="card">
-    <h2>2. AccessibilityService i dostęp do widocznego ekranu</h2>
-    <p>FUJARA używa systemowej usługi Android <strong>AccessibilityService</strong>, aby wykrywać widoczną kartę oferty z obsługiwanej aplikacji kurierskiej. Z widocznej oferty aplikacja może odczytać kwotę, dystans, czas oraz planowaną godzinę odbioru lub dostawy, jeżeli taka informacja jest pokazana.</p>
-    <p>Jeżeli oferta jest wyświetlana jako pływająca karta nad innym ekranem, zrzut ekranu może technicznie obejmować również tło. Treści spoza rozpoznawanej oferty nie są używane do obliczeń, profilowania ani reklamy i nie są zapisywane przez FUJARA.</p>
-    <p>Użytkownik otrzymuje w aplikacji osobne wyjaśnienie przed przejściem do ustawień Androida i samodzielnie włącza usługę.</p>
-  </div>
+  <section class="card">
+    <h2>2. Dostępność Android i odczyt ekranu</h2>
+    <p>Do działania funkcji automatycznej analizy FUJARA korzysta z usługi AccessibilityService. Dostęp ten służy do rozpoznania, że na ekranie znajduje się obsługiwana oferta oraz do pozyskania danych potrzebnych do obliczeń, takich jak kwota, dystans, czas lub planowana godzina dostawy, jeśli są widoczne.</p>
+    <p>W niektórych przypadkach oferta jest pływającą kartą nad inną aplikacją. Wtedy techniczny zrzut może obejmować większą część ekranu. FUJARA ogranicza analizę do kontekstu rozpoznanej aplikacji kurierskiej i nie tworzy historii zrzutów ekranu.</p>
+  </section>
 
-  <div class="card">
-    <h2>3. Jakie dane są przetwarzane</h2>
-    <p>Na urządzeniu mogą być tymczasowo przetwarzane dane widoczne na karcie oferty, w szczególności: kwota oferty, dystans, czas, godzina odbioru/dostawy i tekst potrzebny do rozpoznania platformy.</p>
-    <p>Przetwarzanie służy wyłącznie do obliczenia wyniku po ustawionych kosztach pojazdu, stawki na kilometr, stawki godzinowej oraz statusu opłacalności.</p>
-  </div>
+  <section class="card">
+    <h2>3. OCR i sposób przetwarzania</h2>
+    <p>Tekst oferty może być rozpoznawany lokalnie przy użyciu mechanizmu OCR w aplikacji. Rozpoznane informacje są używane wyłącznie do bieżącej analizy oferty i wyświetlenia wyniku na nakładce.</p>
+    <p>FUJARA nie posiada własnego konta użytkownika, panelu internetowego ani serwera, do którego wysyła treść odczytanych ofert.</p>
+  </section>
 
-  <div class="card">
-    <h2>4. Wysyłanie, udostępnianie i przechowywanie danych</h2>
-    <p>FUJARA nie posiada funkcji wysyłania odczytanych ofert na serwer. Aplikacja nie udostępnia danych ofert osobom trzecim, nie wykorzystuje ich do reklam ani do profilowania użytkowników.</p>
-    <p>Obliczenia wykonywane są lokalnie na telefonie. Dane ekranu używane do rozpoznania oferty są przetwarzane tymczasowo i nie są zapisywane przez aplikację jako historia ofert.</p>
-  </div>
+  <section class="card">
+    <h2>4. Dane zapisywane na urządzeniu</h2>
+    <p>Aplikacja zapisuje lokalnie ustawienia potrzebne do działania, np. język, motyw, koszt przejazdu, progi opłacalności, sposób oceny oraz wygląd nakładki. Ustawienia pozostają na urządzeniu w pamięci aplikacji.</p>
+    <p>FUJARA nie zapisuje rozpoznanych ofert jako historii dostaw.</p>
+  </section>
 
-  <div class="card">
-    <h2>5. OCR</h2>
-    <p>FUJARA korzysta z biblioteki rozpoznawania tekstu Google ML Kit w wariancie z modelem dołączonym do aplikacji. Rozpoznanie tekstu dla funkcji FUJARA odbywa się lokalnie na urządzeniu.</p>
-  </div>
+  <section class="card">
+    <h2>5. Udostępnianie danych, reklamy i analityka</h2>
+    <ul>
+      <li>treść odczytanych ofert nie jest sprzedawana ani przekazywana reklamodawcom;</li>
+      <li>aplikacja nie wykorzystuje treści ofert do profilowania reklamowego;</li>
+      <li>aktualna wersja nie zawiera kont użytkowników, reklam ani własnej analityki zachowania użytkownika;</li>
+      <li>obliczenia opłacalności wykonywane są na urządzeniu.</li>
+    </ul>
+  </section>
 
-  <div class="card">
-    <h2>6. Konta, reklamy i płatności</h2>
-    <p>FUJARA nie wymaga tworzenia konta, nie zawiera reklam i w obecnej wersji nie oferuje zakupów w aplikacji ani subskrypcji.</p>
-  </div>
+  <section class="card">
+    <h2>6. Kontrola użytkownika</h2>
+    <p>Użytkownik sam włącza usługę dostępności w ustawieniach Androida. Może ją w dowolnym momencie wyłączyć, zatrzymać analizę w FUJARA, zmienić ustawienia aplikacji albo odinstalować aplikację.</p>
+  </section>
 
-  <div class="card">
-    <h2>7. Uprawnienia i kontrola użytkownika</h2>
-    <p>Usługę dostępności można wyłączyć w dowolnym momencie w ustawieniach Androida. Użytkownik może również zatrzymać analizę bezpośrednio w aplikacji albo odinstalować FUJARA.</p>
-  </div>
+  <section class="card">
+    <h2>7. Dane innych osób widoczne na ekranie</h2>
+    <p>Jeżeli na ekranie pojawią się informacje niezwiązane z ofertą, FUJARA nie wykorzystuje ich do tworzenia profilu ani bazy danych. Są one poza celem aplikacji. Mechanizmy rozpoznawania zostały ograniczone tak, aby analiza uruchamiała się w kontekście obsługiwanych aplikacji i kart ofert.</p>
+  </section>
 
-  <div class="card">
-    <h2>8. Kontakt</h2>
-    <p><strong>Przed publikacją uzupełnij ten adres:</strong> <code>WPISZ_TUTAJ_EMAIL_DEWELOPERA</code></p>
-    <p>Ten sam adres powinien być użyty jako adres kontaktowy aplikacji w Google Play.</p>
-  </div>
+  <section class="card">
+    <h2>8. Zmiany polityki</h2>
+    <p>Treść polityki może zostać zaktualizowana, gdy zmienią się funkcje aplikacji lub sposób przetwarzania danych. Aktualna wersja będzie publikowana pod tym samym adresem.</p>
+  </section>
 
-  <p class="muted">Ta polityka opisuje wersję FUJARA 0.6.0 przygotowaną do pierwszego wydania w Google Play.</p>
+  <section class="card">
+    <h2>9. Kontakt</h2>
+    <p>Pytania dotyczące prywatności lub działania aplikacji można wysłać na: <a href="mailto:aleksanue@gmail.com">aleksanue@gmail.com</a>.</p>
+  </section>
+
+  <p class="muted">Dokument dotyczy FUJARA 0.7.0.</p>
 </main>
 </body>
 </html>

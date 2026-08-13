@@ -128,6 +128,23 @@ class DeliveryAccessibilityService : AccessibilityService() {
         val now = SystemClock.elapsedRealtime()
         val recentDeliverySignal = now - lastDeliverySignalAt <= deliverySignalKeepAliveMs
         val overlayVisible = ::overlay.isInitialized && overlay.isVisible()
+        val activePackage = rootInActiveWindow?.packageName?.toString().orEmpty()
+
+        // Nie OCR-ujemy czatu, przegladarki itp. tylko dlatego, ze kilka sekund
+        // temu byla otwarta aplikacja kurierska. Launcher/system UI jest wyjatkiem,
+        // bo Uber potrafi pokazac plywajaca karte nad ekranem glownym.
+        if (
+            deliveryWindow == null &&
+            activePackage.isNotBlank() &&
+            !isDeliveryPackage(activePackage) &&
+            !isGalleryPackage(activePackage) &&
+            !isHomeOrSystemPackage(activePackage)
+        ) {
+            lastDeliverySignalAt = 0L
+            lastDeliveryPackage = ""
+            if (overlayVisible) overlay.hide()
+            return
+        }
 
         /*
          * Na Androidzie 11+ robimy OCR z CALEGO aktualnie widocznego ekranu,
@@ -242,15 +259,15 @@ class DeliveryAccessibilityService : AccessibilityService() {
             .addOnSuccessListener { result ->
                 val configuredPackage = prefs.targetPackage.trim()
                 val recognitionText = OcrTextResolver.recognitionText(result)
-                val resolved = OcrTextResolver.resolve(result)
+                val platform = platformForPackage(sourcePackageName)
+                    ?: if (isGalleryPackage(sourcePackageName)) inferPlatformFromText(recognitionText) else null
+                val resolved = OcrTextResolver.resolve(result, platform)
 
-                val recognizedName = recognizeCourier(sourcePackageName, recognitionText)
+                val recognizedName = platform?.displayName
                     ?: if (
                         configuredPackage.isNotBlank() &&
                         sourcePackageName == configuredPackage
                     ) {
-                        appLabel(sourcePackageName)
-                    } else if (isDeliveryPackage(sourcePackageName)) {
                         appLabel(sourcePackageName)
                     } else {
                         null
@@ -421,11 +438,13 @@ class DeliveryAccessibilityService : AccessibilityService() {
             if (configuredPackage.isBlank() && !isDeliveryPackage(pkg)) continue
 
             val text = buildAccessibilityText(root)
-            val applicationName = recognizeCourier(pkg, text)
+            val platform = platformForPackage(pkg)
+            val applicationName = platform?.displayName
+                ?: if (configuredPackage.isNotBlank() && pkg == configuredPackage) appLabel(pkg) else null
 
             if (configuredPackage.isBlank() && applicationName == null) continue
 
-            val offer = OfferParser.parse(text) ?: continue
+            val offer = OfferParser.parse(text, platform) ?: continue
 
             var score = 0
             if (pkg == configuredPackage && configuredPackage.isNotBlank()) score += 2000
@@ -462,10 +481,12 @@ class DeliveryAccessibilityService : AccessibilityService() {
 
             if (allowed) {
                 val text = buildAccessibilityText(root)
-                val applicationName = recognizeCourier(pkg, text)
+                val platform = platformForPackage(pkg)
+                val applicationName = platform?.displayName
+                    ?: if (configuredPackage.isNotBlank() && pkg == configuredPackage) appLabel(pkg) else null
 
                 if (configuredPackage.isNotBlank() || applicationName != null) {
-                    val offer = OfferParser.parse(text)
+                    val offer = OfferParser.parse(text, platform)
                     if (offer != null) {
                         misses = 0
                         showOffer(
@@ -551,7 +572,8 @@ class DeliveryAccessibilityService : AccessibilityService() {
         val result = ProfitabilityCalculator.calculate(
             offer = offer,
             rules = rules,
-            currentMinuteOfDay = currentMinuteOfDay
+            currentMinuteOfDay = currentMinuteOfDay,
+            decisionBasis = prefs.decisionBasis
         )
 
         overlay.show(
@@ -561,50 +583,63 @@ class DeliveryAccessibilityService : AccessibilityService() {
         )
     }
 
-    private fun recognizeCourier(
-        packageName: String,
-        text: String
-    ): String? {
-        val lowerPackage = packageName.lowercase()
-        val lowerText = text.lowercase()
+    private fun platformForPackage(packageName: String): CourierPlatform? {
+        if (packageName.isBlank()) return null
 
-        if (
-            "uber" in lowerPackage ||
-            "ubercab" in lowerPackage ||
-            ("pln" in lowerText &&
-                ("confirm" in lowerText || "delivery" in lowerText) &&
-                "min" in lowerText)
-        ) {
-            return "Uber"
+        val lower = packageName.lowercase()
+        val fromPackage = when {
+            "uber" in lower || "ubercab" in lower -> CourierPlatform.UBER
+            "wolt" in lower -> CourierPlatform.WOLT
+            "glovo" in lower -> CourierPlatform.GLOVO
+            "bolt" in lower -> CourierPlatform.BOLT
+            "pyszne" in lower || "takeaway" in lower || "justeat" in lower -> CourierPlatform.PYSZNE
+            "stuart" in lower -> CourierPlatform.STUART
+            else -> null
         }
+        if (fromPackage != null) return fromPackage
 
-        if (
-            "pyszne" in lowerPackage ||
-            "takeaway" in lowerPackage ||
-            "justeat" in lowerPackage ||
-            "zaakceptuj zlecenie" in lowerText ||
-            ("odbierz na" in lowerText && "dostarcz na" in lowerText)
-        ) {
-            return "Pyszne.pl"
-        }
-
-        if ("wolt" in lowerPackage) return "Wolt"
-        if ("glovo" in lowerPackage) return "Glovo"
-        if ("bolt" in lowerPackage) return "Bolt Food"
-
-        return null
+        // Część producentów / wariantów regionalnych używa package name bez nazwy
+        // marki. Wtedy bezpiecznie sprawdzamy etykietę zainstalowanej aplikacji.
+        val fromLabel = runCatching { CourierPlatform.fromDisplayName(appLabel(packageName)) }
+            .getOrNull()
+        return fromLabel?.takeUnless { it == CourierPlatform.GLOBAL }
     }
 
-    private fun isDeliveryPackage(packageName: String): Boolean {
+    private fun inferPlatformFromText(text: String): CourierPlatform? {
+        val lower = text.lowercase()
+        return when {
+            "estimated earnings" in lower && (" mi total" in lower || "stuart" in lower) -> CourierPlatform.STUART
+            "spodziewany zarobek" in lower || ("całkowita kwota reszty" in lower && "akceptuj" in lower) -> CourierPlatform.WOLT
+            "zaakceptuj zlecenie" in lower || ("odbierz na" in lower && "dostarcz na" in lower) -> CourierPlatform.PYSZNE
+            "bolt food" in lower || (Regex("""\d+[.,]?\d*\s*km\s*[,·|]\s*\d+\s*min\s*[,·|]\s*\d+[.,]\d{1,2}\s*z[łl]""", RegexOption.IGNORE_CASE).containsMatchIn(text)) -> CourierPlatform.BOLT
+            "delivery" in lower && "confirm" in lower && "pln" in lower -> CourierPlatform.UBER
+            "wolt" in lower -> CourierPlatform.WOLT
+            "glovo" in lower -> CourierPlatform.GLOVO
+            else -> null
+        }
+    }
+
+    private fun isDeliveryPackage(packageName: String): Boolean = platformForPackage(packageName) != null
+
+    private val CourierPlatform.displayName: String
+        get() = when (this) {
+            CourierPlatform.GLOBAL -> "Dostawa"
+            CourierPlatform.UBER -> "Uber"
+            CourierPlatform.WOLT -> "Wolt"
+            CourierPlatform.GLOVO -> "Glovo"
+            CourierPlatform.BOLT -> "Bolt Food"
+            CourierPlatform.PYSZNE -> "Pyszne.pl"
+            CourierPlatform.STUART -> "Stuart"
+        }
+
+    private fun isHomeOrSystemPackage(packageName: String): Boolean {
         val lower = packageName.lowercase()
-        return "uber" in lower ||
-            "ubercab" in lower ||
-            "pyszne" in lower ||
-            "takeaway" in lower ||
-            "justeat" in lower ||
-            "wolt" in lower ||
-            "glovo" in lower ||
-            "bolt" in lower
+        if ("systemui" in lower || lower == "android") return true
+        val homeIntent = android.content.Intent(android.content.Intent.ACTION_MAIN).apply {
+            addCategory(android.content.Intent.CATEGORY_HOME)
+        }
+        val homePackage = packageManager.resolveActivity(homeIntent, 0)?.activityInfo?.packageName
+        return homePackage != null && packageName == homePackage
     }
 
     private fun isGalleryPackage(packageName: String): Boolean {

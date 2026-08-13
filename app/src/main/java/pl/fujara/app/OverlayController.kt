@@ -83,12 +83,14 @@ class OverlayController(
             background = pillBackground(accent)
         }
 
-        amountRow?.leftValue?.text = money(result.grossPln, language)
-        amountRow?.rightValue?.text = money(result.netPln, language)
+        amountRow?.leftValue?.text = earningMoney(result.grossPln, language)
+        amountRow?.rightValue?.text = earningMoney(result.netPln, language)
         distanceRow?.leftValue?.text = "${num(result.distanceKm, language)} km"
         distanceRow?.rightValue?.text = result.durationMinutes?.let { "$it min" } ?: "--"
-        rateRow?.leftValue?.text = result.netPerHour?.let { "${money(it, language)}/h" } ?: "--"
-        rateRow?.rightValue?.text = result.netPerKm?.let { "${money(it, language)}/km" } ?: "--"
+        rateRow?.leftValue?.text = result.netPerHour?.let { hourlyMoney(it, language) } ?: "--"
+        rateRow?.rightValue?.text = result.netPerKm?.let { perKmMoney(it, language) } ?: "--"
+
+        applyFontScale()
 
         amountRow?.rightValue?.setTextColor(accent)
         rateRow?.leftValue?.setTextColor(if (result.netPerHour != null) accent else gray)
@@ -282,7 +284,7 @@ class OverlayController(
         panel.addView(timeSourceText)
 
         val params = WindowManager.LayoutParams(
-            dp(238),
+            dp(268),
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -426,11 +428,44 @@ class OverlayController(
     private fun dp(value: Int): Int =
         (value * service.resources.displayMetrics.density).toInt()
 
-    private fun money(value: Double, language: String): String =
-        String.format(localeFor(language), "%.2f zł", value)
+    private fun earningMoney(value: Double, language: String): String =
+        if (prefs.roundEarnings) {
+            String.format(localeFor(language), "%.0f zł", value)
+        } else {
+            String.format(localeFor(language), "%.2f zł", value)
+        }
+
+    private fun hourlyMoney(value: Double, language: String): String =
+        if (prefs.roundEarnings) {
+            String.format(localeFor(language), "%.0f zł/h", value)
+        } else {
+            String.format(localeFor(language), "%.2f zł/h", value)
+        }
+
+    private fun perKmMoney(value: Double, language: String): String =
+        String.format(localeFor(language), "%.2f zł/km", value)
 
     private fun num(value: Double, language: String): String =
         String.format(localeFor(language), "%.2f", value)
+
+    private fun applyFontScale() {
+        val scale = prefs.overlayFontScalePercent.coerceIn(80, 170) / 100f
+        val onlyHourly = prefs.showHourly && !prefs.showPerKm &&
+            !prefs.showAmount && !prefs.showAfterCosts && !prefs.showTime && !prefs.showDistance
+        val onlyRates = (prefs.showHourly || prefs.showPerKm) &&
+            !prefs.showAmount && !prefs.showAfterCosts && !prefs.showTime && !prefs.showDistance
+
+        amountRow?.leftValue?.textSize = 11.8f * scale
+        amountRow?.rightValue?.textSize = 11.8f * scale
+        distanceRow?.leftValue?.textSize = 11.8f * scale
+        distanceRow?.rightValue?.textSize = 11.8f * scale
+        rateRow?.leftValue?.textSize = when {
+            onlyHourly -> 20f * scale
+            onlyRates -> 15.5f * scale
+            else -> 12.5f * scale
+        }
+        rateRow?.rightValue?.textSize = if (onlyRates) 15.5f * scale else 12.5f * scale
+    }
 
     private fun localeFor(language: String): Locale = when (language) {
         "en" -> Locale.US
