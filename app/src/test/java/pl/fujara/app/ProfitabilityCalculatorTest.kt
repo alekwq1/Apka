@@ -34,6 +34,26 @@ class ProfitabilityCalculatorTest {
     }
 
     @Test
+    fun realPyszneCardUsesNowToDeliverAtAsTotalTime() {
+        val offer = Offer(
+            amountPln = 20.56,
+            distanceKm = 5.3,
+            pickupTimeMinutesOfDay = 13 * 60 + 26,
+            deliveryTimeMinutesOfDay = 13 * 60 + 37
+        )
+
+        val result = ProfitabilityCalculator.calculate(
+            offer = offer,
+            rules = ProfitabilityCalculator.Rules(vehicleCostPerKm = 0.0),
+            currentMinuteOfDay = 13 * 60 + 18
+        )
+
+        assertEquals(19, result.durationMinutes)
+        assertEquals(DurationSource.PLANNED_DELIVERY, result.durationSource)
+        assertEquals(64.93, result.netPerHour!!, 0.02)
+    }
+
+    @Test
     fun plannedDeliveryWorksAcrossMidnight() {
         val offer = Offer(
             amountPln = 20.0,

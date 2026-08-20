@@ -36,12 +36,27 @@ object OfferParser {
         """\b(?:pickup|pick\s*up|odbierz|odbiór|odbior|do\s+odbioru|odebrać|odebrac)\b""",
         RegexOption.IGNORE_CASE
     )
+    /*
+     * Pyszne pokazuje plan jako godziny zegarowe, np. "Dostarcz na 13:37".
+     * OCR potrafi zgubic dwukropek albo odczytac go jako kropke/przecinek,
+     * dlatego separator jest celowo bardziej tolerancyjny. Nadal wymagamy
+     * slowa "Dostarcz" / "Odbierz", wiec nie bierzemy godzin z mapy lub paska.
+     */
+    private const val CLOCK_SEPARATOR = "(?:\\s*[:.;,·-]\\s*|\\s+)"
     private val deliveryTimeRegex = Regex(
-        """(?:(?:dostarcz)\s*(?:na|do)\s*|(?:deliver|delivery|drop\s*off)\s*(?:by|at)\s*)(\d{1,2})\s*[:.]\s*(\d{2})""",
+        """(?:(?:dostarcz\w*)\s*(?:na|do)\s*|(?:deliver|delivery|drop\s*off)\s*(?:by|at)\s*)(\d{1,2})$CLOCK_SEPARATOR(\d{2})""",
         RegexOption.IGNORE_CASE
     )
     private val pickupTimeRegex = Regex(
-        """(?:odbierz|pick\s*up|pickup)\s*(?:na|do|by)?\s*(\d{1,2})\s*[:.]\s*(\d{2})""",
+        """(?:odbierz\w*|pick\s*up|pickup)\s*(?:na|do|by)?\s*(\d{1,2})$CLOCK_SEPARATOR(\d{2})""",
+        RegexOption.IGNORE_CASE
+    )
+    private val deliveryCompactTimeRegex = Regex(
+        """(?:(?:dostarcz\w*)\s*(?:na|do)\s*|(?:deliver|delivery|drop\s*off)\s*(?:by|at)\s*)(\d{3,4})(?!\d)""",
+        RegexOption.IGNORE_CASE
+    )
+    private val pickupCompactTimeRegex = Regex(
+        """(?:odbierz\w*|pick\s*up|pickup)\s*(?:na|do|by)?\s*(\d{3,4})(?!\d)""",
         RegexOption.IGNORE_CASE
     )
 
@@ -174,7 +189,27 @@ object OfferParser {
 
         // Historia zlecen Pyszne zawiera kwoty, kilometry i godziny, ale nie jest oferta.
         if (!hasOfferMarker) return null
-        return parseGeneric(text)
+
+        val generic = parseGeneric(text) ?: return null
+
+        /*
+         * W Pyszne czas odbioru/dostawy bywa w innym bloku OCR niz kwota i
+         * dystans. parseGeneric analizuje lokalny fragment wokol kwoty, wiec na
+         * prawdziwym ekranie mogl poprawnie policzyc PLN/km, ale zgubic
+         * "Dostarcz na ..." i pokazac NO TIME.
+         *
+         * Dla Pyszne szukamy harmonogramu jeszcze raz w CALYM tekscie ekranu.
+         * Jesli mamy godzine dostawy, nie uzywamy zadnego przypadkowego czasu
+         * "min" z mapy - calkowity czas ma byc liczony: teraz -> Dostarcz na.
+         */
+        val pickupTime = findPickupTime(text) ?: generic.pickupTimeMinutesOfDay
+        val deliveryTime = findDeliveryTime(text) ?: generic.deliveryTimeMinutesOfDay
+
+        return generic.copy(
+            durationMinutes = if (deliveryTime != null) null else generic.durationMinutes,
+            pickupTimeMinutesOfDay = pickupTime,
+            deliveryTimeMinutesOfDay = deliveryTime
+        )
     }
 
     private fun parseUberCard(text: String, regex: Regex): Offer? {
@@ -223,8 +258,8 @@ object OfferParser {
                 .coerceAtMost(text.length)
             val block = text.substring(localStart, localEnd)
 
-            val pickupTime = pickupTimeRegex.find(block)?.toMinuteOfDay()
-            val deliveryTime = deliveryTimeRegex.find(block)?.toMinuteOfDay()
+            val pickupTime = findPickupTime(block)
+            val deliveryTime = findDeliveryTime(block)
             val directDuration = if (deliveryTime == null) {
                 findTotalDuration(block)
                     ?: findDurationOnDistanceLine(block)
@@ -364,6 +399,34 @@ object OfferParser {
     private fun MatchResult.toMinuteOfDay(): Int? {
         val hour = groupValues.getOrNull(1)?.toIntOrNull() ?: return null
         val minute = groupValues.getOrNull(2)?.toIntOrNull() ?: return null
+        if (hour !in 0..23 || minute !in 0..59) return null
+        return hour * 60 + minute
+    }
+
+    private fun findDeliveryTime(text: String): Int? =
+        deliveryTimeRegex.findAll(text)
+            .mapNotNull { it.toMinuteOfDay() }
+            .lastOrNull()
+            ?: deliveryCompactTimeRegex.findAll(text)
+                .mapNotNull { it.compactClockToMinuteOfDay() }
+                .lastOrNull()
+
+    private fun findPickupTime(text: String): Int? =
+        pickupTimeRegex.findAll(text)
+            .mapNotNull { it.toMinuteOfDay() }
+            .lastOrNull()
+            ?: pickupCompactTimeRegex.findAll(text)
+                .mapNotNull { it.compactClockToMinuteOfDay() }
+                .lastOrNull()
+
+    private fun MatchResult.compactClockToMinuteOfDay(): Int? {
+        val digits = groupValues.getOrNull(1)?.filter(Char::isDigit) ?: return null
+        if (digits.length !in 3..4) return null
+
+        val hourText = digits.dropLast(2)
+        val minuteText = digits.takeLast(2)
+        val hour = hourText.toIntOrNull() ?: return null
+        val minute = minuteText.toIntOrNull() ?: return null
         if (hour !in 0..23 || minute !in 0..59) return null
         return hour * 60 + minute
     }

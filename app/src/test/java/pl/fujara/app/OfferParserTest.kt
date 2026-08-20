@@ -65,6 +65,67 @@ class OfferParserTest {
     }
 
     @Test
+    fun parsesPyszneOfferFromRealGdanskCard() {
+        val text = """
+            20,56 zł
+            5,3 km · 2 przystanki
+            Odbiór: Pasibus
+            Stągiewna 27, 80-750 Gdańsk
+            Odbierz na 13:26
+            Dostawa: Katarzyna Lewicz
+            Świętego Ducha 105/107 m. 7, 80-834 Gdańsk
+            Dostarcz na 13:37
+            Zaakceptuj zlecenie 0:39
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text, CourierPlatform.PYSZNE)
+
+        assertNotNull(offer)
+        assertEquals(20.56, offer!!.amountPln, 0.001)
+        assertEquals(5.3, offer.distanceKm, 0.001)
+        assertNull(offer.durationMinutes)
+        assertEquals(13 * 60 + 26, offer.pickupTimeMinutesOfDay)
+        assertEquals(13 * 60 + 37, offer.deliveryTimeMinutesOfDay)
+    }
+
+    @Test
+    fun pyszneFindsDeliveryTimeEvenWhenOcrPlacesItFarFromAmount() {
+        val filler = (1..90).joinToString("\n") { "etykieta mapy numer $it" }
+        val text = """
+            20,56 zł
+            5,3 km · 2 przystanki
+            $filler
+            Odbierz na 13:26
+            Dostarcz na 13:37
+            Zaakceptuj zlecenie 0:39
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text, CourierPlatform.PYSZNE)
+
+        assertNotNull(offer)
+        assertEquals(13 * 60 + 26, offer!!.pickupTimeMinutesOfDay)
+        assertEquals(13 * 60 + 37, offer.deliveryTimeMinutesOfDay)
+        assertNull(offer.durationMinutes)
+    }
+
+    @Test
+    fun pyszneAcceptsOcrClockWithoutColon() {
+        val text = """
+            20,56 zł
+            5,3 km
+            Odbierz na 13 26
+            Dostarcz na 1337
+            Zaakceptuj zlecenie 0:39
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text, CourierPlatform.PYSZNE)
+
+        assertNotNull(offer)
+        assertEquals(13 * 60 + 26, offer!!.pickupTimeMinutesOfDay)
+        assertEquals(13 * 60 + 37, offer.deliveryTimeMinutesOfDay)
+    }
+
+    @Test
     fun parsesUberTotalDuration() {
         val text = """
             PLN25.42

@@ -21,6 +21,7 @@ import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import java.time.LocalTime
+import kotlin.math.abs
 
 class DeliveryAccessibilityService : AccessibilityService() {
 
@@ -288,8 +289,15 @@ class DeliveryAccessibilityService : AccessibilityService() {
                     ) {
                         lastDeliveryPackage = sourcePackageName
                     }
-                    showOffer(
+
+                    val offer = enrichPyszneScheduleFromAccessibility(
                         offer = resolved.offer,
+                        platform = platform,
+                        sourcePackageName = sourcePackageName
+                    )
+
+                    showOffer(
+                        offer = offer,
                         applicationName = recognizedName,
                         packageName = if (
                             isGalleryPackage(sourcePackageName) ||
@@ -555,6 +563,57 @@ class DeliveryAccessibilityService : AccessibilityService() {
             val child = node.getChild(index) ?: continue
             collectVisibleText(child, out, depth + 1)
         }
+    }
+
+    /**
+     * Na ekranie Pyszne duza kwota i dystans sa latwe dla OCR, ale mala linia
+     * "Dostarcz na HH:mm" czasem wypada. Jesli OCR znalazl oferte bez godziny
+     * dostawy, probujemy uzupelnic SAM harmonogram z drzewa Accessibility.
+     *
+     * Laczymy dane tylko wtedy, gdy kwota i dystans pasuja do tej samej oferty,
+     * zeby nie podpiac godziny ze starej / innej karty.
+     */
+    private fun enrichPyszneScheduleFromAccessibility(
+        offer: Offer,
+        platform: CourierPlatform?,
+        sourcePackageName: String
+    ): Offer {
+        if (platform != CourierPlatform.PYSZNE) return offer
+        if (offer.deliveryTimeMinutesOfDay != null) return offer
+
+        val candidates = windows.mapNotNull { window ->
+            val root = runCatching { window.root }.getOrNull() ?: return@mapNotNull null
+            val pkg = root.packageName?.toString().orEmpty()
+            if (pkg.isBlank() || pkg == packageName) return@mapNotNull null
+            if (platformForPackage(pkg) != CourierPlatform.PYSZNE) return@mapNotNull null
+
+            val parsed = OfferParser.parse(
+                buildAccessibilityText(root),
+                CourierPlatform.PYSZNE
+            ) ?: return@mapNotNull null
+
+            if (parsed.deliveryTimeMinutesOfDay == null) return@mapNotNull null
+            if (abs(parsed.amountPln - offer.amountPln) > 0.25) return@mapNotNull null
+            if (abs(parsed.distanceKm - offer.distanceKm) > 0.25) return@mapNotNull null
+
+            val score =
+                (if (pkg == sourcePackageName && sourcePackageName.isNotBlank()) 100 else 0) +
+                    (if (window.isActive) 20 else 0) +
+                    (if (window.isFocused) 20 else 0)
+
+            parsed to score
+        }
+
+        val schedule = candidates.maxByOrNull { it.second }?.first ?: return offer
+        val deliveryTime = schedule.deliveryTimeMinutesOfDay ?: return offer
+
+        return offer.copy(
+            // Pyszne zawsze liczymy od aktualnego czasu telefonu do "Dostarcz na".
+            durationMinutes = null,
+            pickupTimeMinutesOfDay =
+                schedule.pickupTimeMinutesOfDay ?: offer.pickupTimeMinutesOfDay,
+            deliveryTimeMinutesOfDay = deliveryTime
+        )
     }
 
     private fun addAccessibilityText(
