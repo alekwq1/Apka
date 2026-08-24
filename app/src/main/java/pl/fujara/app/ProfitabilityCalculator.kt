@@ -40,10 +40,17 @@ object ProfitabilityCalculator {
         val tolerancePerHour =
             rules.toleranceNetPerHour.nonNegativeOr(DEFAULT_TOLERANCE_PER_HOUR)
 
-        val extraTimeMinutes = rules.extraTimeMinutes.coerceIn(0, MAX_EXTRA_TIME_MINUTES)
-        val durationMinutes = resolvedDuration.minutes?.let { base ->
-            (base + extraTimeMinutes).coerceAtMost(MAX_TOTAL_DURATION_MINUTES)
+        val extraTimeMinutes = if (offer.applyExtraTimeBuffer) {
+            rules.extraTimeMinutes.coerceIn(0, MAX_EXTRA_TIME_MINUTES)
+        } else {
+            0
         }
+        val durationExactMinutes = resolvedDuration.exactMinutes?.let { base ->
+            (base + extraTimeMinutes).coerceAtMost(MAX_TOTAL_DURATION_MINUTES.toDouble())
+        }
+        val durationMinutes = durationExactMinutes
+            ?.let { kotlin.math.ceil(it).toInt() }
+            ?.coerceAtMost(MAX_TOTAL_DURATION_MINUTES)
 
         val safeZusPercent = zusPercent
             .takeIf { it.isFinite() }
@@ -65,8 +72,8 @@ object ProfitabilityCalculator {
                 null
             }
 
-        val perHour = durationMinutes
-            ?.takeIf { it > 0 }
+        val perHour = durationExactMinutes
+            ?.takeIf { it > 0.0 }
             ?.let { minutes -> afterCosts / minutes * 60.0 }
 
         val status = resolveStatus(
@@ -157,11 +164,20 @@ object ProfitabilityCalculator {
         offer: Offer,
         currentMinuteOfDay: Int
     ): DurationResolution {
+        offer.durationSeconds
+            ?.takeIf { it in 1..(MAX_REASONABLE_DURATION_MINUTES * 60) }
+            ?.let { seconds ->
+                return DurationResolution(
+                    exactMinutes = seconds / 60.0,
+                    source = DurationSource.DIRECT_TOTAL
+                )
+            }
+
         offer.durationMinutes
             ?.takeIf { it in 1..MAX_REASONABLE_DURATION_MINUTES }
             ?.let {
                 return DurationResolution(
-                    minutes = it,
+                    exactMinutes = it.toDouble(),
                     source = DurationSource.DIRECT_TOTAL
                 )
             }
@@ -174,14 +190,14 @@ object ProfitabilityCalculator {
 
             if (minutes in 1..MAX_REASONABLE_DURATION_MINUTES) {
                 return DurationResolution(
-                    minutes = minutes,
+                    exactMinutes = minutes.toDouble(),
                     source = DurationSource.PLANNED_DELIVERY
                 )
             }
         }
 
         return DurationResolution(
-            minutes = null,
+            exactMinutes = null,
             source = DurationSource.UNKNOWN
         )
     }
@@ -203,7 +219,7 @@ object ProfitabilityCalculator {
         ((this % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY
 
     private data class DurationResolution(
-        val minutes: Int?,
+        val exactMinutes: Double?,
         val source: DurationSource
     )
 

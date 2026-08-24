@@ -589,8 +589,8 @@ class DeliveryAccessibilityService : AccessibilityService() {
      * "Dostarcz na HH:mm" czasem wypada. Jesli OCR znalazl oferte bez godziny
      * dostawy, probujemy uzupelnic SAM harmonogram z drzewa Accessibility.
      *
-     * Laczymy dane tylko wtedy, gdy kwota i dystans pasuja do tej samej oferty,
-     * zeby nie podpiac godziny ze starej / innej karty.
+     * Drzewo Accessibility traktujemy tu tylko jako zrodlo harmonogramu.
+     * Kwota i dystans nadal pochodza z aktualnego OCR widocznego ekranu.
      */
     private fun enrichPyszneScheduleFromAccessibility(
         offer: Offer,
@@ -606,21 +606,18 @@ class DeliveryAccessibilityService : AccessibilityService() {
             if (pkg.isBlank() || pkg == packageName) return@mapNotNull null
             if (platformForPackage(pkg) != CourierPlatform.PYSZNE) return@mapNotNull null
 
-            val parsed = OfferParser.parse(
-                buildAccessibilityText(root),
-                CourierPlatform.PYSZNE
-            ) ?: return@mapNotNull null
-
-            if (parsed.deliveryTimeMinutesOfDay == null) return@mapNotNull null
-            if (abs(parsed.amountPln - offer.amountPln) > 0.25) return@mapNotNull null
-            if (abs(parsed.distanceKm - offer.distanceKm) > 0.25) return@mapNotNull null
+            // Nie wymagamy juz, aby drzewo Accessibility zawieralo rowniez kwote
+            // i dystans. Na prawdziwym Pyszne te dane sa czesto rysowane, a
+            // godziny Odbierz/Dostarcz sa dostepne jako osobne wezly tekstowe.
+            val schedule = OfferParser.findSchedule(buildAccessibilityText(root))
+            if (schedule.deliveryTimeMinutesOfDay == null) return@mapNotNull null
 
             val score =
                 (if (pkg == sourcePackageName && sourcePackageName.isNotBlank()) 100 else 0) +
                     (if (window.isActive) 20 else 0) +
                     (if (window.isFocused) 20 else 0)
 
-            parsed to score
+            schedule to score
         }
 
         val schedule = candidates.maxByOrNull { it.second }?.first ?: return offer
@@ -629,6 +626,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
         return offer.copy(
             // Pyszne zawsze liczymy od aktualnego czasu telefonu do "Dostarcz na".
             durationMinutes = null,
+            durationSeconds = null,
             pickupTimeMinutesOfDay =
                 schedule.pickupTimeMinutesOfDay ?: offer.pickupTimeMinutesOfDay,
             deliveryTimeMinutesOfDay = deliveryTime
@@ -713,7 +711,9 @@ class DeliveryAccessibilityService : AccessibilityService() {
             "route distance" in lower && "estimated" in lower && "accept" in lower && "pln" in lower -> CourierPlatform.WOLT
             "zaakceptuj zlecenie" in lower ||
                 ("odbierz na" in lower && "dostarcz na" in lower) ||
-                ("accept" in lower && ("pickup" in lower || "pick up" in lower) && "deliver" in lower) -> CourierPlatform.PYSZNE
+                ("accept" in lower && ("pickup" in lower || "pick up" in lower) && "deliver" in lower) ||
+                (("czas aktywności" in lower || "czas aktywnosci" in lower || "active time" in lower) &&
+                    ("szacowana odległość" in lower || "szacowana odleglosc" in lower || "estimated distance" in lower)) -> CourierPlatform.PYSZNE
             "bolt food" in lower || (Regex("""\d+[.,]?\d*\s*km\s*[,·|]\s*\d+\s*min\s*[,·|]\s*\d+[.,]\d{1,2}\s*z[łl]""", RegexOption.IGNORE_CASE).containsMatchIn(text)) -> CourierPlatform.BOLT
             (("delivery" in lower || "dostawa" in lower) &&
                 ("confirm" in lower || "łącznie" in lower || "lacznie" in lower || "stops" in lower || "przystank" in lower) &&

@@ -55,7 +55,7 @@ object OcrTextResolver {
 
     private fun offerScore(offer: Offer): Int {
         var score = 10
-        if (offer.durationMinutes != null) score += 5
+        if (offer.durationMinutes != null || offer.durationSeconds != null) score += 5
         if (offer.deliveryTimeMinutesOfDay != null) score += 4
         if (offer.pickupTimeMinutesOfDay != null) score += 2
         return score

@@ -226,4 +226,26 @@ class ProfitabilityCalculatorTest {
         assertEquals(39.0, result.netPerHour!!, 0.001)
     }
 
+    @Test
+    fun historicalActualDurationDoesNotUseConfiguredBuffer() {
+        val result = ProfitabilityCalculator.calculate(
+            offer = Offer(
+                amountPln = 11.0,
+                distanceKm = 2.1,
+                durationSeconds = 10 * 60 + 7,
+                applyExtraTimeBuffer = false
+            ),
+            rules = ProfitabilityCalculator.Rules(
+                vehicleCostPerKm = 0.0,
+                extraTimeMinutes = 15
+            ),
+            currentMinuteOfDay = 12 * 60,
+            decisionBasis = DecisionBasis.HOURLY
+        )
+
+        assertEquals(0, result.extraTimeMinutes)
+        assertEquals(11, result.durationMinutes)
+        assertEquals(11.0 / ((10.0 + 7.0 / 60.0)) * 60.0, result.netPerHour!!, 0.001)
+    }
+
 }

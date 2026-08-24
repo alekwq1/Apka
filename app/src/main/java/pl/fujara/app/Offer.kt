@@ -4,6 +4,10 @@ data class Offer(
     val amountPln: Double,
     val distanceKm: Double,
     val durationMinutes: Int? = null,
+    /** Dokladny czas aktywnosci z ekranow podsumowania, np. 10 min 7 sec. */
+    val durationSeconds: Int? = null,
+    /** False dla historii zlecenia: rzeczywisty czas nie powinien dostawac zapasu z ustawien. */
+    val applyExtraTimeBuffer: Boolean = true,
     val pickupTimeMinutesOfDay: Int? = null,
     val deliveryTimeMinutesOfDay: Int? = null
 )

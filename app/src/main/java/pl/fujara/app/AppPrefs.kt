@@ -97,7 +97,7 @@ class AppPrefs(private val context: Context) {
         get() = getDouble("zus_percent", 0.0).coerceIn(0.0, 100.0)
         set(value) = putDouble("zus_percent", value.coerceIn(0.0, 100.0))
 
-    /** Jedna nazwa na linię. Dopasowanie jest niewrażliwe na wielkość liter i polskie znaki. */
+    /** Lokalna lista wpisow: nazwa i opcjonalny adres. Format jest kompatybilny z 0.8.0. */
     var restaurantBlacklistText: String
         get() = prefs.getString("blacklist_restaurants", "") ?: ""
         set(value) = prefs.edit().putString("blacklist_restaurants", value).apply()

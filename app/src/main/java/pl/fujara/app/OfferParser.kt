@@ -28,6 +28,12 @@ object OfferParser {
         """(?<!\d)(\d{1,3})\s*[-–—]\s*(\d{1,3})\s*$MIN\b""",
         RegexOption.IGNORE_CASE
     )
+    private val detailedDurationRegex = Regex(
+        """(?i)(?<!\d)(\d{1,3})\s*(?:min|m)(?:ut\w*)?\s*(\d{1,2})\s*(?:sec|sek|s)(?:und\w*|ond\w*)?\b"""
+    )
+    private val uberDurationDistanceRegex = Regex(
+        """(?i)(?<!\d)(\d{1,3})\s*$MIN[^\n]{0,30}?[\(\[]?\s*(\d{1,4}(?:[.,]\d{1,2})?)\s*$KM\s*[\)\]]?"""
+    )
     private val totalRegex = Regex(
         """\b(?:total|łącznie|lacznie|razem|całkowit\w*|calkowit\w*)\b""",
         RegexOption.IGNORE_CASE
@@ -104,16 +110,16 @@ object OfferParser {
             // z mapy/tla. Fallback ogolny zostaje tylko tam, gdzie nie mamy jeszcze
             // stabilnego formatu platformy (Glovo / tryb globalny).
             CourierPlatform.UBER -> parseUber(normalized)
-            CourierPlatform.WOLT -> parseWolt(normalized)
+            CourierPlatform.WOLT -> parseWolt(normalized, allowLayoutFallback = true)
             CourierPlatform.BOLT -> parseBolt(normalized)
             CourierPlatform.PYSZNE -> parsePyszne(normalized)
-            CourierPlatform.STUART -> parseStuart(normalized)
+            CourierPlatform.STUART -> parseStuart(normalized, allowLayoutFallback = true)
             CourierPlatform.GLOVO -> parseGeneric(normalized)
             CourierPlatform.GLOBAL, null ->
                 parseUber(normalized)
                     ?: parseBolt(normalized)
-                    ?: parseWolt(normalized)
-                    ?: parseStuart(normalized)
+                    ?: parseWolt(normalized, allowLayoutFallback = false)
+                    ?: parseStuart(normalized, allowLayoutFallback = false)
                     ?: parseGeneric(normalized)
         }
     }
@@ -122,8 +128,32 @@ object OfferParser {
         parseUberCard(text, uberDeliveryPrefixedCardRegex)?.let { return it }
         parseUberCard(text, uberDeliveryCardRegex)?.let { return it }
         parseUberCard(text, uberCardRegex)?.let { return it }
+        parseUberLayout(text)?.let { return it }
         parseUberStopsCard(text)?.let { return it }
         return null
+    }
+
+    /**
+     * Fallback oparty na ukladzie karty, a nie na jezyku UI. Uber w roznych
+     * jezykach nadal pokazuje: kwota -> laczny czas -> dystans w nawiasie.
+     */
+    private fun parseUberLayout(text: String): Offer? {
+        val total = uberDurationDistanceRegex.findAll(text).lastOrNull() ?: return null
+        val duration = total.groupValues.getOrNull(1)?.toIntOrNull() ?: return null
+        val distance = total.groupValues.getOrNull(2)?.toNumber() ?: return null
+        if (!valid(1.0, distance, duration)) return null
+
+        val amount = closestAmountBefore(text, total.range.first, maxGap = 1000)
+            ?.value?.toNumber() ?: return null
+        if (amount !in 0.01..1000.0) return null
+
+        return Offer(
+            amountPln = amount,
+            distanceKm = distance,
+            durationMinutes = duration,
+            pickupTimeMinutesOfDay = findPickupTime(text),
+            deliveryTimeMinutesOfDay = findDeliveryTime(text)
+        )
     }
 
 
@@ -167,46 +197,51 @@ object OfferParser {
         return Offer(amountPln = amount, distanceKm = distance, durationMinutes = duration)
     }
 
-    private fun parseWolt(text: String): Offer? {
+    private fun parseWolt(text: String, allowLayoutFallback: Boolean): Offer? {
         val lower = text.lowercase()
-        if (
-            "spodziewany zarob" !in lower &&
-            "szacowan" !in lower &&
-            "estimated earnings" !in lower &&
-            "expected earnings" !in lower
-        ) return null
 
-        val amount = (woltPrefixedAmountBeforeLabelRegex.find(text)?.groupValues?.getOrNull(1)
-            ?: woltAmountBeforeLabelRegex.find(text)?.groupValues?.getOrNull(1)
-            ?: woltAmountAfterLabelRegex.find(text)?.groupValues?.getOrNull(1))
-            ?.toNumber() ?: return null
-
-        // "Calkowita kwota reszty" jest osobna kwota i nie moze wygrac z zarobkiem.
-        val distance = distanceRegex.findAll(text)
-            .mapNotNull { it.groupValues.getOrNull(1)?.toNumber() }
-            .filter { it in 0.01..500.0 }
-            .maxOrNull() ?: return null
+        val distanceMatch = distanceRegex.findAll(text)
+            .filter { (it.groupValues.getOrNull(1)?.toNumber() ?: -1.0) in 0.01..500.0 }
+            .lastOrNull() ?: return null
+        val distance = distanceMatch.groupValues[1].toNumber() ?: return null
 
         val duration = durationRangeRegex.find(text)?.let { match ->
-            val a = match.groupValues[1].toIntOrNull()
-            val b = match.groupValues[2].toIntOrNull()
-            listOfNotNull(a, b).maxOrNull()?.takeIf { it in 1..360 }
+            listOfNotNull(
+                match.groupValues[1].toIntOrNull(),
+                match.groupValues[2].toIntOrNull()
+            ).maxOrNull()?.takeIf { it in 1..360 }
         } ?: findBestNonPickupDuration(text)
 
-        if (amount !in 0.01..1000.0 || distance !in 0.01..500.0) return null
+        // Najpierw stary, bardzo precyzyjny wariant PL/EN. Gdy UI jest w innym
+        // jezyku, bierzemy kwote najblizej nad wierszem dystansu.
+        val labeledAmount = (woltPrefixedAmountBeforeLabelRegex.find(text)?.groupValues?.getOrNull(1)
+            ?: woltAmountBeforeLabelRegex.find(text)?.groupValues?.getOrNull(1)
+            ?: woltAmountAfterLabelRegex.find(text)?.groupValues?.getOrNull(1))
+            ?.toNumber()
+
+        val amount = labeledAmount
+            ?: closestAmountBefore(text, distanceMatch.range.first, maxGap = 1400)
+                ?.value?.toNumber()
+            ?: return null
+
+        // Bez etykiety zarobku wymagamy czasu lub przycisku akceptacji. Chroni to
+        // przed odczytaniem przypadkowych liczb z mapy przy znanym package Wolt.
+        val hasKnownEarningsLabel =
+            "spodziewany zarob" in lower || "szacowan" in lower ||
+                "estimated earnings" in lower || "expected earnings" in lower
+        val hasActionMarker =
+            "akcept" in lower || "accept" in lower || "decline" in lower || "odrzu" in lower
+        if (!hasKnownEarningsLabel && !hasActionMarker && !allowLayoutFallback) return null
+        if (!hasKnownEarningsLabel && duration == null && !hasActionMarker) return null
+
+        if (amount !in 0.01..1000.0) return null
         return Offer(amountPln = amount, distanceKm = distance, durationMinutes = duration)
     }
 
-    private fun parseStuart(text: String): Offer? {
+    private fun parseStuart(text: String, allowLayoutFallback: Boolean): Offer? {
         val lower = text.lowercase()
-        if (
-            "estimated earnings" !in lower &&
-            "expected earnings" !in lower &&
-            "szacowan" !in lower &&
-            "stuart" !in lower
-        ) return null
-
         val amount = stuartAmountRegex.find(text)?.groupValues?.getOrNull(1)?.toNumber()
+            ?: findAmountMatches(text).firstOrNull { it.explicitCurrency }?.value?.toNumber()
             ?: findAmountMatches(text).firstOrNull()?.value?.toNumber()
             ?: return null
 
@@ -228,11 +263,18 @@ object OfferParser {
             .filter { it in 1..360 }
             .maxOrNull()
 
+        val hasKnownMarker =
+            "estimated earnings" in lower || "expected earnings" in lower ||
+                "szacowan" in lower || "stuart" in lower
+        if (!hasKnownMarker && !allowLayoutFallback) return null
+        if (!hasKnownMarker && duration == null) return null
         if (amount !in 0.01..1000.0 || distanceKm !in 0.01..500.0) return null
         return Offer(amountPln = amount, distanceKm = distanceKm, durationMinutes = duration)
     }
 
     private fun parsePyszne(text: String): Offer? {
+        parsePyszneHistoryDetails(text)?.let { return it }
+
         val lower = text.lowercase()
         val hasOfferMarker =
             "zaakceptuj zlecenie" in lower ||
@@ -245,28 +287,60 @@ object OfferParser {
                     ("delivery" in lower || "deliver" in lower) &&
                     "accept" in lower)
 
-        // Historia zlecen Pyszne zawiera kwoty, kilometry i godziny, ale nie jest oferta.
-        if (!hasOfferMarker) return null
-
+        val schedule = findSchedule(text)
         val generic = parseGeneric(text) ?: return null
 
-        /*
-         * W Pyszne czas odbioru/dostawy bywa w innym bloku OCR niz kwota i
-         * dystans. parseGeneric analizuje lokalny fragment wokol kwoty, wiec na
-         * prawdziwym ekranie mogl poprawnie policzyc PLN/km, ale zgubic
-         * "Dostarcz na ..." i pokazac NO TIME.
-         *
-         * Dla Pyszne szukamy harmonogramu jeszcze raz w CALYM tekscie ekranu.
-         * Jesli mamy godzine dostawy, nie uzywamy zadnego przypadkowego czasu
-         * "min" z mapy - calkowity czas ma byc liczony: teraz -> Dostarcz na.
-         */
-        val pickupTime = findPickupTime(text) ?: generic.pickupTimeMinutesOfDay
-        val deliveryTime = findDeliveryTime(text) ?: generic.deliveryTimeMinutesOfDay
+        // Dla znanego package Pyszne dopuszczamy rowniez inne jezyki UI.
+        // Kwota + dystans + harmonogram sa wystarczajaco charakterystyczne.
+        if (!hasOfferMarker && schedule.deliveryTimeMinutesOfDay == null) return null
 
         return generic.copy(
-            durationMinutes = if (deliveryTime != null) null else generic.durationMinutes,
-            pickupTimeMinutesOfDay = pickupTime,
-            deliveryTimeMinutesOfDay = deliveryTime
+            durationMinutes = if (schedule.deliveryTimeMinutesOfDay != null) null else generic.durationMinutes,
+            pickupTimeMinutesOfDay =
+                schedule.pickupTimeMinutesOfDay ?: generic.pickupTimeMinutesOfDay,
+            deliveryTimeMinutesOfDay =
+                schedule.deliveryTimeMinutesOfDay ?: generic.deliveryTimeMinutesOfDay
+        )
+    }
+
+    /** Ekran Pyszne: Szczegoly zlecenia / Order details. */
+    private fun parsePyszneHistoryDetails(text: String): Offer? {
+        val durationMatch = detailedDurationRegex.find(text) ?: return null
+        val minutes = durationMatch.groupValues.getOrNull(1)?.toIntOrNull() ?: return null
+        val seconds = durationMatch.groupValues.getOrNull(2)?.toIntOrNull() ?: return null
+        if (minutes !in 0..360 || seconds !in 0..59) return null
+
+        val distance = distanceRegex.findAll(text)
+            .mapNotNull { it.groupValues.getOrNull(1)?.toNumber() }
+            .firstOrNull { it in 0.01..500.0 } ?: return null
+
+        // Na ekranie szczegolow pierwsza kwota jest suma przychodow. Kolejne
+        // pozycje to stawka bazowa, napiwek itd., wiec nie wybieramy maksimum.
+        val firstCurrency = amountRegex.find(text)
+        val amount = firstCurrency?.groupValues
+            ?.drop(1)
+            ?.firstOrNull { it.isNotBlank() }
+            ?.toNumber() ?: return null
+        if (amount !in 0.0..1000.0) return null
+
+        return Offer(
+            amountPln = amount,
+            distanceKm = distance,
+            durationSeconds = minutes * 60 + seconds,
+            applyExtraTimeBuffer = false
+        )
+    }
+
+    data class Schedule(
+        val pickupTimeMinutesOfDay: Int?,
+        val deliveryTimeMinutesOfDay: Int?
+    )
+
+    fun findSchedule(text: String): Schedule {
+        val normalized = normalize(text)
+        return Schedule(
+            pickupTimeMinutesOfDay = findPickupTime(normalized),
+            deliveryTimeMinutesOfDay = findDeliveryTime(normalized)
         )
     }
 
@@ -437,6 +511,17 @@ object OfferParser {
         }
         return null
     }
+
+    private fun closestAmountBefore(text: String, anchorPosition: Int, maxGap: Int): AmountMatch? =
+        findAmountMatches(text)
+            .asSequence()
+            .filter { it.endExclusive <= anchorPosition }
+            .filter { anchorPosition - it.endExclusive <= maxGap }
+            .sortedWith(
+                compareBy<AmountMatch> { anchorPosition - it.endExclusive }
+                    .thenByDescending { it.explicitCurrency }
+            )
+            .firstOrNull()
 
     private fun matchDistance(match: MatchResult, amount: AmountMatch): Int = when {
         match.range.first >= amount.endExclusive -> match.range.first - amount.endExclusive

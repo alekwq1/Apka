@@ -730,8 +730,12 @@ private fun SettingsScreen(
     var roundEarnings by remember { mutableStateOf(prefs.roundEarnings) }
     var zusEnabled by remember { mutableStateOf(prefs.zusEnabled) }
     var zusPercent by remember { mutableStateOf(prefs.zusPercent.toFloat()) }
-    var restaurantBlacklist by remember { mutableStateOf(prefs.restaurantBlacklistText) }
-    var customerBlacklist by remember { mutableStateOf(prefs.customerBlacklistText) }
+    var restaurantBlacklist by remember {
+        mutableStateOf(BlacklistEntryCodec.parse(prefs.restaurantBlacklistText))
+    }
+    var customerBlacklist by remember {
+        mutableStateOf(BlacklistEntryCodec.parse(prefs.customerBlacklistText))
+    }
     var selectedLanguage by remember { mutableStateOf(AppLanguage.fromCode(prefs.languageCode)) }
     var selectedTheme by remember { mutableStateOf(prefs.themeMode) }
     var decisionBasis by remember { mutableStateOf(prefs.decisionBasis) }
@@ -1040,35 +1044,40 @@ private fun SettingsScreen(
 
         SectionCard(step = "LISTY", title = tx(language, "Czarne listy", "Blocklists", "Чорні списки", "Черные списки")) {
             Text(
-                tx(language, "Wpisz po jednej nazwie w linii. Jeśli nazwa pojawi się na ofercie, panel pokaże czerwone ostrzeżenie.", "Enter one name per line. If it appears in an offer, the overlay shows a red warning.", "Вводьте одну назву в рядку. При збігу панель покаже червоне попередження.", "Вводите одно имя в строке. При совпадении панель покажет красное предупреждение."),
+                tx(
+                    language,
+                    "Dodawaj pozycje przyciskiem +. Sama nazwa jest dopasowywana ściśle. Jeśli kilka lokali ma tę samą nazwę, dopisz adres — wtedy FUJARA sprawdzi nazwę i adres razem.",
+                    "Add entries with +. A name-only entry is matched strictly. If several places share a name, add the address so FUJARA checks both.",
+                    "Додавайте записи кнопкою +. Назва без адреси збігається точно; для однакових назв додайте адресу.",
+                    "Добавляйте записи кнопкой +. Название без адреса совпадает точно; для одинаковых названий добавьте адрес."
+                ),
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            OutlinedTextField(
-                value = restaurantBlacklist,
-                onValueChange = {
-                    restaurantBlacklist = it
-                    prefs.restaurantBlacklistText = it
-                },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text(tx(language, "Fujarne restauracje", "Blocked restaurants", "Небажані ресторани", "Нежелательные рестораны")) },
-                placeholder = { Text("McDonald's Orunia Górna\nRestauracja XYZ") },
-                minLines = 3,
-                maxLines = 5
+
+            BlacklistEditor(
+                language = language,
+                title = tx(language, "Fujarne restauracje", "Blocked restaurants", "Небажані ресторани", "Нежелательные рестораны"),
+                nameLabel = tx(language, "Nazwa restauracji", "Restaurant name", "Назва ресторану", "Название ресторана"),
+                entries = restaurantBlacklist,
+                onEntriesChanged = { entries ->
+                    restaurantBlacklist = entries
+                    prefs.restaurantBlacklistText = BlacklistEntryCodec.serialize(entries)
+                }
             )
-            OutlinedTextField(
-                value = customerBlacklist,
-                onValueChange = {
-                    customerBlacklist = it
-                    prefs.customerBlacklistText = it
-                },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text(tx(language, "Fujarni odbiorcy", "Blocked customers", "Небажані клієнти", "Нежелательные получатели")) },
-                placeholder = { Text(tx(language, "Imię i nazwisko odbiorcy", "Customer name", "Ім'я клієнта", "Имя получателя")) },
-                minLines = 3,
-                maxLines = 5
+
+            BlacklistEditor(
+                language = language,
+                title = tx(language, "Fujarni odbiorcy", "Blocked customers", "Небажані клієнти", "Нежелательные получатели"),
+                nameLabel = tx(language, "Nazwa / imię odbiorcy", "Customer name", "Ім'я клієнта", "Имя получателя"),
+                entries = customerBlacklist,
+                onEntriesChanged = { entries ->
+                    customerBlacklist = entries
+                    prefs.customerBlacklistText = BlacklistEntryCodec.serialize(entries)
+                }
             )
+
             Text(
-                tx(language, "Dopasowanie ignoruje wielkość liter i polskie znaki. Dane zostają tylko w telefonie.", "Matching ignores letter case and diacritics. The lists stay on your phone.", "Регістр і діакритика не мають значення. Списки лишаються на телефоні.", "Регистр и диакритика не имеют значения. Списки остаются на телефоне."),
+                tx(language, "Wielkość liter i polskie znaki nie mają znaczenia. Adres jest opcjonalny. Dane zostają tylko w telefonie.", "Letter case and diacritics are ignored. Address is optional. Lists stay on your phone.", "Регістр і діакритика не мають значення. Адреса необов’язкова.", "Регистр и диакритика не имеют значения. Адрес необязателен."),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -1157,7 +1166,82 @@ private fun SettingsScreen(
         TextButton(onClick = { uriHandler.openUri("https://alekwq1.github.io/Apka/privacy.html") }, modifier = Modifier.fillMaxWidth()) {
             Text(tx(language, "Polityka prywatności", "Privacy policy", "Політика конфіденційності", "Политика конфиденциальности"))
         }
-        Text("FUJARA 0.8.0", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+        Text("FUJARA 0.8.1", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+    }
+}
+
+@Composable
+private fun BlacklistEditor(
+    language: AppLanguage,
+    title: String,
+    nameLabel: String,
+    entries: List<BlacklistEntry>,
+    onEntriesChanged: (List<BlacklistEntry>) -> Unit
+) {
+    var newName by remember { mutableStateOf("") }
+    var newAddress by remember { mutableStateOf("") }
+
+    Text(title, fontWeight = FontWeight.Bold)
+
+    entries.forEachIndexed { index, entry ->
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    if (entry.name.isNotBlank()) {
+                        Text(entry.name, fontWeight = FontWeight.Bold)
+                    }
+                    if (entry.address.isNotBlank()) {
+                        Text(
+                            entry.address,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                TextButton(onClick = {
+                    onEntriesChanged(entries.filterIndexed { i, _ -> i != index })
+                }) {
+                    Text(tx(language, "− Usuń", "− Remove", "− Видалити", "− Удалить"))
+                }
+            }
+        }
+    }
+
+    OutlinedTextField(
+        value = newName,
+        onValueChange = { newName = it },
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text(nameLabel) },
+        singleLine = true
+    )
+    OutlinedTextField(
+        value = newAddress,
+        onValueChange = { newAddress = it },
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text(tx(language, "Adres (opcjonalnie)", "Address (optional)", "Адреса (необов’язково)", "Адрес (необязательно)")) },
+        singleLine = true
+    )
+    Button(
+        onClick = {
+            val entry = BlacklistEntry(newName.trim(), newAddress.trim())
+            if (entry.name.isNotBlank() || entry.address.isNotBlank()) {
+                onEntriesChanged(entries + entry)
+                newName = ""
+                newAddress = ""
+            }
+        },
+        modifier = Modifier.fillMaxWidth(),
+        enabled = newName.isNotBlank() || newAddress.isNotBlank()
+    ) {
+        Text(tx(language, "+ Dodaj", "+ Add", "+ Додати", "+ Добавить"))
     }
 }
 

@@ -468,3 +468,132 @@ class OfferParserTest {
     }
 
 }
+
+// 0.8.1 field-test regressions are kept in a separate class so the original
+// test file remains easy to compare with previous releases.
+class OfferParserFieldTest081 {
+    @Test
+    fun parsesUberPolishCardFromFieldTest() {
+        val text = """
+            Dostawa
+            11,31 zł
+            Łącznie 20 min (5.1 km)
+            McDonald's Orunia Górna
+            Białostocka & Warszawska, Gdańsk
+            Akceptuj
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text, CourierPlatform.UBER)
+        assertNotNull(offer)
+        assertEquals(11.31, offer!!.amountPln, 0.001)
+        assertEquals(5.1, offer.distanceKm, 0.001)
+        assertEquals(20, offer.durationMinutes)
+    }
+
+    @Test
+    fun parsesWoltPolishCardFromFieldTest() {
+        val text = """
+            13.29 zł
+            Spodziewany zarobek za pełną dostawę
+            Dostawa od THAI SON Express
+            Odległość
+            4.5 km
+            Szacowany
+            13 - 16 min
+            Akceptuj
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text, CourierPlatform.WOLT)
+        assertNotNull(offer)
+        assertEquals(13.29, offer!!.amountPln, 0.001)
+        assertEquals(4.5, offer.distanceKm, 0.001)
+        assertEquals(16, offer.durationMinutes)
+    }
+
+    @Test
+    fun parsesWoltLayoutWithoutPolishOrEnglishEarningsLabel() {
+        val text = """
+            13.29 zł
+            Lieferverdienst
+            THAI SON Express
+            4.5 km
+            13 - 16 min
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text, CourierPlatform.WOLT)
+        assertNotNull(offer)
+        assertEquals(13.29, offer!!.amountPln, 0.001)
+        assertEquals(4.5, offer.distanceKm, 0.001)
+        assertEquals(16, offer.durationMinutes)
+    }
+
+    @Test
+    fun parsesPyszneLiveOfferAndScheduleFromFieldTest() {
+        val text = """
+            36,69 zł
+            12,2 km · 2 przystanki
+            Odbiór: McDonald's Morena
+            Jaśkowa Dolina 134, 80-286 Gdańsk
+            Odbierz na 22:32
+            Dostawa: Kryska
+            Szara 5B/55, 80-116 Gdańsk
+            Dostarcz na 22:43
+            Zaakceptuj zlecenie 0:51
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text, CourierPlatform.PYSZNE)
+        assertNotNull(offer)
+        assertEquals(36.69, offer!!.amountPln, 0.001)
+        assertEquals(12.2, offer.distanceKm, 0.001)
+        assertNull(offer.durationMinutes)
+        assertEquals(22 * 60 + 32, offer.pickupTimeMinutesOfDay)
+        assertEquals(22 * 60 + 43, offer.deliveryTimeMinutesOfDay)
+    }
+
+    @Test
+    fun parsesPyszneDeliveredOrderDetails() {
+        val text = """
+            Szczegóły zlecenia
+            Suma przychodów
+            11,00 zł
+            7D983K
+            Dostarczone
+            Zlecenie przyjęte 23 sierpnia 2026 7:36 PM
+            Zlecenie dostarczone 23 sierpnia 2026 7:46 PM
+            Odbiór Altin Kebab (Warszawska 59/a)
+            Czas aktywności 10 min 7 sec
+            Szacowana odległość 2,1 km
+            Szczegóły przychodów
+            Stawka bazowa 10,00 zł
+            Przyznany napiwek 1,00 zł
+            Suma przychodów 11,00 zł
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text, CourierPlatform.PYSZNE)
+        assertNotNull(offer)
+        assertEquals(11.0, offer!!.amountPln, 0.001)
+        assertEquals(2.1, offer.distanceKm, 0.001)
+        assertEquals(607, offer.durationSeconds)
+    }
+
+    @Test
+    fun parsesPyszneCancelledOrderDetailsWithZeroRevenue() {
+        val text = """
+            Szczegóły zlecenia
+            Suma przychodów
+            0,00 zł
+            GMZ33C
+            Anulowane
+            Odbiór Rogi Smash (Sucha 18)
+            Czas aktywności 26 min 9 sec
+            Szacowana odległość 3,8 km
+            Stawka bazowa 0,00 zł
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text, CourierPlatform.PYSZNE)
+        assertNotNull(offer)
+        assertEquals(0.0, offer!!.amountPln, 0.001)
+        assertEquals(3.8, offer.distanceKm, 0.001)
+        assertEquals(1569, offer.durationSeconds)
+    }
+}
