@@ -320,6 +320,19 @@ object PyszneDayReferenceParser {
     )
     private val listOrderIdRegex = Regex("""(?i)#\s*([A-Z0-9]{6})\b""")
 
+    // Wazne: kwoty dnia NIE sa juz wybierane jako "pierwsze pieniadze po dacie".
+    // Na ekranie podsumowania pod naglowkiem jest lista dostaw (31,20 zl, 10,00 zl itd.)
+    // i przy innym porzadku Accessibility taka kwota potrafila zostac uznana za sume dnia.
+    private val topEarningsLabel = Regex(
+        """(?i)^(?:przychody|earnings|income|revenue)\b.*$"""
+    )
+    private val totalEarningsLabel = Regex(
+        """(?i)^(?:suma\s+przychod[oó]w|total\s+(?:earnings|income|revenue))\b.*$"""
+    )
+    private val exactDaySummaryLabel = Regex(
+        """(?i)^(?:podsumowanie\s+dnia|daily\s+summary|day\s+summary)\b.*$"""
+    )
+
     fun parseOrderIds(text: String): List<String> = listOrderIdRegex.findAll(text)
         .map { it.groupValues[1].uppercase(Locale.ROOT) }
         .filter { it !in setOf("FUJARA", "PYSZNE") }
@@ -329,63 +342,85 @@ object PyszneDayReferenceParser {
     fun parse(text: String): PyszneDayReference? {
         if (!daySummaryMarker.containsMatchIn(text)) return null
 
-        // Bez jawnej daty NIC nie zapisujemy. W 0.8.4 fallback LocalDate.now()
-        // mogl przypisac stary ekran Pyszne do dzisiejszej daty podczas przejscia.
+        // Bez jawnej, jednej daty nie tworzymy dnia. Ta sama data moze wystepowac
+        // dwa razy (naglowek + szczegoly przychodow) i to jest poprawne.
         val explicitDates = PyszneHistoryParser.parseDatesFromText(text).distinct()
         if (explicitDates.size != 1) return null
         val date = explicitDates.single()
 
         val lines = text.lineSequence().map { it.trim() }.filter { it.isNotBlank() }.toList()
-        val dateIndexes = lines.mapIndexedNotNull { index, line ->
-            if (PyszneHistoryParser.parseDateFromText(line) == date) index else null
-        }
-        if (dateIndexes.isEmpty()) return null
+        if (lines.isEmpty()) return null
 
-        // Count i kwota musza pochodzic z GORNEJ karty tego samego dnia:
-        // data -> Przychody -> kwota -> N offers accepted. Nie laczymy wartosci
-        // z roznych fragmentow ekranu ani z poprzedniego dnia.
-        val headerWindows = dateIndexes.map { index ->
-            lines.subList(index, minOf(lines.size, index + 10)).joinToString("\n")
-        }
-
-        val headerCandidates = headerWindows.mapNotNull { window ->
-            val counts = orderCountRegex.findAll(window)
-                .mapNotNull { it.groupValues.getOrNull(1)?.toIntOrNull() }
-                .filter { it in 1..300 }
-                .toList()
-            val amounts = moneyRegex.findAll(window)
-                .mapNotNull { match ->
-                    match.groupValues.getOrNull(1)
-                        ?.replace(" ", "")
-                        ?.replace(',', '.')
-                        ?.toDoubleOrNull()
-                }
-                .filter { it in 0.0..100_000.0 }
-                .toList()
-
-            val count = counts.firstOrNull() ?: return@mapNotNull null
-            // W gornej karcie pierwsza jawna kwota po dacie jest lacznym przychodem.
-            val amount = amounts.firstOrNull() ?: return@mapNotNull null
-            count to amount
+        val topPairs = mutableListOf<Pair<Int, Double>>()
+        lines.forEachIndexed { index, line ->
+            if (!topEarningsLabel.matches(line)) return@forEachIndexed
+            val window = lines.subList(index, minOf(lines.size, index + 7)).joinToString("\n")
+            val count = parseCounts(window).firstOrNull() ?: return@forEachIndexed
+            val amount = parseMoney(window).firstOrNull() ?: return@forEachIndexed
+            topPairs += count to amount
         }
 
-        if (headerCandidates.isEmpty()) return null
+        // Najpewniejsza kwota: pole "Suma przychodow" z sekcji szczegolow.
+        val totalAmounts = lines.mapIndexedNotNull { index, line ->
+            if (!totalEarningsLabel.matches(line)) return@mapIndexedNotNull null
+            val window = lines.subList(index, minOf(lines.size, index + 3)).joinToString("\n")
+            parseMoney(window).firstOrNull()
+        }
 
-        // Jesli OCR zwrocil kilka reprezentacji tego samego ekranu, wszystkie
-        // musza wskazywac ten sam zestaw danych. Przy konflikcie czekamy na kolejny skan.
-        val distinctCandidates = headerCandidates
-            .map { it.first to kotlin.math.round(it.second * 100.0).toInt() }
-            .distinct()
-        if (distinctCandidates.size != 1) return null
+        // Najpewniejsza liczba: liczba zaakceptowanych ofert zaraz po "Podsumowanie dnia".
+        val summaryCounts = lines.mapIndexedNotNull { index, line ->
+            if (!exactDaySummaryLabel.matches(line)) return@mapIndexedNotNull null
+            val window = lines.subList(index, minOf(lines.size, index + 4)).joinToString("\n")
+            parseCounts(window).firstOrNull()
+        }
 
-        val (count, amountCents) = distinctCandidates.single()
+        val topCounts = topPairs.map { it.first }
+        val topAmounts = topPairs.map { it.second }
+        val count = uniqueCount(summaryCounts).orElseUnique(topCounts) ?: return null
+        val amount = uniqueMoney(totalAmounts).orElseUniqueMoney(topAmounts) ?: return null
+
+        if (count !in 1..300 || amount !in 0.0..100_000.0) return null
+
+        // Jesli oba niezalezne miejsca ekranu sa widoczne, musza sie zgadzac.
+        uniqueCount(summaryCounts)?.let { summaryCount ->
+            uniqueCount(topCounts)?.let { topCount -> if (summaryCount != topCount) return null }
+        }
+        uniqueMoney(totalAmounts)?.let { total ->
+            uniqueMoney(topAmounts)?.let { top -> if (kotlin.math.abs(total - top) >= 0.02) return null }
+        }
+
         return PyszneDayReference(
             date = date,
             orderCount = count,
-            amountPln = amountCents / 100.0,
+            amountPln = amount,
             orderIds = parseOrderIds(text)
         )
     }
+
+    private fun parseCounts(text: String): List<Int> = orderCountRegex.findAll(text)
+        .mapNotNull { it.groupValues.getOrNull(1)?.toIntOrNull() }
+        .filter { it in 1..300 }
+        .toList()
+
+    private fun parseMoney(text: String): List<Double> = moneyRegex.findAll(text)
+        .mapNotNull { match ->
+            match.groupValues.getOrNull(1)
+                ?.replace(" ", "")
+                ?.replace(',', '.')
+                ?.toDoubleOrNull()
+        }
+        .filter { it in 0.0..100_000.0 }
+        .toList()
+
+    private fun uniqueCount(values: List<Int>): Int? = values.distinct().singleOrNull()
+
+    private fun uniqueMoney(values: List<Double>): Double? {
+        val cents = values.map { kotlin.math.round(it * 100.0).toInt() }.distinct()
+        return cents.singleOrNull()?.div(100.0)
+    }
+
+    private fun Int?.orElseUnique(other: List<Int>): Int? = this ?: uniqueCount(other)
+    private fun Double?.orElseUniqueMoney(other: List<Double>): Double? = this ?: uniqueMoney(other)
 }
 
 class PyszneLogStore(context: Context) {
@@ -394,7 +429,7 @@ class PyszneLogStore(context: Context) {
     @Synchronized
     fun save(entry: PyszneDeliveryLog): PyszneSaveResult {
         val current = all().toMutableList()
-        val duplicateIndex = current.indexOfFirst { it.key == entry.key || it.fingerprint == entry.fingerprint }
+        val duplicateIndex = current.indexOfFirst { sameDelivery(it, entry) }
         if (duplicateIndex >= 0) {
             val existing = current[duplicateIndex]
             if (needsUpgrade(existing, entry)) {
@@ -407,20 +442,61 @@ class PyszneLogStore(context: Context) {
             }
             return PyszneSaveResult.DUPLICATE
         }
+        val beforeSave = current.toList()
         current += entry
         persist(current.sortedWith(compareBy<PyszneDeliveryLog> { it.date }.thenBy { it.acceptedMinuteOfDay ?: Int.MAX_VALUE }))
+        reconcileDayOrderIdAfterSave(entry, beforeSave)
         return PyszneSaveResult.SAVED
     }
 
     fun contains(entry: PyszneDeliveryLog): Boolean {
-        val existing = all().firstOrNull { it.key == entry.key || it.fingerprint == entry.fingerprint } ?: return false
+        val existing = all().firstOrNull { sameDelivery(it, entry) } ?: return false
         return !needsUpgrade(existing, entry)
+    }
+
+    /**
+     * Gdy oba wpisy maja jawny numer zlecenia, numer jest nadrzedna tozsamoscia.
+     * Fingerprint jest tylko fallbackiem dla starych wpisow bez ID. To eliminuje
+     * przypadek, w ktorym nowe #ABC123 dostawalo "ZAPISANE", bo ekran mial przez
+     * chwile te same parametry/fingerprint co poprzednie #XYZ789.
+     */
+    private fun sameDelivery(existing: PyszneDeliveryLog, incoming: PyszneDeliveryLog): Boolean {
+        val existingId = existing.orderId?.trim()?.removePrefix("#")?.uppercase(Locale.ROOT)?.takeIf { it.isNotBlank() }
+        val incomingId = incoming.orderId?.trim()?.removePrefix("#")?.uppercase(Locale.ROOT)?.takeIf { it.isNotBlank() }
+        if (existingId != null && incomingId != null) return existingId == incomingId
+        if (existing.key == incoming.key) return true
+        return existing.fingerprint == incoming.fingerprint
     }
 
     private fun needsUpgrade(existing: PyszneDeliveryLog, incoming: PyszneDeliveryLog): Boolean =
         (existing.orderId.isNullOrBlank() && !incoming.orderId.isNullOrBlank()) ||
             restaurantQuality(incoming.restaurant) > restaurantQuality(existing.restaurant) ||
             (!existing.cancelled && incoming.cancelled)
+
+    /**
+     * Samonaprawa listy numerow dnia. Jesli przed zapisem brakowalo dokladnie
+     * jednego zlecenia, roznica kwoty odpowiada nowemu wpisowi, a zeskanowana
+     * lista zawierala jeden inny "brakujacy" numer, traktujemy go jako blad OCR
+     * i podmieniamy na numer faktycznie odczytany ze szczegolow zlecenia.
+     */
+    private fun reconcileDayOrderIdAfterSave(entry: PyszneDeliveryLog, beforeSave: List<PyszneDeliveryLog>) {
+        val incomingId = entry.orderId?.trim()?.removePrefix("#")?.uppercase(Locale.ROOT)?.takeIf { it.isNotBlank() }
+            ?: return
+        val refs = allDayReferences().toMutableMap()
+        val reference = refs[entry.date] ?: return
+        val savedBefore = beforeSave.filter { it.date == entry.date }
+        if (reference.orderCount - savedBefore.size != 1) return
+        val amountMissing = reference.amountPln - savedBefore.sumOf { it.amountPln }
+        if (kotlin.math.abs(amountMissing - entry.amountPln) >= 0.02) return
+
+        val savedIds = savedBefore.mapNotNull { it.orderId?.trim()?.removePrefix("#")?.uppercase(Locale.ROOT) }.toSet()
+        val unmatched = reference.orderIds.filterNot { it in savedIds }
+        if (incomingId in reference.orderIds || unmatched.size != 1) return
+
+        val repaired = reference.orderIds.map { if (it == unmatched.single()) incomingId else it }.distinct()
+        refs[entry.date] = reference.copy(orderIds = repaired, capturedAtMillis = System.currentTimeMillis())
+        persistDayReferences(refs)
+    }
 
     private fun restaurantQuality(value: String): Int {
         val v = value.trim()
@@ -479,6 +555,9 @@ class PyszneLogStore(context: Context) {
     }
 
     fun dayReference(date: LocalDate): PyszneDayReference? = allDayReferences()[date]
+
+    /** Dni sa widoczne w ekranie FUJARA od razu po odczytaniu podsumowania Pyszne, nawet przy 0 zapisanych dostawach. */
+    fun referenceDates(): List<LocalDate> = allDayReferences().keys.sortedDescending()
 
     fun latestDayReference(): PyszneDayReference? = allDayReferences().values.maxByOrNull { it.capturedAtMillis }
 
@@ -592,7 +671,7 @@ class PyszneLogStore(context: Context) {
 
     companion object {
         private const val KEY_ENTRIES = "entries_v1"
-        private const val KEY_DAY_REFERENCES = "day_references_v2"
+        private const val KEY_DAY_REFERENCES = "day_references_v3"
     }
 }
 

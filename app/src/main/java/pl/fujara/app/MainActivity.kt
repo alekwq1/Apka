@@ -627,8 +627,14 @@ private fun PyszneSummaryScreen(
     val store = remember { PyszneLogStore(context) }
     var refreshToken by remember { mutableStateOf(0) }
     val entries = remember(refreshToken) { store.all() }
-    val availableDates = entries.map { it.date }.distinct().sortedDescending()
-    var selectedDate by remember { mutableStateOf(availableDates.firstOrNull() ?: LocalDate.now()) }
+    val referenceDates = remember(refreshToken) { store.referenceDates() }
+    val latestCapturedReference = remember(refreshToken) { store.latestDayReference() }
+    // Sam ekran "Podsumowanie dnia" w Pyszne tworzy dzien w FUJARZE od razu.
+    // Nie trzeba najpierw zapisywac pierwszej dostawy.
+    val availableDates = (entries.map { it.date } + referenceDates).distinct().sortedDescending()
+    var selectedDate by remember {
+        mutableStateOf(latestCapturedReference?.date ?: availableDates.firstOrNull() ?: LocalDate.now())
+    }
 
     // Gdy uzytkownik przechodzi do Pyszne i wraca, usluga Accessibility moze
     // zapisac nowe zlecenie lub kontrole dnia w tle. Ekran sam odswieza lokalny
@@ -637,6 +643,13 @@ private fun PyszneSummaryScreen(
         while (true) {
             delay(1200)
             refreshToken += 1
+        }
+    }
+
+    LaunchedEffect(latestCapturedReference?.capturedAtMillis) {
+        val latest = latestCapturedReference
+        if (latest != null && System.currentTimeMillis() - latest.capturedAtMillis in 0..6_000L) {
+            selectedDate = latest.date
         }
     }
 
@@ -828,9 +841,9 @@ private fun PyszneSummaryScreen(
                         } else if (exactMissingIds.isNotEmpty()) {
                             Text(
                                 if (allIdsScanned) {
-                                    tx(language, "Do zapisania:", "Still to save:", "Ще зберегти:", "Ещё сохранить:")
+                                    tx(language, "Do sprawdzenia na liście:", "Check on the list:", "Перевірте у списку:", "Проверьте в списке:")
                                 } else {
-                                    tx(language, "Na razie brakuje:", "Missing so far:", "Поки бракує:", "Пока не хватает:")
+                                    tx(language, "Na razie do sprawdzenia:", "Check so far:", "Поки перевірте:", "Пока проверьте:")
                                 },
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.error

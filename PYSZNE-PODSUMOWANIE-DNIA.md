@@ -1,4 +1,4 @@
-# Pyszne - podsumowanie dnia (FUJARA 0.8.9)
+# Pyszne - podsumowanie dnia (FUJARA 0.8.10)
 
 ## Przeplyw uzytkownika
 1. W Pyszne wejdz w historie i otworz szczegoly zakonczonego lub anulowanego zlecenia.
@@ -12,8 +12,9 @@
 ## Ochrona przed zlym dniem
 - brak fallbacku do dzisiejszej daty dla kontroli Pyszne,
 - przy wiecej niz jednej jawnej dacie parser odrzuca odczyt,
-- liczba zlecen i kwota sa pobierane z okna zaczynajacego sie przy tej samej dacie,
-- kontrolne dane z 0.8.4 sa resetowane przez nowy magazyn `day_references_v2`.
+- liczba zlecen jest kotwiczona przy `Podsumowanie dnia`, a kwota przy `Przychody` / `Suma przychodow`,
+- kwoty pojedynczych restauracji nie sa kandydatami na sume dnia,
+- kontrolne dane ze starszych wersji sa resetowane przez magazyn `day_references_v3`.
 
 ## Nazwy restauracji
 Parser odrzuca jako nazwe: same kwoty, dystans, czas, identyfikator zlecenia, date i etykiety formularza. Potrafi polaczyc dwie linie dlugiej nazwy/adresu. Tekst Accessibility ma pierwszenstwo przed OCR, co pomaga przy zaslonietym ekranie.
@@ -49,3 +50,13 @@ Po poprawnej kontroli dnia aplikacja pokazuje osobną animację wyniku. Warto sp
 ## 0.8.9 — stabilizacja szczegółów
 
 Na ekranie pojedynczego zlecenia panel FUJARA jest celowo opóźniony do chwili, gdy nowe dane są spójne. Po przejściu między zleceniami stary panel znika od razu. OCR i Accessibility nie są już bezwarunkowo łączone na tym ekranie: jeśli podają różne numery zleceń, panel pozostaje ukryty do następnego poprawnego odczytu.
+
+
+## 0.8.10 — dzień od nagłówka + pewniejsze ID
+
+- Samo otwarcie `Historia przychodów -> dzień` tworzy pozycję dnia w FUJARZE; nie trzeba najpierw zapisywać pierwszej dostawy.
+- Po świeżym odczycie FUJARA wybiera właśnie ten dzień, także gdy wcześniej były zapisane inne daty.
+- `Suma przychodów` i górna karta `Przychody` są jedynymi źródłami kwoty kontrolnej. Przykład: przy dniu 621,95 zł pierwsza dostawa 31,20 zł nie może zostać zapisana jako kwota dnia.
+- Numer zlecenia na szczegółach jest preferowany z Accessibility. Fingerprint nie oznacza duplikatu, jeśli dwa wpisy mają różne jawne numery ID.
+- Numery z przewijanej listy są preferowane z Accessibility. OCR jest fallbackiem i wymaga powtórnego potwierdzenia tego samego numeru.
+- Jeżeli przy stanie 9/10 lista miała jeden błędny numer OCR, a ostatnio zapisana dostawa dokładnie domyka brakującą kwotę, lista numerów jest automatycznie naprawiana.

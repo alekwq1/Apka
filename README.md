@@ -1,12 +1,12 @@
-# FUJARA 0.8.9
+# FUJARA 0.8.10
 
 Android app for local courier-offer profitability analysis.
 
 ## Google Play readiness
 - applicationId / namespace: `pl.fujara.app`
 - targetSdk / compileSdk: 36
-- versionCode: 25
-- versionName: 0.8.9
+- versionCode: 27
+- versionName: 0.8.10
 - signed AAB workflow: `.github/workflows/build-play-aab.yml`
 - debug APK workflow: `.github/workflows/test-apk.yml`
 - privacy page: `docs/privacy.html`
@@ -32,6 +32,15 @@ Na ekranie szczegolow Pyszne kwota jest pobierana z pola `Suma przychodow`, a ni
 - Bez permission `INTERNET`; wspolny scoreboard online nie jest jeszcze wlaczony.
 
 
+
+## 0.8.10
+
+- Podsumowanie dnia Pyszne tworzy dzień w FUJARZE od razu po odczycie nagłówka — nawet przy 0 zapisanych dostawach.
+- Kwota kontrolna jest pobierana wyłącznie z zakotwiczonych pól `Przychody` / `Suma przychodów`; kwota pierwszej restauracji nie może już zostać sumą dnia.
+- ID zlecenia z Accessibility ma pierwszeństwo przed OCR; różne jawne ID nie są już uznawane za duplikat tylko dlatego, że mają podobny fingerprint.
+- Numery z listy dnia pochodzą przede wszystkim z Accessibility; OCR musi potwierdzić numer co najmniej dwa razy.
+- Lista braków potrafi samoczynnie naprawić pojedynczy błędnie zeskanowany numer po zapisaniu ostatniej dostawy.
+- Magazyn kontroli dnia został podbity do `day_references_v3`, aby nie dziedziczyć błędnych kwot/ID z poprzednich wersji.
 
 ## 0.8.8
 

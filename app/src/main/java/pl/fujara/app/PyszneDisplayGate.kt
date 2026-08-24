@@ -33,11 +33,14 @@ class PyszneDisplayGate(
     }
 
     /** Wywolaj, gdy na pewno widzimy liste/historie zamiast szczegolow zlecenia. */
-    fun noteNavigationScreen() {
-        // Po powrocie do listy wolno ponownie otworzyc nawet to samo zlecenie,
-        // dlatego nie blokujemy starego ID na stale. Nadal wymagamy stabilizacji.
-        blockedIdentity = null
-        blockedSinceAt = 0L
+    fun noteNavigationScreen(nowMs: Long = androidLikeNow()) {
+        // Lista/historia jest punktem przejscia. Pyszne potrafi po kliknieciu przez
+        // chwile oddac Accessibility poprzedniego zlecenia, dlatego ostatnio
+        // pokazane ID pozostaje krotko zablokowane. Nowe ID moze przejsc od razu
+        // po wymaganej liczbie potwierdzen; ponowne otwarcie tego samego ID tylko
+        // odczeka hold i tez zadziala.
+        blockedIdentity = lastShownIdentity
+        blockedSinceAt = nowMs
         candidateIdentity = null
         candidateConfirmations = 0
         lastCandidateAt = 0L

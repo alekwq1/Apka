@@ -50,6 +50,10 @@ class DeliveryAccessibilityService : AccessibilityService() {
     private var lastNotificationLanguage: String? = null
     private var activePyszneDayDate: LocalDate? = null
     private var activePyszneDaySeenAt = 0L
+    // OCR numerow z listy jest fallbackiem. Numer musi zostac zobaczony co najmniej
+    // dwa razy, zanim trafi do listy brakow; Accessibility jest traktowane jako zrodlo zaufane.
+    private var pendingOcrDayIdsDate: LocalDate? = null
+    private val pendingOcrDayIdHits = mutableMapOf<String, Int>()
     private val pyszneDisplayGate = PyszneDisplayGate()
     private var lastPyszneOverlayWasHistoryDetails = false
 
@@ -341,7 +345,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
 
                     val joinedForState = independentTexts.joinToString("\n")
                     if (isPyszneNavigationScreen(joinedForState)) {
-                        pyszneDisplayGate.noteNavigationScreen()
+                        pyszneDisplayGate.noteNavigationScreen(SystemClock.elapsedRealtime())
                         lastPyszneOverlayWasHistoryDetails = false
                         if (::overlay.isInitialized) overlay.hide()
                     }
@@ -350,7 +354,10 @@ class DeliveryAccessibilityService : AccessibilityService() {
                     // szczegolow. Podczas przejscia jedno zrodlo moze juz widziec
                     // nowe zlecenie, a drugie jeszcze stare. Taki miks byl glowna
                     // przyczyna sekundowego migniecia starymi danymi.
-                    val historyResolution = resolvePyszneHistory(independentTexts)
+                    val historyResolution = resolvePyszneHistory(
+                        accessibilityText = pyszneAccessibilityText,
+                        fallbackTexts = independentTexts.filterNot { it == pyszneAccessibilityText.trim() }
+                    )
                     if (historyResolution.detailsDetected) {
                         val candidate = historyResolution.candidate
                         if (historyResolution.conflict || candidate == null || recognizedName == null) {
@@ -605,7 +612,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
             if (platform == CourierPlatform.PYSZNE) {
                 capturePyszneDayData(text)
                 if (isPyszneNavigationScreen(text)) {
-                    pyszneDisplayGate.noteNavigationScreen()
+                    pyszneDisplayGate.noteNavigationScreen(SystemClock.elapsedRealtime())
                     lastPyszneOverlayWasHistoryDetails = false
                     if (::overlay.isInitialized) overlay.hide()
                 }
@@ -658,7 +665,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
                 if (platform == CourierPlatform.PYSZNE) {
                     capturePyszneDayData(text)
                     if (isPyszneNavigationScreen(text)) {
-                        pyszneDisplayGate.noteNavigationScreen()
+                        pyszneDisplayGate.noteNavigationScreen(SystemClock.elapsedRealtime())
                         lastPyszneOverlayWasHistoryDetails = false
                         if (::overlay.isInitialized) overlay.hide()
                     }
@@ -691,44 +698,78 @@ class DeliveryAccessibilityService : AccessibilityService() {
      * tej samej listy dopisuje widoczne numery #XXXXXX. Dzieki temu ekran FUJARA
      * moze powiedziec dokladnie, ktorych zlecen jeszcze nie zapisano.
      */
-    private fun capturePyszneDayData(vararg textSources: String) {
-        val texts = textSources.map { it.trim() }.filter { it.isNotBlank() }
-        if (texts.isEmpty()) return
+    private fun capturePyszneDayData(accessibilityText: String, ocrText: String = "") {
+        val accessibility = accessibilityText.trim()
+        val ocr = ocrText.trim()
+        if (accessibility.isBlank() && ocr.isBlank()) return
 
-        val reference = texts.asSequence().mapNotNull(PyszneDayReferenceParser::parse).firstOrNull()
+        // Accessibility ma pierwszenstwo. OCR jest fallbackiem, ale nigdy nie
+        // nadpisuje poprawnego odczytu Accessibility kwota z pierwszej dostawy.
+        val accessibilityReference = accessibility.takeIf { it.isNotBlank() }
+            ?.let(PyszneDayReferenceParser::parse)
+        val ocrReference = if (accessibilityReference == null) {
+            ocr.takeIf { it.isNotBlank() }?.let(PyszneDayReferenceParser::parse)
+        } else {
+            null
+        }
+        // Numery ID z OCR nie trafiaja do magazynu razem z naglowkiem dnia.
+        // Musza przejsc osobna stabilizacje ponizej. Accessibility moze zapisac
+        // swoje numery od razu, bo sa tekstem UI, a nie rozpoznaniem obrazu.
+        val reference = accessibilityReference ?: ocrReference?.copy(orderIds = emptyList())
+
         if (reference != null) {
             pyszneLogStore.saveDayReference(reference)
+            if (activePyszneDayDate != reference.date) {
+                pendingOcrDayIdsDate = reference.date
+                pendingOcrDayIdHits.clear()
+            }
             activePyszneDayDate = reference.date
             activePyszneDaySeenAt = SystemClock.elapsedRealtime()
         }
 
-        if (activePyszneDayDate == null) {
-            val recent = pyszneLogStore.latestDayReference()
-                ?.takeIf { System.currentTimeMillis() - it.capturedAtMillis in 0..(10 * 60_000L) }
-            if (recent != null) {
-                activePyszneDayDate = recent.date
-                activePyszneDaySeenAt = SystemClock.elapsedRealtime()
-            }
-        }
-
+        // Nie zgadujemy aktywnego dnia na podstawie ostatniego zapisu z dysku.
+        // Zanim zaczniemy zbierac numery z przewijanej listy, naglowek tego dnia
+        // musi zostac faktycznie zobaczony w tej sesji.
         val activeDate = activePyszneDayDate ?: return
         if (SystemClock.elapsedRealtime() - activePyszneDaySeenAt > 10 * 60_000L) return
 
-        val combined = texts.joinToString("\n")
+        val combined = listOf(accessibility, ocr).filter { it.isNotBlank() }.joinToString("\n")
         val isHistoryList = Regex("""(?i)(?:historia\s+przychod[oó]w|earnings\s+history)""").containsMatchIn(combined)
         val isOrderDetails = Regex("""(?i)(?:szczeg[oó][lł]y\s+zlecenia|order\s+details)""").containsMatchIn(combined)
         if (!isHistoryList || isOrderDetails) return
 
-        // Jesli podczas przewijania jednak widac date, musi to byc ten sam dzien.
-        // To zabezpiecza przed dopisaniem numerow po szybkim przejsciu na inny dzien.
+        // Jesli podczas przewijania widac date, musi to byc ten sam dzien.
         val explicitDates = PyszneHistoryParser.parseDatesFromText(combined).distinct()
         if (explicitDates.size > 1 || (explicitDates.size == 1 && explicitDates.single() != activeDate)) return
 
-        val ids = PyszneDayReferenceParser.parseOrderIds(combined)
-        if (ids.isNotEmpty()) {
-            pyszneLogStore.mergeDayOrderIds(activeDate, ids)
+        val trustedIds = if (accessibility.isNotBlank()) {
+            PyszneDayReferenceParser.parseOrderIds(accessibility)
+        } else {
+            emptyList()
+        }
+
+        val idsToPersist = if (trustedIds.isNotEmpty()) {
+            trustedIds
+        } else {
+            stableOcrDayIds(activeDate, PyszneDayReferenceParser.parseOrderIds(ocr))
+        }
+
+        if (idsToPersist.isNotEmpty()) {
+            pyszneLogStore.mergeDayOrderIds(activeDate, idsToPersist)
             activePyszneDaySeenAt = SystemClock.elapsedRealtime()
         }
+    }
+
+    private fun stableOcrDayIds(date: LocalDate, ids: List<String>): List<String> {
+        if (ids.isEmpty()) return emptyList()
+        if (pendingOcrDayIdsDate != date) {
+            pendingOcrDayIdsDate = date
+            pendingOcrDayIdHits.clear()
+        }
+        ids.distinct().forEach { id ->
+            pendingOcrDayIdHits[id] = (pendingOcrDayIdHits[id] ?: 0) + 1
+        }
+        return ids.distinct().filter { (pendingOcrDayIdHits[it] ?: 0) >= 2 }
     }
 
     /**
@@ -767,38 +808,46 @@ class DeliveryAccessibilityService : AccessibilityService() {
      * Jesli widza dwa rozne numery zlecenia, uznajemy ekran za przejsciowy i
      * niczego nie pokazujemy. Kandydat musi miec jawna date i ID zlecenia.
      */
-    private fun resolvePyszneHistory(textSources: List<String>): PyszneHistoryResolution {
-        val detailsTexts = textSources
-            .map { it.trim() }
-            .filter { it.isNotBlank() && isPyszneHistoryDetailsScreen(it) }
-            .distinct()
-
-        if (detailsTexts.isEmpty()) return PyszneHistoryResolution(detailsDetected = false)
-
-        val candidates = detailsTexts.mapNotNull { text ->
-            // Brak daty albo kilka dat oznacza niepelny/mieszany ekran.
-            val dates = PyszneHistoryParser.parseDatesFromText(text).distinct()
-            if (dates.size != 1) return@mapNotNull null
-
-            val offer = OfferParser.parse(text, CourierPlatform.PYSZNE) ?: return@mapNotNull null
-            val entry = PyszneHistoryParser.parse(sourceText = text, offer = offer) ?: return@mapNotNull null
-            val orderId = entry.orderId?.trim()?.uppercase()?.takeIf { it.isNotBlank() }
-                ?: return@mapNotNull null
-
-            PyszneHistoryCandidate(
+    private fun resolvePyszneHistory(
+        accessibilityText: String,
+        fallbackTexts: List<String>
+    ): PyszneHistoryResolution {
+        fun candidateFrom(text: String): PyszneHistoryCandidate? {
+            val clean = text.trim()
+            if (clean.isBlank() || !isPyszneHistoryDetailsScreen(clean)) return null
+            val dates = PyszneHistoryParser.parseDatesFromText(clean).distinct()
+            if (dates.size != 1) return null
+            val offer = OfferParser.parse(clean, CourierPlatform.PYSZNE) ?: return null
+            val entry = PyszneHistoryParser.parse(sourceText = clean, offer = offer) ?: return null
+            val orderId = entry.orderId?.trim()?.uppercase()?.takeIf { it.isNotBlank() } ?: return null
+            return PyszneHistoryCandidate(
                 identity = orderId,
                 offer = offer,
                 entry = entry,
-                sourceText = text,
-                score = historyCandidateScore(entry, text)
+                sourceText = clean,
+                score = historyCandidateScore(entry, clean)
             )
         }
 
+        val accessibilityClean = accessibilityText.trim()
+        val fallbackClean = fallbackTexts.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+        val detailsDetected = (accessibilityClean.isNotBlank() && isPyszneHistoryDetailsScreen(accessibilityClean)) ||
+            fallbackClean.any(::isPyszneHistoryDetailsScreen)
+        if (!detailsDetected) return PyszneHistoryResolution(detailsDetected = false)
+
+        // Numer z drzewa Accessibility jest tekstem samego UI Pyszne i ma
+        // pierwszenstwo przed OCR. To eliminuje sytuacje, gdy OCR myli jedna
+        // litere w #FGFQM7 i lista brakow/stan ZAPISANE odnosza sie do innego ID.
+        // Miganie starym wpisem nadal blokuje PyszneDisplayGate (2 odczyty + hold).
+        candidateFrom(accessibilityClean)?.let { trusted ->
+            return PyszneHistoryResolution(detailsDetected = true, conflict = false, candidate = trusted)
+        }
+
+        val candidates = fallbackClean.mapNotNull(::candidateFrom)
         val identities = candidates.map { it.identity }.distinct()
         if (identities.size > 1) {
             return PyszneHistoryResolution(detailsDetected = true, conflict = true)
         }
-
         return PyszneHistoryResolution(
             detailsDetected = true,
             conflict = false,
