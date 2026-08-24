@@ -279,14 +279,21 @@ class DeliveryAccessibilityService : AccessibilityService() {
                 val recognitionText = OcrTextResolver.recognitionText(result)
                 val packagePlatform = platformForPackage(sourcePackageName)
                 val inferredPlatform = inferPlatformFromText(recognitionText)
+                val pyszneAccessibilityText = if (
+                    packagePlatform == CourierPlatform.PYSZNE && !isGalleryPackage(sourcePackageName)
+                ) {
+                    accessibilityTextForPackage(sourcePackageName)
+                } else {
+                    ""
+                }
 
-                // Gdy user wejdzie w Pyszne -> Podsumowanie dnia, zapamietujemy
-                // lokalnie tylko date, liczbe zlecen i laczna kwote. Nie zapisujemy
-                // pelnego OCR. Screenshoty otwarte w Galerii nie moga zasilac logow.
+                // Gdy user wejdzie w Pyszne -> Podsumowanie dnia, preferujemy tekst
+                // z drzewa Accessibility, a OCR jest fallbackiem. Parser wymaga teraz
+                // jawnej daty oraz count+kwoty z tej samej gornej karty dnia.
                 if (packagePlatform == CourierPlatform.PYSZNE && !isGalleryPackage(sourcePackageName)) {
-                    PyszneDayReferenceParser.parse(recognitionText)?.let { reference ->
-                        pyszneLogStore.saveDayReference(reference)
-                    }
+                    val reference = PyszneDayReferenceParser.parse(pyszneAccessibilityText)
+                        ?: PyszneDayReferenceParser.parse(recognitionText)
+                    reference?.let { pyszneLogStore.saveDayReference(it) }
                 }
 
                 // Tekst karty ma pierwszenstwo przed zapamietanym package name. To jest
@@ -294,6 +301,25 @@ class DeliveryAccessibilityService : AccessibilityService() {
                 // mogl zostac stary sygnal i ekran Wolt byl opisany jako Uber.
                 val platform = inferredPlatform ?: packagePlatform
                 val resolved = OcrTextResolver.resolve(result, platform)
+
+                // Dla historii Pyszne laczymy dwa niezalezne zrodla: Accessibility +
+                // najlepszy wariant OCR. Dzieki temu przycisk ZAPISZ DANE nie znika,
+                // gdy nakladka lub pojedynczy skan zasloni/zgubi jedna linie.
+                val pyszneSourceText = if (platform == CourierPlatform.PYSZNE) {
+                    listOf(pyszneAccessibilityText, resolved?.text ?: recognitionText)
+                        .map { it.trim() }
+                        .filter { it.isNotBlank() }
+                        .distinct()
+                        .joinToString("\n")
+                } else {
+                    recognitionText
+                }
+                val pyszneFallbackOffer = if (platform == CourierPlatform.PYSZNE) {
+                    OfferParser.parse(pyszneSourceText, CourierPlatform.PYSZNE)
+                } else {
+                    null
+                }
+                val finalOffer = pyszneFallbackOffer ?: resolved?.offer
 
                 val recognizedName = platform?.displayName
                     ?: if (
@@ -305,7 +331,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
                         null
                     }
 
-                if (recognizedName != null && resolved != null) {
+                if (recognizedName != null && finalOffer != null) {
                     misses = 0
                     lastDeliverySignalAt = SystemClock.elapsedRealtime()
                     if (
@@ -317,7 +343,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
                     }
 
                     val offer = enrichPyszneScheduleFromAccessibility(
-                        offer = resolved.offer,
+                        offer = finalOffer,
                         platform = platform,
                         sourcePackageName = sourcePackageName
                     )
@@ -325,7 +351,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
                     showOffer(
                         offer = offer,
                         applicationName = recognizedName,
-                        sourceText = recognitionText,
+                        sourceText = if (platform == CourierPlatform.PYSZNE) pyszneSourceText else (resolved?.text ?: recognitionText),
                         packageName = if (
                             isGalleryPackage(sourcePackageName) ||
                             packagePlatform == null ||
@@ -471,6 +497,28 @@ class DeliveryAccessibilityService : AccessibilityService() {
             }
             .maxByOrNull { it.score }
             ?.window
+    }
+
+    private fun accessibilityTextForPackage(packageName: String): String {
+        if (packageName.isBlank()) return ""
+
+        val windowText = windows
+            .asSequence()
+            .mapNotNull { window ->
+                val root = runCatching { window.root }.getOrNull() ?: return@mapNotNull null
+                if (root.packageName?.toString() != packageName) return@mapNotNull null
+                val score = (if (window.isActive) 2 else 0) + (if (window.isFocused) 1 else 0)
+                score to buildAccessibilityText(root)
+            }
+            .filter { it.second.isNotBlank() }
+            .maxByOrNull { it.first }
+            ?.second
+
+        if (!windowText.isNullOrBlank()) return windowText
+
+        val root = rootInActiveWindow ?: return ""
+        if (root.packageName?.toString() != packageName) return ""
+        return buildAccessibilityText(root)
     }
 
     private fun scanAccessibilityOnly(hideOnFailure: Boolean = true): Boolean {

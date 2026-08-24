@@ -84,6 +84,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
 
@@ -624,6 +625,16 @@ private fun PyszneSummaryScreen(
     val availableDates = entries.map { it.date }.distinct().sortedDescending()
     var selectedDate by remember { mutableStateOf(availableDates.firstOrNull() ?: LocalDate.now()) }
 
+    // Gdy uzytkownik przechodzi do Pyszne i wraca, usluga Accessibility moze
+    // zapisac nowe zlecenie lub kontrole dnia w tle. Ekran sam odswieza lokalny
+    // magazyn, dzieki czemu nie trzeba wracac do menu ani recznie przeladowywac.
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1200)
+            refreshToken += 1
+        }
+    }
+
     LaunchedEffect(availableDates) {
         if (availableDates.isNotEmpty() && selectedDate !in availableDates) {
             selectedDate = availableDates.first()
@@ -640,24 +651,34 @@ private fun PyszneSummaryScreen(
         zusPercent = if (prefs.zusEnabled) prefs.zusPercent else 0.0
     )
 
-    var officialCountText by remember { mutableStateOf("") }
-    var officialAmountText by remember { mutableStateOf("") }
     var showResult by remember { mutableStateOf(false) }
     var validationMessage by remember { mutableStateOf("") }
     var nickname by remember { mutableStateOf("") }
     var confirmDelete by remember { mutableStateOf(false) }
+    var isCalculating by remember { mutableStateOf(false) }
+    var calculationRequest by remember { mutableStateOf(0) }
 
     LaunchedEffect(selectedDate, entries.size, dayReference) {
-        officialCountText = (dayReference?.orderCount ?: summary.orderCount).toString()
-        officialAmountText = String.format(
-            Locale.forLanguageTag("pl-PL"),
-            "%.2f",
-            dayReference?.amountPln ?: summary.grossPln
-        )
         showResult = false
+        isCalculating = false
         validationMessage = ""
         confirmDelete = false
     }
+
+    LaunchedEffect(calculationRequest, selectedDate) {
+        if (calculationRequest <= 0 || !isCalculating) return@LaunchedEffect
+        delay(1750)
+        if (isCalculating) {
+            showResult = true
+            isCalculating = false
+        }
+    }
+
+    val calculationProgress by animateFloatAsState(
+        targetValue = if (isCalculating) 1f else 0f,
+        animationSpec = tween(durationMillis = 1650),
+        label = "pyszne_calculation_progress"
+    )
 
     val resultProgress by animateFloatAsState(
         targetValue = if (showResult) 1f else 0.10f,
@@ -749,15 +770,45 @@ private fun PyszneSummaryScreen(
                     shape = RoundedCornerShape(14.dp),
                     color = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
                 ) {
-                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                         Text(
                             tx(language, "✓ Odczytano z ekranu Pyszne", "✓ Read from Pyszne screen", "✓ Зчитано з екрана Pyszne", "✓ Считано с экрана Pyszne"),
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
+                            formatSummaryDate(dayReference.date, language),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
                             "${dayReference.orderCount} zleceń · ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", dayReference.amountPln)}",
-                            style = MaterialTheme.typography.bodyMedium
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            } else {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.10f)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text(
+                            tx(language, "Oczekuję na kontrolę z Pyszne", "Waiting for Pyszne check", "Очікую дані Pyszne", "Ожидаю данные Pyszne"),
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.secondary
+                        )
+                        Text(
+                            tx(
+                                language,
+                                "Otwórz w Pyszne Podsumowanie dnia dla ${formatSummaryDate(selectedDate, language)}. FUJARA zapisze kontrolę tylko wtedy, gdy na ekranie odczyta jednocześnie datę, liczbę zleceń i kwotę tego dnia.",
+                                "Open Pyszne daily summary for ${formatSummaryDate(selectedDate, language)}. FUJARA only accepts a check when date, order count and amount are read together.",
+                                "Відкрийте підсумок дня Pyszne для вибраної дати.",
+                                "Откройте итоги дня Pyszne для выбранной даты."
+                            ),
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
                 }
@@ -766,59 +817,111 @@ private fun PyszneSummaryScreen(
             Text(
                 tx(
                     language,
-                    "Jeżeli wcześniej otworzysz w Pyszne ekran „Podsumowanie dnia”, FUJARA uzupełni te pola automatycznie. Możesz je też wpisać ręcznie. Potem sprawdzi, czy zapisano komplet.",
-                    "If you first open Pyszne's daily summary, FUJARA fills these values automatically. You can also enter them manually. It then checks whether the saved log is complete.",
-                    "Введіть кількість замовлень і суму з підсумку Pyszne. FUJARA перевірить повноту записів.",
-                    "Введите количество заказов и сумму из итогов Pyszne. FUJARA проверит полноту записей."
+                    "Wartości kontrolne są tylko do odczytu — nie można ich ręcznie zmienić. To zabezpiecza przed połączeniem kwoty z jednego dnia z liczbą zleceń z innego.",
+                    "Control values are read-only. This prevents mixing an amount from one day with an order count from another.",
+                    "Контрольні значення не можна змінювати вручну.",
+                    "Контрольные значения нельзя менять вручную."
                 ),
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall
             )
 
-            OutlinedTextField(
-                value = officialCountText,
-                onValueChange = { officialCountText = it.filter(Char::isDigit).take(4) },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text(tx(language, "Liczba zleceń wg Pyszne", "Orders according to Pyszne", "Замовлень за Pyszne", "Заказов по Pyszne")) },
-                singleLine = true
-            )
-
-            OutlinedTextField(
-                value = officialAmountText,
-                onValueChange = { officialAmountText = it.filter { ch -> ch.isDigit() || ch == ',' || ch == '.' }.take(12) },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text(tx(language, "Kwota wg Pyszne", "Amount according to Pyszne", "Сума за Pyszne", "Сумма по Pyszne")) },
-                singleLine = true
-            )
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                SummarySmallMetric(
+                    modifier = Modifier.weight(1f),
+                    label = tx(language, "ZLECENIA WG PYSZNE", "PYSZNE ORDERS", "ЗАМОВЛЕННЯ PYSZNE", "ЗАКАЗЫ PYSZNE"),
+                    value = dayReference?.orderCount?.toString() ?: "—"
+                )
+                SummarySmallMetric(
+                    modifier = Modifier.weight(1f),
+                    label = tx(language, "KWOTA WG PYSZNE", "PYSZNE AMOUNT", "СУМА PYSZNE", "СУММА PYSZNE"),
+                    value = dayReference?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", it.amountPln) } ?: "—"
+                )
+            }
 
             Button(
                 onClick = {
-                    val expectedCount = officialCountText.toIntOrNull()
-                    val expectedAmount = officialAmountText.replace(',', '.').toDoubleOrNull()
-                    val countOk = expectedCount == summary.orderCount
-                    val amountOk = expectedAmount != null && abs(expectedAmount - summary.grossPln) < 0.02
+                    val reference = dayReference
+                    val sameDate = reference?.date == selectedDate
+                    val countOk = sameDate && reference?.orderCount == summary.orderCount
+                    val amountOk = sameDate && reference != null && abs(reference.amountPln - summary.grossPln) < 0.02
+
                     validationMessage = when {
-                        expectedCount == null || expectedAmount == null -> tx(language, "Uzupełnij liczbę zleceń i kwotę.", "Enter both order count and amount.", "Введіть кількість і суму.", "Введите количество и сумму.")
-                        countOk && amountOk -> tx(language, "✓ Zgadza się z logami. Można liczyć dzień.", "✓ Matches the saved log. Ready to calculate.", "✓ Збігається із записами. Можна рахувати день.", "✓ Совпадает с записями. Можно считать день.")
+                        reference == null -> tx(language, "Najpierw otwórz Podsumowanie dnia w Pyszne.", "Open Pyszne daily summary first.", "Спочатку відкрийте підсумок Pyszne.", "Сначала откройте итоги Pyszne.")
+                        !sameDate -> tx(language, "⚠ Odczyt z Pyszne dotyczy innej daty. Otwórz właściwy dzień ponownie.", "⚠ Pyszne data belongs to a different date. Open the correct day again.", "⚠ Дані з іншої дати.", "⚠ Данные относятся к другой дате.")
+                        countOk && amountOk -> tx(language, "✓ Dane zgodne. FUJARA liczy dzień…", "✓ Data matches. FUJARA is calculating…", "✓ Дані збігаються. Рахую…", "✓ Данные совпадают. Считаю…")
                         else -> {
-                            val missing = expectedCount - summary.orderCount
-                            val amountDiff = expectedAmount - summary.grossPln
+                            val missing = reference.orderCount - summary.orderCount
+                            val amountDiff = reference.amountPln - summary.grossPln
                             tx(
                                 language,
                                 "⚠ Różnica: zlecenia ${if (missing >= 0) "+$missing" else missing}, kwota ${String.format(Locale.forLanguageTag("pl-PL"), "%+.2f zł", amountDiff)}. Sprawdź brakujące/podwójne zapisy.",
                                 "⚠ Difference: orders ${if (missing >= 0) "+$missing" else missing}, amount ${String.format(Locale.US, "%+.2f PLN", amountDiff)}. Check missing/duplicate saves.",
-                                "⚠ Є різниця в кількості або сумі. Перевірте збережені замовлення.",
-                                "⚠ Есть разница в количестве или сумме. Проверьте сохранённые заказы."
+                                "⚠ Є різниця в кількості або сумі. Перевірте записи.",
+                                "⚠ Есть разница в количестве или сумме. Проверьте записи."
                             )
                         }
                     }
-                    // Nie pokazujemy ladnego wyniku na niekompletnych danych.
-                    // Najpierw liczba zlecen i kwota musza zgadzac sie z Pyszne.
-                    showResult = countOk && amountOk
+
+                    if (countOk && amountOk) {
+                        showResult = false
+                        isCalculating = true
+                        calculationRequest += 1
+                    } else {
+                        showResult = false
+                        isCalculating = false
+                    }
                 },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = summary.orderCount > 0
+                enabled = dayReference != null && summary.orderCount > 0 && !isCalculating
             ) {
-                Text(tx(language, "Potwierdź i policz", "Confirm and calculate", "Підтвердити й порахувати", "Подтвердить и посчитать"))
+                Text(
+                    if (isCalculating) {
+                        tx(language, "FUJARA liczy…", "FUJARA is calculating…", "FUJARA рахує…", "FUJARA считает…")
+                    } else {
+                        tx(language, "Potwierdź i policz", "Confirm and calculate", "Підтвердити й порахувати", "Подтвердить и посчитать")
+                    }
+                )
+            }
+
+            if (isCalculating) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        FujaraBrandMark(
+                            level = calculationProgress.coerceIn(0.08f, 1f),
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .size(width = 38.dp, height = 66.dp)
+                                .graphicsLayer {
+                                    scaleX = 0.82f + calculationProgress * 0.22f
+                                    scaleY = 0.82f + calculationProgress * 0.22f
+                                }
+                        )
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(
+                                when {
+                                    calculationProgress < 0.34f -> tx(language, "Sumuję kilometry i czas…", "Adding distance and time…", "Підсумовую відстань і час…", "Считаю километры и время…")
+                                    calculationProgress < 0.70f -> tx(language, "Liczę zł/h i zł/km…", "Calculating hourly and per-km rates…", "Рахую ставки…", "Считаю ставки…")
+                                    else -> tx(language, "Porównuję restauracje…", "Comparing restaurants…", "Порівнюю ресторани…", "Сравниваю рестораны…")
+                                },
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                "${(calculationProgress * 100).roundToInt().coerceIn(1, 100)}%",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
             }
 
             if (validationMessage.isNotBlank()) {
@@ -851,7 +954,10 @@ private fun PyszneSummaryScreen(
                     Column(modifier = Modifier.weight(1f)) {
                         BrandEyebrow(tx(language, "PODSUMOWANIE DNIA", "DAILY RESULT", "ПІДСУМОК ДНЯ", "ИТОГ ДНЯ"), accent)
                         Text(
-                            text = "${summary.goodOrders} SUPER · ${summary.borderlineOrders} NA STYK · ${summary.poorOrders} FUJARA",
+                            text = buildString {
+                                append("${summary.goodOrders} SUPER · ${summary.borderlineOrders} NA STYK · ${summary.poorOrders} FUJARA")
+                                if (summary.cancelledOrders > 0) append(" · ${summary.cancelledOrders} ANUL.")
+                            },
                             fontWeight = FontWeight.Black
                         )
                     }
@@ -902,8 +1008,9 @@ private fun PyszneSummaryScreen(
                 step = "RESTAURACJE",
                 title = tx(language, "Gdzie było SUPER, a gdzie FUJARA", "Best and worst restaurants", "Найкращі й найгірші ресторани", "Лучшие и худшие рестораны")
             ) {
-                val best = summary.restaurants.firstOrNull()
-                val worst = summary.restaurants.minByOrNull { it.netPerHour ?: Double.POSITIVE_INFINITY }
+                val namedRestaurants = summary.restaurants.filterNot { it.name.equals("Nieznana restauracja", ignoreCase = true) }
+                val best = namedRestaurants.firstOrNull()
+                val worst = namedRestaurants.minByOrNull { it.netPerHour ?: Double.POSITIVE_INFINITY }
 
                 if (best != null) {
                     Text(
@@ -920,26 +1027,66 @@ private fun PyszneSummaryScreen(
                     )
                 }
 
-                summary.restaurants.take(8).forEachIndexed { index, restaurant ->
-                    if (index > 0) HorizontalDivider()
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                summary.restaurants.forEach { restaurant ->
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(restaurant.name, fontWeight = FontWeight.Bold)
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(9.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.Top,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Text(
+                                    restaurant.name,
+                                    modifier = Modifier.weight(1f),
+                                    fontWeight = FontWeight.Black,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                StatusPill(summaryStatusLabel(restaurant.status, language), summaryStatusColor(restaurant.status))
+                            }
+
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                RestaurantMiniMetric(
+                                    modifier = Modifier.weight(1f),
+                                    label = tx(language, "ZLECENIA", "ORDERS", "ЗАМОВЛЕННЯ", "ЗАКАЗЫ"),
+                                    value = restaurant.orderCount.toString()
+                                )
+                                RestaurantMiniMetric(
+                                    modifier = Modifier.weight(1f),
+                                    label = tx(language, "PRZYCHÓD", "REVENUE", "ДОХІД", "ДОХОД"),
+                                    value = String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", restaurant.grossPln)
+                                )
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                RestaurantMiniMetric(
+                                    modifier = Modifier.weight(1f),
+                                    label = "PLN/H",
+                                    value = String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł/h", restaurant.netPerHour ?: 0.0)
+                                )
+                                RestaurantMiniMetric(
+                                    modifier = Modifier.weight(1f),
+                                    label = "PLN/KM",
+                                    value = String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł/km", restaurant.netPerKm ?: 0.0)
+                                )
+                            }
+
                             Text(
-                                "${restaurant.orderCount} zlec. · ${String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł/h", restaurant.netPerHour ?: 0.0)} · ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł/km", restaurant.netPerKm ?: 0.0)}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                "SUPER ${restaurant.goodOrders} · STYK ${restaurant.borderlineOrders} · FUJARA ${restaurant.poorOrders}",
-                                style = MaterialTheme.typography.labelSmall
+                                buildString {
+                                    append("🟢 ${restaurant.goodOrders} SUPER   🟡 ${restaurant.borderlineOrders} STYK   🔴 ${restaurant.poorOrders} FUJARA")
+                                    if (restaurant.cancelledOrders > 0) append("   ⛔ ${restaurant.cancelledOrders} ANUL.")
+                                },
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
                             )
                         }
-                        StatusPill(summaryStatusLabel(restaurant.status, language), summaryStatusColor(restaurant.status))
                     }
                 }
             }
@@ -1027,6 +1174,26 @@ private fun SummarySmallMetric(
             Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(value, fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleMedium)
         }
+    }
+}
+
+@Composable
+private fun RestaurantMiniMetric(
+    modifier: Modifier,
+    label: String,
+    value: String
+) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Bold
+        )
     }
 }
 

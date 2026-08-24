@@ -1,29 +1,25 @@
-# Pyszne - podsumowanie dnia (FUJARA 0.8.4)
+# Pyszne - podsumowanie dnia (FUJARA 0.8.5)
 
 ## Przeplyw uzytkownika
-1. W Pyszne wejdz w historie i otworz szczegoly zakonczonego zlecenia.
-2. Na nakladce FUJARA pojawi sie `ZAPISZ DANE` tylko dla ekranu historii zakonczonego zlecenia.
-3. Po zapisie przycisk zmieni sie na `ZAPISANE`. Ponowne otwarcie tego samego zlecenia nie tworzy duplikatu.
-4. Powtorz dla pozostalych dostaw z danego dnia.
-5. Otworz w Pyszne `Podsumowanie dnia`. FUJARA lokalnie odczyta date, liczbe zlecen i laczna kwote kontrolna.
-6. W FUJARA wybierz `Pyszne -> Podsumowanie dnia` i nacisnij `Potwierdz i policz`.
-7. Wynik jest pokazywany dopiero, gdy liczba zlecen i kwota zgadzaja sie z zapisanym logiem.
+1. W Pyszne wejdz w historie i otworz szczegoly zakonczonego lub anulowanego zlecenia.
+2. FUJARA laczy OCR z tekstem Accessibility. Gdy odczyta komplet danych, pokazuje `ZAPISZ DANE`.
+3. Zapisuje lokalnie date, restauracje, kwote, dystans i czas. Anulowane zlecenie moze miec 0 zl, ale nadal liczy czas/dystans.
+4. Ten sam numer/fingerprint nie tworzy duplikatu. Jezeli starszy zapis ma slaba nazwe restauracji, ponowne otwarcie moze go poprawic lepszym odczytem.
+5. Otworz w Pyszne `Podsumowanie dnia`. Kontrola zostanie zapisana tylko, gdy FUJARA widzi jawnie jedna date oraz count+kwote z gornej karty tego samego dnia.
+6. W FUJARA wejdz `Pyszne -> Podsumowanie dnia`. Pola kontrolne sa tylko do odczytu - nie da sie ich recznie nadpisac.
+7. `Potwierdz i policz` jest aktywne dopiero po odczycie kontroli. Przy zgodnosci uruchamia sie animacja: km/czas -> PLN/h i PLN/km -> restauracje.
 
-## Co jest liczone
-- liczba zapisanych zlecen,
-- przychod brutto,
-- laczny dystans,
-- laczny czas aktywnosci,
-- wynik po ustawionych kosztach pojazdu i opcjonalnym ZUS,
-- PLN/h i PLN/km,
-- SUPER / NA STYK / FUJARA dla zlecen i restauracji,
-- najlepsza i najslabsza restauracja wg wyniku godzinowego.
+## Ochrona przed zlym dniem
+- brak fallbacku do dzisiejszej daty dla kontroli Pyszne,
+- przy wiecej niz jednej jawnej dacie parser odrzuca odczyt,
+- liczba zlecen i kwota sa pobierane z okna zaczynajacego sie przy tej samej dacie,
+- kontrolne dane z 0.8.4 sa resetowane przez nowy magazyn `day_references_v2`.
 
-## Zaslonieta czesc ekranu
-Nakladka FUJARA jest maskowana przed OCR. Przycisk `ZAPISZ DANE` jest umieszczony w obrebie istniejacego panelu, wiec nie zaslania dodatkowego fragmentu Pyszne. Parser szczegolow korzysta m.in. z dolnego pola `Suma przychodow`, dlatego nie zalezy od widocznosci duzej kwoty na gorze ekranu.
+## Nazwy restauracji
+Parser odrzuca jako nazwe: same kwoty, dystans, czas, identyfikator zlecenia, date i etykiety formularza. Potrafi polaczyc dwie linie dlugiej nazwy/adresu. Tekst Accessibility ma pierwszenstwo przed OCR, co pomaga przy zaslonietym ekranie.
 
-## Blokada duplikatow
-Aplikacja nie przechowuje surowego numeru zlecenia. Uzywa jego lokalnego hasha oraz drugiego fingerprintu z daty/czasu/restauracji/kwoty/dystansu/czasu aktywnosci. Dzieki temu ponowny zapis tego samego zlecenia jest blokowany rowniez wtedy, gdy OCR odczyta numer nieco inaczej.
+## Anulowane zlecenia
+Zlecenie z markerem `Anulowane` / `Zlecenie anulowane` jest traktowane jako zakonczone i moze zostac zapisane. W podsumowaniu jest liczone do liczby zaakceptowanych zlecen, a jego 0 zl, czas i dystans wplywaja na realna stawke dnia.
 
-## Udostepnianie i scoreboard
-0.8.4 potrafi wygenerowac wynik z opcjonalnym nickiem i otworzyc systemowy Android Share Sheet. Wspolny scoreboard online nie jest jeszcze wysylany na serwer, poniewaz projekt nie ma skonfigurowanego backendu ani permission `INTERNET`. Do prawdziwego rankingu miedzy uzytkownikami trzeba podlaczyc np. Firebase/Supabase/wlasne API i dodac zgode na wysylanie danych.
+## Udostepnianie
+Wynik tekstowy ma teraz czytelne sekcje: przychod/zlecenia/dystans/czas, stawki po kosztach, SUPER/STYK/FUJARA oraz najlepsza/najslabsza restauracja. Nadal korzysta z Android Share Sheet i nie wysyla danych na backend.
