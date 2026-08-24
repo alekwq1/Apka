@@ -1,8 +1,10 @@
 package pl.fujara.app
 
+import android.Manifest
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -41,6 +43,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -177,6 +180,7 @@ class MainActivity : ComponentActivity() {
                                     prefs.onboardingCompleted = true
                                     prefs.analysisEnabled = true
                                     analysisEnabled = true
+                                    requestNotificationPermissionIfNeeded()
                                     screen = AppScreen.HOME
                                 }
                             },
@@ -224,7 +228,21 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (::prefs.isInitialized) refreshSystemState()
+        if (::prefs.isInitialized) {
+            refreshSystemState()
+            if (prefs.onboardingCompleted && serviceEnabled) {
+                requestNotificationPermissionIfNeeded()
+            }
+        }
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
+        if (prefs.notificationPermissionRequested) return
+
+        prefs.notificationPermissionRequested = true
+        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7811)
     }
 
     private fun refreshSystemState() {
@@ -699,6 +717,7 @@ private fun SettingsScreen(
                 .coerceAtLeast(0.0).toFloat()..initialRules.minimumNetPerHour.toFloat()
         )
     }
+    var extraTime by remember { mutableStateOf(initialRules.extraTimeMinutes.toFloat()) }
 
     var showHourly by remember { mutableStateOf(prefs.showHourly) }
     var showPerKm by remember { mutableStateOf(prefs.showPerKm) }
@@ -709,6 +728,10 @@ private fun SettingsScreen(
     var opacity by remember { mutableStateOf(prefs.overlayOpacityPercent.toFloat()) }
     var fontScale by remember { mutableStateOf(prefs.overlayFontScalePercent.toFloat()) }
     var roundEarnings by remember { mutableStateOf(prefs.roundEarnings) }
+    var zusEnabled by remember { mutableStateOf(prefs.zusEnabled) }
+    var zusPercent by remember { mutableStateOf(prefs.zusPercent.toFloat()) }
+    var restaurantBlacklist by remember { mutableStateOf(prefs.restaurantBlacklistText) }
+    var customerBlacklist by remember { mutableStateOf(prefs.customerBlacklistText) }
     var selectedLanguage by remember { mutableStateOf(AppLanguage.fromCode(prefs.languageCode)) }
     var selectedTheme by remember { mutableStateOf(prefs.themeMode) }
     var decisionBasis by remember { mutableStateOf(prefs.decisionBasis) }
@@ -731,6 +754,7 @@ private fun SettingsScreen(
             .coerceAtLeast(0.0).toFloat()..rules.minimumNetPerKm.toFloat()
         hourYellowRange = (rules.minimumNetPerHour - rules.toleranceNetPerHour)
             .coerceAtLeast(0.0).toFloat()..rules.minimumNetPerHour.toFloat()
+        extraTime = rules.extraTimeMinutes.toFloat()
     }
 
     fun currentRules(): ProfitabilityCalculator.Rules = ProfitabilityCalculator.Rules(
@@ -738,7 +762,8 @@ private fun SettingsScreen(
         minimumNetPerKm = kmYellowRange.endInclusive.toDouble(),
         toleranceNetPerKm = (kmYellowRange.endInclusive - kmYellowRange.start).coerceAtLeast(0f).toDouble(),
         minimumNetPerHour = hourYellowRange.endInclusive.toDouble(),
-        toleranceNetPerHour = (hourYellowRange.endInclusive - hourYellowRange.start).coerceAtLeast(0f).toDouble()
+        toleranceNetPerHour = (hourYellowRange.endInclusive - hourYellowRange.start).coerceAtLeast(0f).toDouble(),
+        extraTimeMinutes = extraTime.roundToInt()
     )
 
     fun persistRules() {
@@ -760,6 +785,17 @@ private fun SettingsScreen(
 
     ScreenContainer(scrollable = true) {
         TopBar(title = tx(language, "Ustawienia", "Settings", "Налаштування", "Настройки"), onBack = onBack)
+
+        InfoCard(
+            title = tx(language, "Ustaw pod realną jazdę", "Tune it for real delivery work", "Налаштуйте під реальну роботу", "Настройте под реальную работу"),
+            body = tx(
+                language,
+                "Najpierw ustaw zapas czasu i koszt auta. Potem progi opłacalności. ZUS i czarne listy są opcjonalne. Wszystko zapisuje się automatycznie.",
+                "Start with the time buffer and vehicle cost, then tune profitability thresholds. ZUS and blocklists are optional. Everything saves automatically.",
+                "Спочатку задайте запас часу й витрати авто, потім пороги вигідності. ZUS і чорні списки необов’язкові.",
+                "Сначала задайте запас времени и расходы авто, затем пороги выгоды. ZUS и черные списки необязательны."
+            )
+        )
 
         SectionCard(step = "UI", title = tx(language, "Wygląd i język", "Appearance & language", "Вигляд і мова", "Вид и язык")) {
             Text(
@@ -846,7 +882,7 @@ private fun SettingsScreen(
             )
         }
 
-        SectionCard(step = "PROGI", title = tx(language, "Koszty i zakres opłacalności", "Costs & profitability range", "Витрати й діапазон вигідності", "Расходы и диапазон выгоды")) {
+        SectionCard(step = "PROGI", title = tx(language, "Czas, koszty i progi", "Time, costs & thresholds", "Час, витрати й пороги", "Время, расходы и пороги")) {
             Row(
                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -865,7 +901,7 @@ private fun SettingsScreen(
 
             if (selectedPlatform != CourierPlatform.GLOBAL) {
                 SwitchRow(
-                    title = tx(language, "Osobne progi dla ${platformLabel(selectedPlatform)}", "Separate thresholds for ${platformLabel(selectedPlatform)}", "Окремі пороги для ${platformLabel(selectedPlatform)}", "Отдельные пороги для ${platformLabel(selectedPlatform)}"),
+                    title = tx(language, "Osobne ustawienia dla ${platformLabel(selectedPlatform)}", "Separate settings for ${platformLabel(selectedPlatform)}", "Окремі налаштування для ${platformLabel(selectedPlatform)}", "Отдельные настройки для ${platformLabel(selectedPlatform)}"),
                     checked = useCustomRules,
                     onCheckedChange = { enabled ->
                         useCustomRules = enabled
@@ -896,6 +932,36 @@ private fun SettingsScreen(
                 onValueChangeFinished = { persistRules() },
                 valueRange = 0f..5f,
                 enabled = ruleControlsEnabled
+            )
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(tx(language, "Zapas czasu", "Time buffer", "Запас часу", "Запас времени"), fontWeight = FontWeight.Bold)
+                    Text(
+                        tx(language, "Parking, wejście do lokalu, oczekiwanie, wydanie zamówienia", "Parking, entering the venue, waiting and hand-off", "Паркування, очікування та видача", "Парковка, ожидание и выдача"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Text("+${extraTime.roundToInt()} min", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Black)
+            }
+            Slider(
+                value = extraTime,
+                onValueChange = { extraTime = it },
+                onValueChangeFinished = { persistRules() },
+                valueRange = 0f..120f,
+                steps = 119,
+                enabled = ruleControlsEnabled
+            )
+            Text(
+                if (selectedPlatform == CourierPlatform.GLOBAL) {
+                    tx(language, "Ten zapas jest globalny. Dla konkretnej aplikacji możesz ustawić inny w zakładce powyżej.", "This is the global buffer. You can set a different one for each courier app above.", "Це глобальний запас. Для кожного застосунку можна задати окремий.", "Это глобальный запас. Для каждого приложения можно задать отдельный.")
+                } else {
+                    tx(language, "Zapas dla ${platformLabel(selectedPlatform)} jest dodawany do czasu zlecenia przed liczeniem PLN/h.", "The ${platformLabel(selectedPlatform)} buffer is added before PLN/h is calculated.", "Запас для ${platformLabel(selectedPlatform)} додається до часу перед розрахунком PLN/h.", "Запас для ${platformLabel(selectedPlatform)} добавляется ко времени перед расчетом PLN/h.")
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f))
@@ -940,9 +1006,77 @@ private fun SettingsScreen(
             )
         }
 
+        SectionCard(step = "ZUS", title = tx(language, "Realny zarobek po ZUS", "Earnings after ZUS", "Заробіток після ZUS", "Заработок после ZUS")) {
+            SwitchRow(
+                title = tx(language, "Uwzględniaj procent ZUS", "Apply ZUS percentage", "Враховувати відсоток ZUS", "Учитывать процент ZUS"),
+                checked = zusEnabled,
+                onCheckedChange = {
+                    zusEnabled = it
+                    prefs.zusEnabled = it
+                    saved()
+                }
+            )
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(tx(language, "Potrącenie", "Deduction", "Відрахування", "Удержание"), fontWeight = FontWeight.Bold)
+                Text("${String.format(Locale.ROOT, "%.1f", zusPercent)}%", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Black)
+            }
+            Slider(
+                value = zusPercent,
+                onValueChange = {
+                    zusPercent = it
+                    prefs.zusPercent = it.toDouble()
+                },
+                onValueChangeFinished = { saved() },
+                valueRange = 0f..100f,
+                steps = 199,
+                enabled = zusEnabled
+            )
+            Text(
+                tx(language, "Gdy funkcja jest włączona, PLN/h i PLN/km liczą się z kwoty po ZUS i po koszcie pojazdu. W panelu pojawia się też kwota „Po ZUS”.", "When enabled, PLN/h and PLN/km use earnings after ZUS and vehicle cost. The overlay also shows the amount after ZUS.", "Коли ввімкнено, PLN/h і PLN/km рахуються після ZUS та витрат авто.", "Когда включено, PLN/h и PLN/km считаются после ZUS и расходов авто."),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        SectionCard(step = "LISTY", title = tx(language, "Czarne listy", "Blocklists", "Чорні списки", "Черные списки")) {
+            Text(
+                tx(language, "Wpisz po jednej nazwie w linii. Jeśli nazwa pojawi się na ofercie, panel pokaże czerwone ostrzeżenie.", "Enter one name per line. If it appears in an offer, the overlay shows a red warning.", "Вводьте одну назву в рядку. При збігу панель покаже червоне попередження.", "Вводите одно имя в строке. При совпадении панель покажет красное предупреждение."),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            OutlinedTextField(
+                value = restaurantBlacklist,
+                onValueChange = {
+                    restaurantBlacklist = it
+                    prefs.restaurantBlacklistText = it
+                },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text(tx(language, "Fujarne restauracje", "Blocked restaurants", "Небажані ресторани", "Нежелательные рестораны")) },
+                placeholder = { Text("McDonald's Orunia Górna\nRestauracja XYZ") },
+                minLines = 3,
+                maxLines = 5
+            )
+            OutlinedTextField(
+                value = customerBlacklist,
+                onValueChange = {
+                    customerBlacklist = it
+                    prefs.customerBlacklistText = it
+                },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text(tx(language, "Fujarni odbiorcy", "Blocked customers", "Небажані клієнти", "Нежелательные получатели")) },
+                placeholder = { Text(tx(language, "Imię i nazwisko odbiorcy", "Customer name", "Ім'я клієнта", "Имя получателя")) },
+                minLines = 3,
+                maxLines = 5
+            )
+            Text(
+                tx(language, "Dopasowanie ignoruje wielkość liter i polskie znaki. Dane zostają tylko w telefonie.", "Matching ignores letter case and diacritics. The lists stay on your phone.", "Регістр і діакритика не мають значення. Списки лишаються на телефоні.", "Регистр и диакритика не имеют значения. Списки остаются на телефоне."),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
         SectionCard(step = "PANEL", title = tx(language, "Nakładka oferty", "Offer overlay", "Накладка пропозиції", "Накладка предложения")) {
             Text(
-                tx(language, "Domyślnie pokazujemy tylko zarobek na godzinę i na kilometr.", "By default only hourly and per-km earnings are shown.", "Типово показуємо лише заробіток за годину і км.", "По умолчанию показываем только заработок за час и км."),
+                tx(language, "Domyślnie pokazujemy tylko PLN/h i PLN/km. Przycisk „−” na panelu chowa go do małego przycisku FUJARA, żeby podejrzeć trasę.", "By default only PLN/h and PLN/km are shown. The “−” button collapses the overlay to a small FUJARA button so you can inspect the route.", "Типово показуємо PLN/h і PLN/km. Кнопка «−» згортає панель.", "По умолчанию показываем PLN/h и PLN/km. Кнопка «−» сворачивает панель."),
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             SwitchRow("PLN/h", showHourly) {
@@ -1023,7 +1157,7 @@ private fun SettingsScreen(
         TextButton(onClick = { uriHandler.openUri("https://alekwq1.github.io/Apka/privacy.html") }, modifier = Modifier.fillMaxWidth()) {
             Text(tx(language, "Polityka prywatności", "Privacy policy", "Політика конфіденційності", "Политика конфиденциальности"))
         }
-        Text("FUJARA 0.7.7", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+        Text("FUJARA 0.8.0", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
     }
 }
 

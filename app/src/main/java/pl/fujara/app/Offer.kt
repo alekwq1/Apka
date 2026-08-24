@@ -23,9 +23,15 @@ enum class ProfitabilityStatus {
 
 data class Profitability(
     val grossPln: Double,
+    /** Kwota po odjeciu ustawionego procentu ZUS, ale przed kosztem pojazdu. */
+    val afterZusPln: Double,
+    /** Realny wynik uzywany do stawek: po ZUS (jesli wlaczony) i po koszcie pojazdu. */
     val netPln: Double,
     val distanceKm: Double,
+    /** Calkowity czas uzyty do kalkulacji, lacznie z zapasem uzytkownika. */
     val durationMinutes: Int?,
+    val extraTimeMinutes: Int,
+    val zusPercent: Double,
     val netPerKm: Double?,
     val netPerHour: Double?,
     val profitable: Boolean?,
@@ -34,3 +40,11 @@ data class Profitability(
     val deliveryTimeMinutesOfDay: Int?,
     val durationSource: DurationSource
 )
+
+data class BlacklistHits(
+    val restaurant: String? = null,
+    val customer: String? = null
+) {
+    val hasAny: Boolean
+        get() = restaurant != null || customer != null
+}

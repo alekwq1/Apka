@@ -37,6 +37,11 @@ class OverlayController(
     private var rateRow: MetricRow? = null
     private var scheduleText: TextView? = null
     private var timeSourceText: TextView? = null
+    private var zusText: TextView? = null
+    private var blacklistText: TextView? = null
+    private var collapseRoot: TextView? = null
+    private var restoreRoot: TextView? = null
+    private var userCollapsed = false
     private var overlayLanguage = ""
     private var fujaraGauge: FujaraGaugeView? = null
 
@@ -50,7 +55,8 @@ class OverlayController(
     fun show(
         result: Profitability,
         applicationName: String,
-        applicationIcon: Drawable?
+        applicationIcon: Drawable?,
+        blacklistHits: BlacklistHits = BlacklistHits()
     ) {
         val language = prefs.languageCode
         if (root == null || overlayLanguage != language) {
@@ -59,12 +65,13 @@ class OverlayController(
             overlayLanguage = language
         }
 
-        val accent = when (result.status) {
+        val profitabilityAccent = when (result.status) {
             ProfitabilityStatus.PROFITABLE -> green
             ProfitabilityStatus.ALMOST_PROFITABLE -> yellow
             ProfitabilityStatus.UNPROFITABLE -> red
             ProfitabilityStatus.NO_TIME -> amber
         }
+        val accent = if (blacklistHits.hasAny) red else profitabilityAccent
 
         appName?.text = applicationName
 
@@ -76,11 +83,15 @@ class OverlayController(
         }
 
         status?.apply {
-            text = when (result.status) {
-                ProfitabilityStatus.PROFITABLE -> tr(language, "DOBRA", "GOOD", "ДОБРЕ", "ХОРОШО")
-                ProfitabilityStatus.ALMOST_PROFITABLE -> tr(language, "NA STYK", "BORDERLINE", "НА МЕЖІ", "НА ГРАНИ")
-                ProfitabilityStatus.UNPROFITABLE -> tr(language, "SŁABA", "POOR", "СЛАБА", "СЛАБАЯ")
-                ProfitabilityStatus.NO_TIME -> tr(language, "BRAK CZASU", "NO TIME", "НЕМАЄ ЧАСУ", "НЕТ ВРЕМЕНИ")
+            text = if (blacklistHits.hasAny) {
+                tr(language, "CZARNA LISTA", "BLOCKLIST", "ЧОРНИЙ СПИСОК", "ЧЕРНЫЙ СПИСОК")
+            } else {
+                when (result.status) {
+                    ProfitabilityStatus.PROFITABLE -> tr(language, "DOBRA", "GOOD", "ДОБРЕ", "ХОРОШО")
+                    ProfitabilityStatus.ALMOST_PROFITABLE -> tr(language, "NA STYK", "BORDERLINE", "НА МЕЖІ", "НА ГРАНИ")
+                    ProfitabilityStatus.UNPROFITABLE -> tr(language, "SŁABA", "POOR", "СЛАБА", "СЛАБАЯ")
+                    ProfitabilityStatus.NO_TIME -> tr(language, "BRAK CZASU", "NO TIME", "НЕМАЄ ЧАСУ", "НЕТ ВРЕМЕНИ")
+                }
             }
             setTextColor(accent)
             background = pillBackground(accent)
@@ -88,6 +99,32 @@ class OverlayController(
 
         amountRow?.leftValue?.text = earningMoney(result.grossPln, language)
         amountRow?.rightValue?.text = earningMoney(result.netPln, language)
+
+        blacklistText?.apply {
+            val warnings = buildList {
+                blacklistHits.restaurant?.let {
+                    add(tr(language, "Restauracja: $it", "Restaurant: $it", "Ресторан: $it", "Ресторан: $it"))
+                }
+                blacklistHits.customer?.let {
+                    add(tr(language, "Odbiorca: $it", "Customer: $it", "Клієнт: $it", "Получатель: $it"))
+                }
+            }
+            text = warnings.joinToString("  •  ")
+            visibility = if (warnings.isNotEmpty()) View.VISIBLE else View.GONE
+        }
+
+        zusText?.apply {
+            text = if (result.zusPercent > 0.0) {
+                tr(
+                    language,
+                    "Po ZUS ${earningMoney(result.afterZusPln, language)} (${num(result.zusPercent, language)}%)",
+                    "After ZUS ${earningMoney(result.afterZusPln, language)} (${num(result.zusPercent, language)}%)",
+                    "Після ZUS ${earningMoney(result.afterZusPln, language)} (${num(result.zusPercent, language)}%)",
+                    "После ZUS ${earningMoney(result.afterZusPln, language)} (${num(result.zusPercent, language)}%)"
+                )
+            } else ""
+            visibility = if (result.zusPercent > 0.0) View.VISIBLE else View.GONE
+        }
         distanceRow?.leftValue?.text = "${num(result.distanceKm, language)} km"
         distanceRow?.rightValue?.text = result.durationMinutes?.let { "$it min" } ?: "--"
         rateRow?.leftValue?.text = result.netPerHour?.let { compactRateText(hourlyMoney(it, language), "zł/h") } ?: "--"
@@ -95,9 +132,9 @@ class OverlayController(
 
         applyFontScale()
 
-        amountRow?.rightValue?.setTextColor(accent)
-        rateRow?.leftValue?.setTextColor(if (result.netPerHour != null) accent else gray)
-        rateRow?.rightValue?.setTextColor(if (result.netPerKm != null) accent else gray)
+        amountRow?.rightValue?.setTextColor(profitabilityAccent)
+        rateRow?.leftValue?.setTextColor(if (result.netPerHour != null) profitabilityAccent else gray)
+        rateRow?.rightValue?.setTextColor(if (result.netPerKm != null) profitabilityAccent else gray)
         amountRow?.leftValue?.setTextColor(white)
         distanceRow?.leftValue?.setTextColor(white)
         distanceRow?.rightValue?.setTextColor(if (result.durationMinutes != null) white else amber)
@@ -125,33 +162,59 @@ class OverlayController(
         }
 
         timeSourceText?.apply {
-            text = when (result.durationSource) {
+            val sourceLabel = when (result.durationSource) {
                 DurationSource.DIRECT_TOTAL -> tr(language, "czas z oferty", "time from offer", "час з пропозиції", "время из предложения")
                 DurationSource.PLANNED_DELIVERY -> tr(language, "czas: teraz → planowana dostawa", "time: now → planned delivery", "час: зараз → планова доставка", "время: сейчас → плановая доставка")
                 DurationSource.UNKNOWN -> tr(language, "brak wiarygodnego czasu dostawy", "no reliable delivery time", "немає надійного часу доставки", "нет надежного времени доставки")
             }
+            val bufferLabel = if (result.extraTimeMinutes > 0 && result.durationMinutes != null) {
+                tr(
+                    language,
+                    " + ${result.extraTimeMinutes} min zapasu",
+                    " + ${result.extraTimeMinutes} min buffer",
+                    " + ${result.extraTimeMinutes} хв запасу",
+                    " + ${result.extraTimeMinutes} мин запаса"
+                )
+            } else ""
+            text = sourceLabel + bufferLabel
             setTextColor(if (result.durationSource == DurationSource.UNKNOWN) amber else gray)
             visibility = if (prefs.showTime) View.VISIBLE else View.GONE
         }
 
         fujaraGauge?.setStatus(result.status)
         root?.background = panelBackground(accent, prefs.overlayOpacityPercent)
-        root?.visibility = View.VISIBLE
+        if (userCollapsed) {
+            root?.visibility = View.GONE
+            collapseRoot?.visibility = View.GONE
+            restoreRoot?.visibility = View.VISIBLE
+        } else {
+            root?.visibility = View.VISIBLE
+            collapseRoot?.visibility = View.VISIBLE
+            restoreRoot?.visibility = View.GONE
+        }
     }
 
     fun hide() {
+        userCollapsed = false
         root?.visibility = View.GONE
+        collapseRoot?.visibility = View.GONE
+        restoreRoot?.visibility = View.GONE
     }
 
-    fun isVisible(): Boolean = root?.visibility == View.VISIBLE
+    fun isVisible(): Boolean =
+        root?.visibility == View.VISIBLE || restoreRoot?.visibility == View.VISIBLE
 
     fun destroy() {
         removeOverlayView()
     }
 
     fun screenBounds(): Rect? {
-        val view = root ?: return null
-        if (view.visibility != View.VISIBLE || view.width <= 0 || view.height <= 0) return null
+        val view = when {
+            root?.visibility == View.VISIBLE -> root
+            restoreRoot?.visibility == View.VISIBLE -> restoreRoot
+            else -> null
+        } ?: return null
+        if (view.width <= 0 || view.height <= 0) return null
 
         val location = IntArray(2)
         view.getLocationOnScreen(location)
@@ -165,10 +228,16 @@ class OverlayController(
 
     private fun removeOverlayView() {
         root?.let { runCatching { windowManager.removeView(it) } }
+        collapseRoot?.let { runCatching { windowManager.removeView(it) } }
+        restoreRoot?.let { runCatching { windowManager.removeView(it) } }
         root = null
+        collapseRoot = null
+        restoreRoot = null
         amountRow = null
         distanceRow = null
         rateRow = null
+        zusText = null
+        blacklistText = null
         fujaraGauge = null
     }
 
@@ -244,6 +313,14 @@ class OverlayController(
             maxLines = 1
         }
         header.addView(status)
+
+        // Rezerwujemy miejsce na przycisk. Sam panel pozostaje NOT_TOUCHABLE,
+        // a maly przycisk jest osobnym oknem - dzieki temu panel nie blokuje
+        // klikniec mapy/akceptacji pod soba.
+        header.addView(
+            View(service),
+            LinearLayout.LayoutParams(dp(30), dp(30))
+        )
         panel.addView(header)
 
         val divider = View(service).apply { setBackgroundColor(Color.rgb(48, 53, 60)) }
@@ -255,10 +332,32 @@ class OverlayController(
             }
         )
 
+        blacklistText = TextView(service).apply {
+            textSize = 8.5f
+            setTextColor(red)
+            setTypeface(typeface, Typeface.BOLD)
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+            visibility = View.GONE
+            setPadding(dp(5), dp(4), dp(5), dp(7))
+            background = pillBackground(red)
+        }
+        panel.addView(blacklistText)
+
         amountRow = metricRow(
             tr(language, "KWOTA", "AMOUNT", "СУМА", "СУММА"),
             tr(language, "PO KOSZTACH", "AFTER COSTS", "ПІСЛЯ ВИТРАТ", "ПОСЛЕ РАСХОДОВ")
         ).also { panel.addView(it.row) }
+
+        zusText = TextView(service).apply {
+            textSize = 8f
+            setTextColor(gray)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            visibility = View.GONE
+            setPadding(dp(3), dp(1), dp(3), dp(5))
+        }
+        panel.addView(zusText)
 
         rateRow = metricRow(
             "PLN/H",
@@ -309,6 +408,74 @@ class OverlayController(
 
         windowManager.addView(panel, params)
         root = panel
+
+        val collapse = TextView(service).apply {
+            text = "−"
+            textSize = 17f
+            gravity = Gravity.CENTER
+            setTextColor(white)
+            setTypeface(typeface, Typeface.BOLD)
+            background = pillBackground(gray)
+            isClickable = true
+            isFocusable = false
+            contentDescription = tr(language, "Ukryj panel", "Hide panel", "Сховати панель", "Скрыть панель")
+            setOnClickListener {
+                userCollapsed = true
+                panel.visibility = View.GONE
+                visibility = View.GONE
+                restoreRoot?.visibility = View.VISIBLE
+            }
+        }
+        val collapseParams = WindowManager.LayoutParams(
+            dp(30),
+            dp(30),
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.END
+            x = dp(11)
+            y = dp(66)
+        }
+        windowManager.addView(collapse, collapseParams)
+        collapseRoot = collapse
+
+        val restore = TextView(service).apply {
+            text = "FUJARA  👁"
+            textSize = 10f
+            gravity = Gravity.CENTER
+            setTextColor(white)
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(dp(9), dp(7), dp(9), dp(7))
+            background = panelBackground(green, prefs.overlayOpacityPercent)
+            visibility = View.GONE
+            isClickable = true
+            isFocusable = false
+            contentDescription = tr(language, "Pokaż panel FUJARA", "Show FUJARA panel", "Показати панель FUJARA", "Показать панель FUJARA")
+            setOnClickListener {
+                userCollapsed = false
+                visibility = View.GONE
+                panel.visibility = View.VISIBLE
+                collapseRoot?.visibility = View.VISIBLE
+            }
+        }
+        val restoreParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.END
+            x = dp(8)
+            y = dp(58)
+        }
+        windowManager.addView(restore, restoreParams)
+        restoreRoot = restore
     }
 
     private fun metricRow(

@@ -187,4 +187,43 @@ class ProfitabilityCalculatorTest {
         assertEquals(ProfitabilityStatus.NO_TIME, result.status)
     }
 
+    @Test
+    fun extraTimeBufferLowersHourlyRate() {
+        val result = ProfitabilityCalculator.calculate(
+            offer = Offer(
+                amountPln = 20.0,
+                distanceKm = 4.0,
+                durationMinutes = 20
+            ),
+            rules = ProfitabilityCalculator.Rules(
+                vehicleCostPerKm = 0.0,
+                extraTimeMinutes = 10
+            ),
+            currentMinuteOfDay = 12 * 60
+        )
+
+        assertEquals(30, result.durationMinutes)
+        assertEquals(10, result.extraTimeMinutes)
+        assertEquals(40.0, result.netPerHour!!, 0.001)
+    }
+
+    @Test
+    fun zusPercentageIsAppliedBeforeVehicleCost() {
+        val result = ProfitabilityCalculator.calculate(
+            offer = Offer(
+                amountPln = 20.0,
+                distanceKm = 4.0,
+                durationMinutes = 20
+            ),
+            rules = ProfitabilityCalculator.Rules(vehicleCostPerKm = 0.5),
+            currentMinuteOfDay = 12 * 60,
+            zusPercent = 25.0
+        )
+
+        assertEquals(15.0, result.afterZusPln, 0.001)
+        assertEquals(13.0, result.netPln, 0.001)
+        assertEquals(25.0, result.zusPercent, 0.001)
+        assertEquals(39.0, result.netPerHour!!, 0.001)
+    }
+
 }

@@ -1,6 +1,13 @@
 package pl.fujara.app
 
+import android.Manifest
 import android.accessibilityservice.AccessibilityService
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -37,6 +44,8 @@ class DeliveryAccessibilityService : AccessibilityService() {
     private var lastScreenshotRequestAt = 0L
     private var lastDeliverySignalAt = 0L
     private var lastDeliveryPackage = ""
+    private var lastNotificationActive: Boolean? = null
+    private var lastNotificationLanguage: String? = null
 
     private val scanIntervalMs = 1200L
     private val minimumScreenshotGapMs = 700L
@@ -54,6 +63,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
         prefs = AppPrefs(this)
         overlay = OverlayController(this)
         recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+        updateStatusNotification(prefs.analysisEnabled)
         handler.postDelayed(pollRunnable, 600L)
     }
 
@@ -61,9 +71,11 @@ class DeliveryAccessibilityService : AccessibilityService() {
         event ?: return
 
         if (!prefs.analysisEnabled) {
+            updateStatusNotification(false)
             if (::overlay.isInitialized) overlay.hide()
             return
         }
+        updateStatusNotification(true)
 
         val eventPackage = event.packageName?.toString().orEmpty()
         if (eventPackage == packageName) return
@@ -109,6 +121,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
         recognizer?.close()
         recognizer = null
         if (::overlay.isInitialized) overlay.destroy()
+        runCatching { getSystemService(NotificationManager::class.java).cancel(STATUS_NOTIFICATION_ID) }
         super.onDestroy()
     }
 
@@ -116,9 +129,11 @@ class DeliveryAccessibilityService : AccessibilityService() {
         if (ocrBusy) return
 
         if (!prefs.analysisEnabled) {
+            updateStatusNotification(false)
             if (::overlay.isInitialized) overlay.hide()
             return
         }
+        updateStatusNotification(true)
 
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             if (!scanAccessibilityOnly(hideOnFailure = false)) registerMiss()
@@ -299,6 +314,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
                     showOffer(
                         offer = offer,
                         applicationName = recognizedName,
+                        sourceText = recognitionText,
                         packageName = if (
                             isGalleryPackage(sourcePackageName) ||
                             packagePlatform == null ||
@@ -477,6 +493,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
                 packageName = pkg,
                 applicationName = applicationName ?: appLabel(pkg),
                 offer = offer,
+                sourceText = text,
                 score = score
             )
         }
@@ -487,7 +504,8 @@ class DeliveryAccessibilityService : AccessibilityService() {
             showOffer(
                 offer = selected.offer,
                 applicationName = selected.applicationName,
-                packageName = selected.packageName
+                packageName = selected.packageName,
+                sourceText = selected.sourceText
             )
             return true
         }
@@ -513,7 +531,8 @@ class DeliveryAccessibilityService : AccessibilityService() {
                         showOffer(
                             offer = offer,
                             applicationName = applicationName ?: appLabel(pkg),
-                            packageName = pkg
+                            packageName = pkg,
+                            sourceText = text
                         )
                         return true
                     }
@@ -635,7 +654,8 @@ class DeliveryAccessibilityService : AccessibilityService() {
     private fun showOffer(
         offer: Offer,
         applicationName: String,
-        packageName: String = ""
+        packageName: String = "",
+        sourceText: String = ""
     ) {
         val rules = prefs.rulesForCourier(applicationName)
 
@@ -645,13 +665,15 @@ class DeliveryAccessibilityService : AccessibilityService() {
             offer = offer,
             rules = rules,
             currentMinuteOfDay = currentMinuteOfDay,
-            decisionBasis = prefs.decisionBasis
+            decisionBasis = prefs.decisionBasis,
+            zusPercent = if (prefs.zusEnabled) prefs.zusPercent else 0.0
         )
 
         overlay.show(
             result = result,
             applicationName = applicationName,
-            applicationIcon = resolveIcon(applicationName, packageName)
+            applicationIcon = resolveIcon(applicationName, packageName),
+            blacklistHits = prefs.findBlacklistHits(sourceText)
         )
     }
 
@@ -680,13 +702,22 @@ class DeliveryAccessibilityService : AccessibilityService() {
     private fun inferPlatformFromText(text: String): CourierPlatform? {
         val lower = text.lowercase()
         return when {
-            "estimated earnings" in lower && (" mi total" in lower || "stuart" in lower) -> CourierPlatform.STUART
+            (("estimated earnings" in lower && (" mi total" in lower || "stuart" in lower)) ||
+                ("szacowane zarob" in lower && "km total" in lower) ||
+                ("szacowane zarob" in lower && "stuart" in lower)) -> CourierPlatform.STUART
             "expected earnings for the full delivery" in lower -> CourierPlatform.WOLT
-            "spodziewany zarobek" in lower || ("całkowita kwota reszty" in lower && "akceptuj" in lower) -> CourierPlatform.WOLT
+            "spodziewany zarobek" in lower ||
+                "spodziewany zarobek za pełną dostawę" in lower ||
+                ("szacowane zarobki" in lower && "km total" !in lower) ||
+                ("całkowita kwota reszty" in lower && "akceptuj" in lower) -> CourierPlatform.WOLT
             "route distance" in lower && "estimated" in lower && "accept" in lower && "pln" in lower -> CourierPlatform.WOLT
-            "zaakceptuj zlecenie" in lower || ("odbierz na" in lower && "dostarcz na" in lower) -> CourierPlatform.PYSZNE
+            "zaakceptuj zlecenie" in lower ||
+                ("odbierz na" in lower && "dostarcz na" in lower) ||
+                ("accept" in lower && ("pickup" in lower || "pick up" in lower) && "deliver" in lower) -> CourierPlatform.PYSZNE
             "bolt food" in lower || (Regex("""\d+[.,]?\d*\s*km\s*[,·|]\s*\d+\s*min\s*[,·|]\s*\d+[.,]\d{1,2}\s*z[łl]""", RegexOption.IGNORE_CASE).containsMatchIn(text)) -> CourierPlatform.BOLT
-            "delivery" in lower && "confirm" in lower && "pln" in lower -> CourierPlatform.UBER
+            (("delivery" in lower || "dostawa" in lower) &&
+                ("confirm" in lower || "łącznie" in lower || "lacznie" in lower || "stops" in lower || "przystank" in lower) &&
+                ("pln" in lower || "zł" in lower || "zl" in lower)) -> CourierPlatform.UBER
             "wolt" in lower -> CourierPlatform.WOLT
             "glovo" in lower -> CourierPlatform.GLOVO
             else -> null
@@ -763,6 +794,82 @@ class DeliveryAccessibilityService : AccessibilityService() {
             packageManager.getApplicationLabel(info).toString()
         }.getOrDefault("Dostawa")
 
+    private fun updateStatusNotification(active: Boolean) {
+        val language = prefs.languageCode
+        val notificationPermissionGranted =
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+
+        // Nie zapamiętujemy stanu, dopóki Android 13+ nie da zgody. Dzięki temu
+        // po zaakceptowaniu dialogu następny skan od razu opublikuje ikonę/status.
+        if (!notificationPermissionGranted) {
+            lastNotificationActive = null
+            lastNotificationLanguage = null
+            return
+        }
+        if (lastNotificationActive == active && lastNotificationLanguage == language) return
+
+        val manager = getSystemService(NotificationManager::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            manager.createNotificationChannel(
+                NotificationChannel(
+                    STATUS_CHANNEL_ID,
+                    "FUJARA - status odczytu",
+                    NotificationManager.IMPORTANCE_LOW
+                ).apply {
+                    description = "Stała informacja, czy FUJARA odczytuje oferty."
+                    setShowBadge(false)
+                }
+            )
+        }
+
+        val openApp = PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val title = if (active) {
+            trStatus(language, "FUJARA działa", "FUJARA is running", "FUJARA працює", "FUJARA работает")
+        } else {
+            trStatus(language, "FUJARA wstrzymana", "FUJARA paused", "FUJARA призупинена", "FUJARA приостановлена")
+        }
+        val body = if (active) {
+            trStatus(language, "Odczyt ofert jest aktywny", "Offer reading is active", "Читання пропозицій активне", "Чтение предложений активно")
+        } else {
+            trStatus(language, "Włącz analizę w aplikacji, aby odczytywać oferty", "Enable analysis in the app to read offers", "Увімкніть аналіз у застосунку", "Включите анализ в приложении")
+        }
+
+        val notification = Notification.Builder(this, STATUS_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_fujara_app)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setContentIntent(openApp)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setCategory(Notification.CATEGORY_SERVICE)
+            .build()
+
+        // Android 13+ wymaga zgody na powiadomienia. Activity prosi o nia po
+        // konfiguracji; jesli user odmowi, analiza nadal dziala normalnie.
+        runCatching { manager.notify(STATUS_NOTIFICATION_ID, notification) }
+            .onSuccess {
+                lastNotificationActive = active
+                lastNotificationLanguage = language
+            }
+    }
+
+    private fun trStatus(language: String, pl: String, en: String, uk: String, ru: String): String =
+        when (language) {
+            "en" -> en
+            "uk" -> uk
+            "ru" -> ru
+            else -> pl
+        }
+
     private fun registerMiss() {
         misses++
 
@@ -786,6 +893,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
         val packageName: String,
         val applicationName: String,
         val offer: Offer,
+        val sourceText: String,
         val score: Int
     )
 
@@ -802,4 +910,9 @@ class DeliveryAccessibilityService : AccessibilityService() {
         val top: Int,
         val left: Int
     )
+
+    private companion object {
+        const val STATUS_CHANNEL_ID = "fujara_status"
+        const val STATUS_NOTIFICATION_ID = 7811
+    }
 }

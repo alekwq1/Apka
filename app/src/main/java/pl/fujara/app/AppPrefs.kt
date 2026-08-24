@@ -31,6 +31,10 @@ class AppPrefs(private val context: Context) {
         get() = prefs.getString("target_package", "") ?: ""
         set(value) = prefs.edit().putString("target_package", value.trim()).apply()
 
+    var notificationPermissionRequested: Boolean
+        get() = prefs.getBoolean("notification_permission_requested", false)
+        set(value) = prefs.edit().putBoolean("notification_permission_requested", value).apply()
+
     /**
      * Jezyk nie jest na sztywno ustawiony na polski. Dopoki uzytkownik sam go
      * nie zmieni, bierzemy obslugiwany jezyk systemu telefonu.
@@ -84,6 +88,24 @@ class AppPrefs(private val context: Context) {
         get() = prefs.getBoolean("round_earnings", true)
         set(value) = prefs.edit().putBoolean("round_earnings", value).apply()
 
+    /** Globalny procent potrącenia na ZUS. Gdy funkcja jest wyłączona, kalkulator używa 0%. */
+    var zusEnabled: Boolean
+        get() = prefs.getBoolean("zus_enabled", false)
+        set(value) = prefs.edit().putBoolean("zus_enabled", value).apply()
+
+    var zusPercent: Double
+        get() = getDouble("zus_percent", 0.0).coerceIn(0.0, 100.0)
+        set(value) = putDouble("zus_percent", value.coerceIn(0.0, 100.0))
+
+    /** Jedna nazwa na linię. Dopasowanie jest niewrażliwe na wielkość liter i polskie znaki. */
+    var restaurantBlacklistText: String
+        get() = prefs.getString("blacklist_restaurants", "") ?: ""
+        set(value) = prefs.edit().putString("blacklist_restaurants", value).apply()
+
+    var customerBlacklistText: String
+        get() = prefs.getString("blacklist_customers", "") ?: ""
+        set(value) = prefs.edit().putString("blacklist_customers", value).apply()
+
     var vehicleCostPerKm: Double
         get() = getDouble("vehicle_cost_km", 0.35)
         set(value) = putDouble("vehicle_cost_km", value)
@@ -106,12 +128,17 @@ class AppPrefs(private val context: Context) {
         get() = getDouble("tolerance_net_hour", 20.0)
         set(value) = putDouble("tolerance_net_hour", value)
 
+    var extraTimeMinutes: Int
+        get() = getInt("extra_time_minutes", 0).coerceIn(0, 120)
+        set(value) = prefs.edit().putInt("extra_time_minutes", value.coerceIn(0, 120)).apply()
+
     fun globalRules(): ProfitabilityCalculator.Rules = ProfitabilityCalculator.Rules(
         vehicleCostPerKm = vehicleCostPerKm,
         minimumNetPerKm = minimumNetPerKm,
         toleranceNetPerKm = toleranceNetPerKm,
         minimumNetPerHour = minimumNetPerHour,
-        toleranceNetPerHour = toleranceNetPerHour
+        toleranceNetPerHour = toleranceNetPerHour,
+        extraTimeMinutes = extraTimeMinutes
     )
 
     fun rulesForPlatform(platform: CourierPlatform): ProfitabilityCalculator.Rules {
@@ -127,7 +154,8 @@ class AppPrefs(private val context: Context) {
             minimumNetPerKm = getDouble(prefix + "km", global.minimumNetPerKm),
             toleranceNetPerKm = getDouble(prefix + "km_tolerance", global.toleranceNetPerKm),
             minimumNetPerHour = getDouble(prefix + "hour", global.minimumNetPerHour),
-            toleranceNetPerHour = getDouble(prefix + "hour_tolerance", global.toleranceNetPerHour)
+            toleranceNetPerHour = getDouble(prefix + "hour_tolerance", global.toleranceNetPerHour),
+            extraTimeMinutes = getInt(prefix + "extra_minutes", global.extraTimeMinutes).coerceIn(0, 120)
         )
     }
 
@@ -149,6 +177,7 @@ class AppPrefs(private val context: Context) {
             toleranceNetPerKm = rules.toleranceNetPerKm
             minimumNetPerHour = rules.minimumNetPerHour
             toleranceNetPerHour = rules.toleranceNetPerHour
+            extraTimeMinutes = rules.extraTimeMinutes
             return
         }
 
@@ -160,6 +189,7 @@ class AppPrefs(private val context: Context) {
             .putString(prefix + "km_tolerance", rules.toleranceNetPerKm.toString())
             .putString(prefix + "hour", rules.minimumNetPerHour.toString())
             .putString(prefix + "hour_tolerance", rules.toleranceNetPerHour.toString())
+            .putInt(prefix + "extra_minutes", rules.extraTimeMinutes.coerceIn(0, 120))
             .apply()
     }
 
@@ -168,13 +198,17 @@ class AppPrefs(private val context: Context) {
         prefs.edit().putBoolean("rules_${platform.key}_custom", false).apply()
     }
 
+    fun findBlacklistHits(screenText: String): BlacklistHits =
+        BlacklistMatcher.findHits(
+            screenText = screenText,
+            restaurantsRaw = restaurantBlacklistText,
+            customersRaw = customerBlacklistText
+        )
+
     /**
      * 0.7.7: nowe domyslne zakresy z testow terenowych:
      * PLN/km: nieoplacalna < 2.00, na granicy 2.00-3.00, oplacalna >= 3.00
      * PLN/h:  nieoplacalna < 30,   na granicy 30-50,   oplacalna >= 50
-     *
-     * Aktualizujemy istniejaca instalacje tylko wtedy, gdy uzytkownik nadal ma
-     * komplet starych wartosci domyslnych. Wlasne ustawienia pozostaja bez zmian.
      */
     private fun migrateProfitabilityDefaultsV077() {
         if (prefs.getBoolean("profitability_defaults_v077_applied", false)) return
@@ -248,6 +282,14 @@ class AppPrefs(private val context: Context) {
         return when (val stored = prefs.all[key]) {
             is Number -> stored.toDouble()
             is String -> stored.toDoubleOrNull() ?: defaultValue
+            else -> defaultValue
+        }
+    }
+
+    private fun getInt(key: String, defaultValue: Int): Int {
+        return when (val stored = prefs.all[key]) {
+            is Number -> stored.toInt()
+            is String -> stored.toIntOrNull() ?: defaultValue
             else -> defaultValue
         }
     }

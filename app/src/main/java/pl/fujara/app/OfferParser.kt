@@ -48,7 +48,7 @@ object OfferParser {
         RegexOption.IGNORE_CASE
     )
     private val pickupTimeRegex = Regex(
-        """(?:odbierz\w*|pick\s*up|pickup)\s*(?:na|do|by)?\s*(\d{1,2})$CLOCK_SEPARATOR(\d{2})""",
+        """(?:odbierz\w*|pick\s*up|pickup)\s*(?:na|do|by|at)?\s*(\d{1,2})$CLOCK_SEPARATOR(\d{2})""",
         RegexOption.IGNORE_CASE
     )
     private val deliveryCompactTimeRegex = Regex(
@@ -56,7 +56,7 @@ object OfferParser {
         RegexOption.IGNORE_CASE
     )
     private val pickupCompactTimeRegex = Regex(
-        """(?:odbierz\w*|pick\s*up|pickup)\s*(?:na|do|by)?\s*(\d{3,4})(?!\d)""",
+        """(?:odbierz\w*|pick\s*up|pickup)\s*(?:na|do|by|at)?\s*(\d{3,4})(?!\d)""",
         RegexOption.IGNORE_CASE
     )
 
@@ -74,21 +74,27 @@ object OfferParser {
         """(?is)(\d{1,3}(?:[.,]\d{1,2})?)\s*$KM\s*[,·|]\s*(\d{1,3})\s*$MIN\s*[,·|]\s*(\d{1,4}(?:[.,]\d{1,2})?)\s*(?:$CURRENCY)"""
     )
 
+    private const val EARNINGS_LABEL =
+        """(?:spodziewan\w*\s+zarob\w*|szacowan\w*\s+zarob\w*|estimated\s+earnings|expected\s+earnings)"""
+
     private val woltPrefixedAmountBeforeLabelRegex = Regex(
-        """(?is)(?:$CURRENCY)[\t ]*(\d{1,4}(?:[.,]\d{1,2})?)[\s\S]{0,140}?(?:spodziewany\s+zarobek|estimated\s+earnings|expected\s+earnings)"""
+        """(?is)(?:$CURRENCY)[\t ]*(\d{1,4}(?:[.,]\d{1,2})?)[\s\S]{0,160}?$EARNINGS_LABEL"""
     )
     private val woltAmountBeforeLabelRegex = Regex(
-        """(?is)(\d{1,4}(?:[.,]\d{1,2})?)[\t ]*(?:$CURRENCY)[\s\S]{0,120}?(?:spodziewany\s+zarobek|estimated\s+earnings|expected\s+earnings)"""
+        """(?is)(\d{1,4}(?:[.,]\d{1,2})?)[\t ]*(?:$CURRENCY)[\s\S]{0,160}?$EARNINGS_LABEL"""
     )
     private val woltAmountAfterLabelRegex = Regex(
-        """(?is)(?:spodziewany\s+zarobek|estimated\s+earnings|expected\s+earnings)[\s\S]{0,120}?(\d{1,4}(?:[.,]\d{1,2})?)\s*(?:$CURRENCY)"""
+        """(?is)$EARNINGS_LABEL[\s\S]{0,140}?(\d{1,4}(?:[.,]\d{1,2})?)\s*(?:$CURRENCY)"""
     )
 
     private val stuartAmountRegex = Regex(
-        """(?is)(\d{1,4}(?:[.,]\d{1,2})?)\s*(?:$CURRENCY)[\s\S]{0,140}?(?:estimated\s+earnings|szacowan\w*\s+zarob\w*)"""
+        """(?is)(\d{1,4}(?:[.,]\d{1,2})?)\s*(?:$CURRENCY)[\s\S]{0,160}?$EARNINGS_LABEL"""
     )
     private val milesTotalRegex = Regex(
-        """(?i)(\d{1,3}(?:[.,]\d{1,2})?)\s*(?:mi|mile|miles)\s*(?:total|łącznie|lacznie)?"""
+        """(?i)(\d{1,3}(?:[.,]\d{1,2})?)\s*(?:mi|miles?)\b\s*(?:total|łącznie|lacznie)?"""
+    )
+    private val stopsDistanceRegex = Regex(
+        """(?i)(\d{1,4}(?:[.,]\d{1,2})?)\s*$KM\s*(?:[·•|,-]\s*)?\d+\s*(?:stops?|przystank\w*)"""
     )
 
     fun parse(text: String, platform: CourierPlatform? = null): Offer? {
@@ -116,7 +122,38 @@ object OfferParser {
         parseUberCard(text, uberDeliveryPrefixedCardRegex)?.let { return it }
         parseUberCard(text, uberDeliveryCardRegex)?.let { return it }
         parseUberCard(text, uberCardRegex)?.let { return it }
+        parseUberStopsCard(text)?.let { return it }
         return null
+    }
+
+
+    private fun parseUberStopsCard(text: String): Offer? {
+        val lower = text.lowercase()
+        val hasUberOfferMarkers =
+            ("pickup" in lower || "pick up" in lower || "odbiór" in lower || "odbior" in lower) &&
+                ("delivery" in lower || "deliver" in lower || "dostawa" in lower)
+        if (!hasUberOfferMarkers) return null
+
+        val distanceMatch = stopsDistanceRegex.find(text) ?: return null
+        val distance = distanceMatch.groupValues.getOrNull(1)?.toNumber() ?: return null
+        if (distance !in 0.01..500.0) return null
+
+        val amount = findAmountMatches(text)
+            .filter { it.explicitCurrency }
+            .filter { it.start <= distanceMatch.range.first }
+            .minByOrNull { distanceMatch.range.first - it.endExclusive }
+            ?.value
+            ?.toNumber()
+            ?: return null
+        if (amount !in 0.01..1000.0) return null
+
+        return Offer(
+            amountPln = amount,
+            distanceKm = distance,
+            durationMinutes = null,
+            pickupTimeMinutesOfDay = findPickupTime(text),
+            deliveryTimeMinutesOfDay = findDeliveryTime(text)
+        )
     }
 
     private fun parseBolt(text: String): Offer? {
@@ -133,7 +170,8 @@ object OfferParser {
     private fun parseWolt(text: String): Offer? {
         val lower = text.lowercase()
         if (
-            "spodziewany zarobek" !in lower &&
+            "spodziewany zarob" !in lower &&
+            "szacowan" !in lower &&
             "estimated earnings" !in lower &&
             "expected earnings" !in lower
         ) return null
@@ -161,15 +199,31 @@ object OfferParser {
 
     private fun parseStuart(text: String): Offer? {
         val lower = text.lowercase()
-        if ("estimated earnings" !in lower && "stuart" !in lower) return null
+        if (
+            "estimated earnings" !in lower &&
+            "expected earnings" !in lower &&
+            "szacowan" !in lower &&
+            "stuart" !in lower
+        ) return null
 
         val amount = stuartAmountRegex.find(text)?.groupValues?.getOrNull(1)?.toNumber()
             ?: findAmountMatches(text).firstOrNull()?.value?.toNumber()
             ?: return null
+
         val miles = milesTotalRegex.find(text)?.groupValues?.getOrNull(1)?.toNumber()
+        val distanceKm = miles?.times(1.609344)
+            ?: distanceRegex.findAll(text)
+                .mapNotNull { it.groupValues.getOrNull(1)?.toNumber() }
+                .filter { it in 0.01..500.0 }
+                .maxOrNull()
             ?: return null
-        val distanceKm = miles * 1.609344
-        val duration = durationRegex.findAll(text)
+
+        val duration = durationRangeRegex.find(text)?.let { range ->
+            listOfNotNull(
+                range.groupValues[1].toIntOrNull(),
+                range.groupValues[2].toIntOrNull()
+            ).maxOrNull()?.takeIf { it in 1..360 }
+        } ?: durationRegex.findAll(text)
             .mapNotNull { it.minutes() }
             .filter { it in 1..360 }
             .maxOrNull()
@@ -184,8 +238,12 @@ object OfferParser {
             "zaakceptuj zlecenie" in lower ||
                 "zaakceptuj zlecen" in lower ||
                 "accept job" in lower ||
+                "accept offer" in lower ||
+                "accept order" in lower ||
                 ("odbierz na" in lower && "dostarcz na" in lower) ||
-                ("pickup" in lower && "delivery" in lower && ("accept" in lower || "dostarcz" in lower))
+                (("pickup" in lower || "pick up" in lower) &&
+                    ("delivery" in lower || "deliver" in lower) &&
+                    "accept" in lower)
 
         // Historia zlecen Pyszne zawiera kwoty, kilometry i godziny, ale nie jest oferta.
         if (!hasOfferMarker) return null

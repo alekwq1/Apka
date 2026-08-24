@@ -348,4 +348,123 @@ class OfferParserTest {
         assertNull(OfferParser.parse(text, CourierPlatform.GLOVO))
     }
 
+    @Test
+    fun woltPolishSzacowaneZarobkiIsParsed() {
+        val text = """
+            17,42zł
+            Szacowane zarobki
+            8,3 km total · Średnia
+            PH - 104259 - 34 Kołobrzeska, Gdańsk
+            Akceptuj
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text, CourierPlatform.WOLT)
+
+        assertNotNull(offer)
+        assertEquals(17.42, offer!!.amountPln, 0.001)
+        assertEquals(8.3, offer.distanceKm, 0.001)
+        assertNull(offer.durationMinutes)
+    }
+
+    @Test
+    fun stuartPolishSzacowaneZarobkiSupportsKilometres() {
+        val text = """
+            17,42zł
+            Szacowane zarobki
+            8,3 km total · Średnia
+            Restauracja Test
+            Klient Test
+            Akceptuj
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text, CourierPlatform.STUART)
+
+        assertNotNull(offer)
+        assertEquals(17.42, offer!!.amountPln, 0.001)
+        assertEquals(8.3, offer.distanceKm, 0.001)
+        assertNull(offer.durationMinutes)
+    }
+
+    @Test
+    fun uberPolishCardWithLacznieBeforeMinutesIsParsed() {
+        val text = """
+            Dostawa
+            11,31 zł
+            Łącznie 20 min (5.1 km)
+            McDonald's Orunia Górna
+            Białostocka & Warszawska, Gdańsk
+            Akceptuj
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text, CourierPlatform.UBER)
+
+        assertNotNull(offer)
+        assertEquals(11.31, offer!!.amountPln, 0.001)
+        assertEquals(5.1, offer.distanceKm, 0.001)
+        assertEquals(20, offer.durationMinutes)
+    }
+
+    @Test
+    fun pyszneEnglishOfferReadsPickupAndDeliveryTimes() {
+        val text = """
+            12,34 PLN
+            3.0 km · 2 stops
+            Pick up: Pierogarnia Jedynka
+            Pick up at 17:33
+            Delivery: Weronika Brzuszkiewicz
+            Deliver at 17:38
+            Accept offer
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text, CourierPlatform.PYSZNE)
+
+        assertNotNull(offer)
+        assertEquals(12.34, offer!!.amountPln, 0.001)
+        assertEquals(3.0, offer.distanceKm, 0.001)
+        assertEquals(17 * 60 + 33, offer.pickupTimeMinutesOfDay)
+        assertEquals(17 * 60 + 38, offer.deliveryTimeMinutesOfDay)
+        assertNull(offer.durationMinutes)
+    }
+
+    @Test
+    fun stuartPolishKilometresAreNotMistakenForMinutesAsMiles() {
+        val text = """
+            13,29 zł
+            Szacowany zarobek za pełną dostawę
+            Dostawa od THAI SUN Express
+            Odległość 4.5 km
+            Szacowany 13 - 16 min
+            Akceptuj
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text, CourierPlatform.STUART)
+
+        assertNotNull(offer)
+        assertEquals(13.29, offer!!.amountPln, 0.001)
+        assertEquals(4.5, offer.distanceKm, 0.001)
+        assertEquals(16, offer.durationMinutes)
+    }
+
+    @Test
+    fun woltPolishFullDeliveryCardIsParsed() {
+        val text = """
+            13,29 zł
+            Spodziewany zarobek za pełną dostawę
+            Dostawa od
+            THAI SUN Express
+            Odległość
+            4.5 km
+            Szacowany
+            13 - 16 min
+            Akceptuj
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text, CourierPlatform.WOLT)
+
+        assertNotNull(offer)
+        assertEquals(13.29, offer!!.amountPln, 0.001)
+        assertEquals(4.5, offer.distanceKm, 0.001)
+        assertEquals(16, offer.durationMinutes)
+    }
+
 }
