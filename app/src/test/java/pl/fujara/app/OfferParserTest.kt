@@ -684,4 +684,72 @@ class OfferParserFieldTest083 {
         assertNotNull(offer)
         assertEquals(25.28, offer!!.amountPln, 0.001)
     }
+
+    @Test
+    fun pyszneDetailsAlwaysUsesSumRevenueWithTip() {
+        val text = """
+            Szczegóły zlecenia
+            Zlecenie przyjęte 21 sierpnia 2026 10:41 PM
+            Zlecenie dostarczone 21 sierpnia 2026 10:57 PM
+            Czas aktywności 15 min 19 sec
+            Szacowana odległość 5,8 km
+            Szczegóły przychodów
+            Stawka bazowa 18,72 zł
+            Dodatkowe korzyści 0,00 zł
+            Przyznany napiwek 3,00 zł
+            Inne 0,00 zł
+            Suma przychodów 21,72 zł
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text, CourierPlatform.PYSZNE)
+
+        assertNotNull(offer)
+        assertEquals(21.72, offer!!.amountPln, 0.001)
+        assertEquals(5.8, offer.distanceKm, 0.001)
+        assertEquals(919, offer.durationSeconds)
+    }
+
+    @Test
+    fun pyszneDetailsUsesLastRevenueAmountWhenOcrSplitsColumns() {
+        val text = """
+            Szczegóły zlecenia
+            Czas aktywności 15 min 19 sec
+            Szacowana odległość 5,8 km
+            Szczegóły przychodów
+            Stawka bazowa
+            Dodatkowe korzyści
+            Przyznany napiwek
+            Inne
+            Suma przychodów
+            18,72 zł
+            0,00 zł
+            3,00 zł
+            0,00 zł
+            21,72 zł
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text, CourierPlatform.PYSZNE)
+
+        assertNotNull(offer)
+        assertEquals(21.72, offer!!.amountPln, 0.001)
+    }
+
+    @Test
+    fun pyszneDetailsNeverFallsBackToBaseRateWhenTotalAmountIsMissing() {
+        val text = """
+            Szczegóły zlecenia
+            Czas aktywności 15 min 19 sec
+            Szacowana odległość 5,8 km
+            Szczegóły przychodów
+            Stawka bazowa 18,72 zł
+            Dodatkowe korzyści 0,00 zł
+            Przyznany napiwek 3,00 zł
+            Inne 0,00 zł
+            Suma przychodów
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text, CourierPlatform.PYSZNE)
+
+        assertNull(offer)
+    }
 }

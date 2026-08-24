@@ -282,7 +282,12 @@ object OfferParser {
     }
 
     private fun parsePyszne(text: String): Offer? {
-        parsePyszneHistoryDetails(text)?.let { return it }
+        // Ekran szczegolow zlecenia musi byc parsowany tylko parserem historii.
+        // Jesli OCR chwilowo nie odczyta "Suma przychodow", NIE wolno spadac
+        // do parseGeneric(), bo ten moze wziac "Stawka bazowa" jako kwote.
+        if (isPyszneHistoryDetails(text)) {
+            return parsePyszneHistoryDetails(text)
+        }
 
         val lower = text.lowercase()
         val hasOfferMarker =
@@ -313,9 +318,25 @@ object OfferParser {
     }
 
     private val pyszneTotalRevenueLabelRegex = Regex(
-    """(?<![\p{L}\p{N}_])(?:suma\s+przychod\p{L}*|total\s+(?:earnings|income|revenue)|earnings\s+total)(?![\p{L}\p{N}_])""",
-    RegexOption.IGNORE_CASE
+        """(?<![\p{L}\p{N}_])(?:suma\s+przychod\p{L}*|total\s+(?:earnings|income|revenue)|earnings\s+total)(?![\p{L}\p{N}_])""",
+        RegexOption.IGNORE_CASE
     )
+    private val pyszneRevenueDetailsHeaderRegex = Regex(
+        """(?:szczeg[óo]ły\s+przychod\p{L}*|earnings\s+details|revenue\s+details)""",
+        RegexOption.IGNORE_CASE
+    )
+    private val pyszneRevenueRowLabelRegex = Regex(
+        """(?:stawka\s+bazowa|dodatkowe\s+korzy\p{L}*|przyznany\s+napiwek|\binne\b|suma\s+przychod\p{L}*|base\s+(?:pay|rate)|tip|total\s+(?:earnings|income|revenue))""",
+        RegexOption.IGNORE_CASE
+    )
+
+    private fun isPyszneHistoryDetails(text: String): Boolean =
+        detailedDurationRegex.containsMatchIn(text) &&
+            distanceRegex.containsMatchIn(text) &&
+            (
+                pyszneTotalRevenueLabelRegex.containsMatchIn(text) ||
+                    pyszneRevenueDetailsHeaderRegex.containsMatchIn(text)
+            )
 
     /** Ekran Pyszne: Szczegoly zlecenia / Order details. */
     private fun parsePyszneHistoryDetails(text: String): Offer? {
@@ -353,38 +374,83 @@ object OfferParser {
         val amountMatches = findAmountMatches(text).filter { it.explicitCurrency }
         if (amountMatches.isEmpty()) return null
 
-        return pyszneTotalRevenueLabelRegex.findAll(text)
-            .mapNotNull { label ->
-                // Preferujemy kwote po etykiecie: "Suma przychodow 25,28 zl" albo
-                // etykieta w jednej linii i kwota w nastepnej. Jesli OCR odwroci
-                // kolejnosc blokow, dopuszczamy tez kwote tuz przed etykieta.
-                val after = amountMatches
-                    .asSequence()
-                    .filter { it.start >= label.range.last + 1 }
-                    .map { it to (it.start - (label.range.last + 1)) }
-                    .filter { (_, gap) -> gap <= 120 }
-                    .minByOrNull { it.second }
+        val totalLabels = pyszneTotalRevenueLabelRegex.findAll(text).toList()
+        if (totalLabels.isEmpty()) return null
 
-                val before = amountMatches
-                    .asSequence()
-                    .filter { it.endExclusive <= label.range.first }
-                    .map { it to (label.range.first - it.endExclusive) }
-                    .filter { (_, gap) -> gap <= 80 }
-                    .minByOrNull { it.second }
+        fun amountValue(match: AmountMatch?): Double? =
+            match?.value?.toNumber()?.takeIf { it in 0.0..1000.0 }
 
-                val selected = after ?: before ?: return@mapNotNull null
-                val value = selected.first.value.toNumber() ?: return@mapNotNull null
+        fun sameLineAmount(label: MatchResult): Double? {
+            val lineStart = text.lastIndexOf('\n', label.range.first - 1).let { if (it < 0) 0 else it + 1 }
+            val lineEnd = text.indexOf('\n', label.range.last + 1).let { if (it < 0) text.length else it }
 
-                // Jezeli etykieta jest naglowkiem u gory ekranu, a OCR polaczyl z nia
-                // zbyt duzy fragment, ograniczenie dystansu powyzej chroni przed
-                // przeskoczeniem do "Stawka bazowa" nizej.
-                Triple(value, label.range.first, selected.second)
+            val after = amountMatches
+                .asSequence()
+                .filter { it.start >= label.range.last + 1 && it.start < lineEnd }
+                .minByOrNull { it.start }
+            amountValue(after)?.let { return it }
+
+            val before = amountMatches
+                .asSequence()
+                .filter { it.endExclusive <= label.range.first && it.start >= lineStart }
+                .maxByOrNull { it.endExclusive }
+            return amountValue(before)
+        }
+
+        fun amountDirectlyBelow(label: MatchResult): Double? {
+            val after = amountMatches
+                .asSequence()
+                .filter { it.start >= label.range.last + 1 }
+                .map { it to text.substring(label.range.last + 1, it.start) }
+                .filter { (_, between) -> between.length <= 48 }
+                .firstOrNull { (_, between) ->
+                    between.contains('\n') &&
+                        between.all { ch -> ch.isWhitespace() || ch in ":-–—|" }
+                }
+                ?.first
+            return amountValue(after)
+        }
+
+        // Zawsze zaczynamy od ostatniego "Suma przychodow". Na ekranie
+        // szczegolow to dolny, finalny wiersz i jest wazniejszy od duzej kwoty
+        // u gory, ktora moze byc zaslonieta przez nakladke.
+        val lastTotalLabel = totalLabels.last()
+        sameLineAmount(lastTotalLabel)?.let { return it }
+
+        // ML Kit potrafi zwrocic dwie kolumny osobno: najpierw wszystkie
+        // etykiety, potem wszystkie kwoty, np.:
+        // Stawka bazowa / ... / Suma przychodow / 18,72 / ... / 21,72.
+        // Wtedy kwota tuz po etykiecie NIE jest stawka sumaryczna. Jezeli
+        // odczytalismy komplet wierszy i kwot w sekcji przychodow, ostatnia
+        // kwota odpowiada ostatniemu wierszowi, czyli "Suma przychodow".
+        val revenueHeader = pyszneRevenueDetailsHeaderRegex.findAll(text).lastOrNull()
+        if (revenueHeader != null && lastTotalLabel.range.first > revenueHeader.range.last) {
+            val sectionStart = revenueHeader.range.last + 1
+            val section = text.substring(sectionStart)
+            val rowCount = pyszneRevenueRowLabelRegex.findAll(section).count()
+            val sectionAmounts = amountMatches.filter { it.start >= sectionStart }
+
+            if (rowCount >= 2 && sectionAmounts.size >= rowCount) {
+                amountValue(sectionAmounts.lastOrNull())?.let { return it }
             }
-            // Dolny wiersz "Suma przychodow" jest zwykle najlepiej widoczny, gdy
-            // nakladka zaslania gorna duza kwote, dlatego przy remisie bierzemy
-            // ostatnia poprawna etykiete na ekranie.
-            .maxWithOrNull(compareBy<Triple<Double, Int, Int>> { -it.third }.thenBy { it.second })
-            ?.first
+
+            // Gdy OCR nie odczytal ktoregos z innych wierszy, nadal ufamy
+            // kwocie bezposrednio POD "Suma przychodow". Jesli samej kwoty
+            // sumy nie ma, zwracamy null zamiast podstawowej stawki.
+            amountDirectlyBelow(lastTotalLabel)?.let { return it }
+            return null
+        }
+
+        // Starszy/prostszy uklad Pyszne: "Suma przychodow" u gory ekranu,
+        // a kwota w tej samej lub nastepnej linii. Nie szukamy szerzej, aby
+        // nigdy nie przeskoczyc do "Stawka bazowa".
+        amountDirectlyBelow(lastTotalLabel)?.let { return it }
+        totalLabels.asReversed().drop(1).forEach { label ->
+            sameLineAmount(label)?.let { return it }
+            amountDirectlyBelow(label)?.let { return it }
+        }
+
+        return null
     }
 
     data class Schedule(
