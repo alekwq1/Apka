@@ -112,7 +112,10 @@ object PyszneHistoryParser {
             .filter { it.isNotBlank() }
             .toList()
 
-        val date = parseDateFromText(sourceText) ?: fallbackDate
+        // Szczegoly moga przechodzic przez polnoc: przyjete 21.08 23:34,
+        // dostarczone 22.08 00:08. Data wpisu powinna wtedy pochodzic z pola
+        // "Zlecenie przyjete", a nie z przypadkowo pierwszej daty OCR.
+        val date = parseAcceptedDate(lines) ?: parseDateFromText(sourceText) ?: fallbackDate
         val acceptedMinute = parseAcceptedMinute(lines)
         val finishedMinute = if (cancelled) parseCancelledMinute(lines) else parseDeliveredMinute(lines)
         val restaurant = parseRestaurant(lines).ifBlank { "Nieznana restauracja" }
@@ -146,6 +149,20 @@ object PyszneHistoryParser {
     }
 
     fun parseDateFromText(text: String): LocalDate? = parseDatesFromText(text).firstOrNull()
+
+    /**
+     * Ekran szczegolow moze legalnie zawierac dwie daty, gdy zlecenie konczy sie
+     * po polnocy. Odrzucamy dopiero brak daty, wiecej niz dwie daty lub skok
+     * wiekszy niz jeden dzien, bo to zwykle oznacza zmieszany/stary ekran.
+     */
+    fun hasCoherentOrderDetailDates(text: String): Boolean {
+        val dates = parseDatesFromText(text).distinct()
+        if (dates.isEmpty() || dates.size > 2) return false
+        if (dates.size == 1) return true
+        val minDay = dates.minOf { it.toEpochDay() }
+        val maxDay = dates.maxOf { it.toEpochDay() }
+        return maxDay - minDay <= 1L
+    }
 
     /**
      * Zwraca wszystkie jawnie widoczne daty. Podsumowanie dnia nie korzysta juz
@@ -185,18 +202,37 @@ object PyszneHistoryParser {
     private fun parseAcceptedMinute(lines: List<String>): Int? =
         parseLabeledMinute(lines, Regex("""(?i)^(?:zlecenie\s+przyj[eę]te|job\s+accepted)\b"""))
 
+    private fun parseAcceptedDate(lines: List<String>): LocalDate? =
+        parseLabeledDate(lines, Regex("""(?i)^(?:zlecenie\s+przyj[eę]te|job\s+accepted)\b"""))
+
     private fun parseDeliveredMinute(lines: List<String>): Int? =
         parseLabeledMinute(lines, Regex("""(?i)^(?:zlecenie\s+dostarczone|job\s+delivered)\b"""))
 
     private fun parseCancelledMinute(lines: List<String>): Int? =
         parseLabeledMinute(lines, Regex("""(?i)^(?:zlecenie\s+anulowane|job\s+cancelled|order\s+cancelled)\b"""))
 
-    private fun parseLabeledMinute(lines: List<String>, label: Regex): Int? {
+    private fun parseLabeledDate(lines: List<String>, label: Regex): LocalDate? {
         lines.forEachIndexed { index, line ->
             if (!label.containsMatchIn(line)) return@forEachIndexed
             val context = buildString {
                 append(line)
                 lines.getOrNull(index + 1)?.let { append(' ').append(it) }
+            }
+            parseDatesFromText(context).distinct().singleOrNull()?.let { return it }
+        }
+        return null
+    }
+
+    private fun parseLabeledMinute(lines: List<String>, label: Regex): Int? {
+        lines.forEachIndexed { index, line ->
+            if (!label.containsMatchIn(line)) return@forEachIndexed
+            val context = buildString {
+                append(line)
+                // Accessibility czesto rozbija wartosc na dwie linie:
+                // "21 sierpnia 2026" oraz osobno "11:34 PM".
+                for (offset in 1..2) {
+                    lines.getOrNull(index + offset)?.let { append(' ').append(it) }
+                }
             }
             timeRegex.find(context)?.let { return it.toMinuteOfDay() }
         }
@@ -306,6 +342,45 @@ data class PyszneDayReference(
     val orderIds: List<String> = emptyList(),
     val capturedAtMillis: Long = System.currentTimeMillis()
 )
+
+/**
+ * Pyszne potrafi przypisac zlecenie przyjete po polnocy do dnia/zmiany
+ * rozpoczetego poprzedniego dnia. Jezeli jawny numer zlecenia wystepuje na
+ * zeskanowanej liscie dnia, ta lista jest lepszym zrodlem dnia rozliczeniowego
+ * niz sama data kalendarzowa ze szczegolow zlecenia.
+ */
+object PyszneWorkDayResolver {
+    fun resolveDate(
+        entry: PyszneDeliveryLog,
+        references: Collection<PyszneDayReference>
+    ): LocalDate? {
+        val orderId = entry.orderId
+            ?.trim()
+            ?.removePrefix("#")
+            ?.uppercase(Locale.ROOT)
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
+
+        return references
+            .asSequence()
+            .filter { reference ->
+                reference.orderIds.any { candidate ->
+                    candidate.trim().removePrefix("#").uppercase(Locale.ROOT) == orderId
+                }
+            }
+            .mapNotNull { reference ->
+                val dayOffset = entry.date.toEpochDay() - reference.date.toEpochDay()
+                if (dayOffset !in 0L..1L) null else reference to dayOffset
+            }
+            .sortedWith(
+                compareBy<Pair<PyszneDayReference, Long>> { it.second }
+                    .thenByDescending { it.first.capturedAtMillis }
+            )
+            .firstOrNull()
+            ?.first
+            ?.date
+    }
+}
 
 /** Odczyt kontrolny z ekranu Pyszne "Podsumowanie dnia". */
 object PyszneDayReferenceParser {
@@ -426,32 +501,50 @@ object PyszneDayReferenceParser {
 class PyszneLogStore(context: Context) {
     private val prefs = context.getSharedPreferences("pyszne_delivery_history", Context.MODE_PRIVATE)
 
+    init {
+        // Po aktualizacji napraw od razu wpisy zapisane przez starsza wersje pod
+        // data kalendarzowa po polnocy, jezeli mamy juz zapamietana liste ID dnia.
+        runCatching { reconcileEntryDatesToReferences(allDayReferences()) }
+    }
+
     @Synchronized
     fun save(entry: PyszneDeliveryLog): PyszneSaveResult {
+        val references = allDayReferences()
+        val referenceDate = PyszneWorkDayResolver.resolveDate(entry, references)
+        val normalizedEntry = referenceDate?.let { entry.copy(date = it) } ?: entry
         val current = all().toMutableList()
-        val duplicateIndex = current.indexOfFirst { sameDelivery(it, entry) }
+        val duplicateIndex = current.indexOfFirst { sameDelivery(it, normalizedEntry) }
         if (duplicateIndex >= 0) {
             val existing = current[duplicateIndex]
-            if (needsUpgrade(existing, entry)) {
+            val shouldRepairDate = referenceDate != null &&
+                existing.date != normalizedEntry.date &&
+                sameExplicitOrderId(existing, normalizedEntry)
+            if (needsUpgrade(existing, normalizedEntry) || shouldRepairDate) {
                 current[duplicateIndex] = existing.copy(
-                    orderId = existing.orderId ?: entry.orderId,
-                    restaurant = if (restaurantQuality(entry.restaurant) > restaurantQuality(existing.restaurant)) entry.restaurant else existing.restaurant,
-                    cancelled = existing.cancelled || entry.cancelled
+                    orderId = existing.orderId ?: normalizedEntry.orderId,
+                    date = if (shouldRepairDate) normalizedEntry.date else existing.date,
+                    restaurant = if (restaurantQuality(normalizedEntry.restaurant) > restaurantQuality(existing.restaurant)) normalizedEntry.restaurant else existing.restaurant,
+                    cancelled = existing.cancelled || normalizedEntry.cancelled
                 )
                 persist(current.sortedWith(compareBy<PyszneDeliveryLog> { it.date }.thenBy { it.acceptedMinuteOfDay ?: Int.MAX_VALUE }))
             }
             return PyszneSaveResult.DUPLICATE
         }
         val beforeSave = current.toList()
-        current += entry
+        current += normalizedEntry
         persist(current.sortedWith(compareBy<PyszneDeliveryLog> { it.date }.thenBy { it.acceptedMinuteOfDay ?: Int.MAX_VALUE }))
-        reconcileDayOrderIdAfterSave(entry, beforeSave)
+        reconcileDayOrderIdAfterSave(normalizedEntry, beforeSave)
         return PyszneSaveResult.SAVED
     }
 
     fun contains(entry: PyszneDeliveryLog): Boolean {
-        val existing = all().firstOrNull { sameDelivery(it, entry) } ?: return false
-        return !needsUpgrade(existing, entry)
+        val referenceDate = PyszneWorkDayResolver.resolveDate(entry, allDayReferences())
+        val normalizedEntry = referenceDate?.let { entry.copy(date = it) } ?: entry
+        val existing = all().firstOrNull { sameDelivery(it, normalizedEntry) } ?: return false
+        val needsDateRepair = referenceDate != null &&
+            existing.date != normalizedEntry.date &&
+            sameExplicitOrderId(existing, normalizedEntry)
+        return !needsUpgrade(existing, normalizedEntry) && !needsDateRepair
     }
 
     /**
@@ -466,6 +559,12 @@ class PyszneLogStore(context: Context) {
         if (existingId != null && incomingId != null) return existingId == incomingId
         if (existing.key == incoming.key) return true
         return existing.fingerprint == incoming.fingerprint
+    }
+
+    private fun sameExplicitOrderId(existing: PyszneDeliveryLog, incoming: PyszneDeliveryLog): Boolean {
+        val existingId = existing.orderId?.trim()?.removePrefix("#")?.uppercase(Locale.ROOT)?.takeIf { it.isNotBlank() }
+        val incomingId = incoming.orderId?.trim()?.removePrefix("#")?.uppercase(Locale.ROOT)?.takeIf { it.isNotBlank() }
+        return existingId != null && incomingId != null && existingId == incomingId
     }
 
     private fun needsUpgrade(existing: PyszneDeliveryLog, incoming: PyszneDeliveryLog): Boolean =
@@ -539,6 +638,7 @@ class PyszneLogStore(context: Context) {
             capturedAtMillis = System.currentTimeMillis()
         )
         persistDayReferences(refs)
+        reconcileEntryDatesToReferences(refs)
     }
 
     /** Dopisuje numery widoczne po przewinieciu listy, gdy naglowek dnia nie jest juz na ekranie. */
@@ -552,6 +652,29 @@ class PyszneLogStore(context: Context) {
             capturedAtMillis = System.currentTimeMillis()
         )
         persistDayReferences(refs)
+        reconcileEntryDatesToReferences(refs)
+    }
+
+    /**
+     * Naprawia juz zapisane wpisy po odczytaniu listy dnia. To jest wazne dla
+     * zlecen po polnocy: starsza wersja mogla zapisac np. 00:09 pod 22.08,
+     * chociaz Pyszne pokazuje ten numer na liscie dnia 21.08.
+     */
+    private fun reconcileEntryDatesToReferences(refs: Map<LocalDate, PyszneDayReference>) {
+        val current = all()
+        var changed = false
+        val repaired = current.map { entry ->
+            val referenceDate = PyszneWorkDayResolver.resolveDate(entry, refs.values)
+            if (referenceDate != null && referenceDate != entry.date) {
+                changed = true
+                entry.copy(date = referenceDate)
+            } else {
+                entry
+            }
+        }
+        if (changed) {
+            persist(repaired.sortedWith(compareBy<PyszneDeliveryLog> { it.date }.thenBy { it.acceptedMinuteOfDay ?: Int.MAX_VALUE }))
+        }
     }
 
     fun dayReference(date: LocalDate): PyszneDayReference? = allDayReferences()[date]

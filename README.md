@@ -1,12 +1,12 @@
-# FUJARA 0.8.10
+# FUJARA 0.8.11
 
 Android app for local courier-offer profitability analysis.
 
 ## Google Play readiness
 - applicationId / namespace: `pl.fujara.app`
 - targetSdk / compileSdk: 36
-- versionCode: 27
-- versionName: 0.8.10
+- versionCode: 28
+- versionName: 0.8.11
 - signed AAB workflow: `.github/workflows/build-play-aab.yml`
 - debug APK workflow: `.github/workflows/test-apk.yml`
 - privacy page: `docs/privacy.html`
@@ -15,6 +15,13 @@ Android app for local courier-offer profitability analysis.
 - no `INTERNET` permission, no ads, no analytics in the current project
 
 Start with `PLAY-CONSOLE-START-HERE.md`.
+
+## 0.8.11
+
+- Pyszne: szczegóły zlecenia przechodzącego przez północ (dwie sąsiednie daty) nie chowają już panelu FUJARA.
+- Data szczegółów jest brana przede wszystkim z pola `Zlecenie przyjęte`.
+- Zlecenie przyjęte po północy może zostać przypisane do poprzedniego dnia rozliczeniowego, jeżeli jego ID znajduje się na zeskanowanej liście tego dnia w Pyszne.
+- Już zapisane wpisy z błędną datą są automatycznie naprawiane na podstawie zapamiętanych ID dnia.
 
 ## Privacy page
 The current support/privacy contact is `aleksanue@gmail.com`. Publish `/docs` using GitHub Pages before submitting the store listing.

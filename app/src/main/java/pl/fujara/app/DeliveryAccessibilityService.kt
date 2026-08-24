@@ -815,8 +815,10 @@ class DeliveryAccessibilityService : AccessibilityService() {
         fun candidateFrom(text: String): PyszneHistoryCandidate? {
             val clean = text.trim()
             if (clean.isBlank() || !isPyszneHistoryDetailsScreen(clean)) return null
-            val dates = PyszneHistoryParser.parseDatesFromText(clean).distinct()
-            if (dates.size != 1) return null
+            // Zlecenie moze zaczac sie przed polnoca i skonczyc po polnocy.
+            // Taki ekran ma dwie sasiednie daty i jest poprawny. Wczesniej
+            // wymaganie dokladnie jednej daty chowalo panel na zawsze.
+            if (!PyszneHistoryParser.hasCoherentOrderDetailDates(clean)) return null
             val offer = OfferParser.parse(clean, CourierPlatform.PYSZNE) ?: return null
             val entry = PyszneHistoryParser.parse(sourceText = clean, offer = offer) ?: return null
             val orderId = entry.orderId?.trim()?.uppercase()?.takeIf { it.isNotBlank() } ?: return null

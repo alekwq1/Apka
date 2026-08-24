@@ -158,6 +158,107 @@ class PyszneHistoryParserTest {
 
         assertTrue(one.key != two.key)
     }
+
+    @Test
+    fun acceptsOrderDetailsThatCrossMidnightAndUsesAcceptedDate() {
+        val text = """
+            Szczegóły zlecenia
+            Suma przychodów
+            21,87 zł
+            MP63FY
+            Dostarczone
+            Zlecenie przyjęte
+            21 sierpnia 2026
+            11:34 PM
+            Zlecenie dostarczone
+            22 sierpnia 2026
+            12:08 AM
+            Odbiór
+            McDonald's Gdańsk, Uczniowska (Uczniowska 30A)
+            Czas aktywności
+            34 min 5 sec
+            Szacowana odległość
+            7,1 km
+            Szczegóły przychodów
+            Suma przychodów
+            21,87 zł
+        """.trimIndent()
+        val offer = Offer(21.87, 7.1, durationSeconds = 34 * 60 + 5, applyExtraTimeBuffer = false)
+
+        assertTrue(PyszneHistoryParser.hasCoherentOrderDetailDates(text))
+        val parsed = PyszneHistoryParser.parse(text, offer)
+
+        assertNotNull(parsed)
+        assertEquals(LocalDate.of(2026, 8, 21), parsed!!.date)
+        assertEquals("MP63FY", parsed.orderId)
+        assertEquals(23 * 60 + 34, parsed.acceptedMinuteOfDay)
+    }
+
+    @Test
+    fun rejectsOrderDetailsWithDatesMoreThanOneDayApart() {
+        val text = """
+            Szczegóły zlecenia
+            Zlecenie przyjęte
+            20 sierpnia 2026 11:34 PM
+            Zlecenie dostarczone
+            22 sierpnia 2026 12:08 AM
+        """.trimIndent()
+
+        assertFalse(PyszneHistoryParser.hasCoherentOrderDetailDates(text))
+    }
+}
+
+class PyszneWorkDayResolverTest {
+    @Test
+    fun mapsAfterMidnightOrderToPreviousPyszneDayWhenIdIsOnThatList() {
+        val entry = PyszneDeliveryLog(
+            key = "key",
+            fingerprint = "fingerprint",
+            orderId = "MHPYBR",
+            date = LocalDate.of(2026, 8, 22),
+            acceptedMinuteOfDay = 9,
+            restaurant = "Kebab King",
+            amountPln = 0.0,
+            distanceKm = 8.3,
+            durationSeconds = 23 * 60 + 3,
+            cancelled = true
+        )
+        val previousDay = PyszneDayReference(
+            date = LocalDate.of(2026, 8, 21),
+            orderCount = 32,
+            amountPln = 621.95,
+            orderIds = listOf("MP63FY", "MHPYBR")
+        )
+
+        assertEquals(
+            LocalDate.of(2026, 8, 21),
+            PyszneWorkDayResolver.resolveDate(entry, listOf(previousDay))
+        )
+    }
+
+    @Test
+    fun doesNotMoveOrderWhenIdIsNotOnPreviousDayList() {
+        val entry = PyszneDeliveryLog(
+            key = "key",
+            fingerprint = "fingerprint",
+            orderId = "MHPYBR",
+            date = LocalDate.of(2026, 8, 22),
+            acceptedMinuteOfDay = 9,
+            restaurant = "Kebab King",
+            amountPln = 0.0,
+            distanceKm = 8.3,
+            durationSeconds = 23 * 60 + 3,
+            cancelled = true
+        )
+        val previousDay = PyszneDayReference(
+            date = LocalDate.of(2026, 8, 21),
+            orderCount = 32,
+            amountPln = 621.95,
+            orderIds = listOf("MP63FY")
+        )
+
+        assertNull(PyszneWorkDayResolver.resolveDate(entry, listOf(previousDay)))
+    }
 }
 
 class PyszneDayReferenceParserTest {

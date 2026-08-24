@@ -1,4 +1,4 @@
-# Pyszne - podsumowanie dnia (FUJARA 0.8.10)
+# Pyszne - podsumowanie dnia (FUJARA 0.8.11)
 
 ## Przeplyw uzytkownika
 1. W Pyszne wejdz w historie i otworz szczegoly zakonczonego lub anulowanego zlecenia.
@@ -60,3 +60,10 @@ Na ekranie pojedynczego zlecenia panel FUJARA jest celowo opóźniony do chwili,
 - Numer zlecenia na szczegółach jest preferowany z Accessibility. Fingerprint nie oznacza duplikatu, jeśli dwa wpisy mają różne jawne numery ID.
 - Numery z przewijanej listy są preferowane z Accessibility. OCR jest fallbackiem i wymaga powtórnego potwierdzenia tego samego numeru.
 - Jeżeli przy stanie 9/10 lista miała jeden błędny numer OCR, a ostatnio zapisana dostawa dokładnie domyka brakującą kwotę, lista numerów jest automatycznie naprawiana.
+
+## 0.8.11 — zlecenia przez północ
+
+- Szczegóły z dwiema sąsiednimi datami (przyjęte przed północą, zakończone po północy) są poprawnym ekranem i nie chowają już panelu FUJARA.
+- Data ze szczegółów jest kotwiczona przy `Zlecenie przyjęte`.
+- Gdy numer zlecenia przyjętego po północy znajduje się na liście dnia poprzedniego dnia, FUJARA przypisuje zapis do tego dnia rozliczeniowego.
+- Starsze wpisy z takim przesunięciem daty są automatycznie naprawiane na podstawie zapamiętanych numerów z listy dnia.
