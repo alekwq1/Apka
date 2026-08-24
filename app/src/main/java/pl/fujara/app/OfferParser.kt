@@ -32,7 +32,12 @@ object OfferParser {
         """(?i)(?<!\d)(\d{1,3})\s*(?:min|m)(?:ut\w*)?\s*(\d{1,2})\s*(?:sec|sek|s)(?:und\w*|ond\w*)?\b"""
     )
     private val uberDurationDistanceRegex = Regex(
-        """(?i)(?<!\d)(\d{1,3})\s*$MIN[^\n]{0,30}?[\(\[]?\s*(\d{1,4}(?:[.,]\d{1,2})?)\s*$KM\s*[\)\]]?"""
+        // ML Kit potrafi rozbic jedna wizualna linie Ubera na kilka linii OCR,
+        // np. "Lacznie 20 min" i dopiero nizej "(5.1 km)". Dlatego nie
+        // ograniczamy separatora do znakow innych niz nowa linia. Dla wariantu
+        // wieloliniowego wymagamy jednak nawiasu przed dystansem, tak jak na
+        // karcie Ubera; to chroni przed sklejeniem dwoch roznych ofert.
+        """(?is)(?<!\d)(\d{1,3})\s*$MIN[\s\S]{0,120}?[\(\[]\s*(\d{1,4}(?:[.,]\d{1,2})?)\s*$KM\s*[\)\]]?"""
     )
     private val totalRegex = Regex(
         """\b(?:total|łącznie|lacznie|razem|całkowit\w*|calkowit\w*)\b""",
@@ -143,7 +148,11 @@ object OfferParser {
         val distance = total.groupValues.getOrNull(2)?.toNumber() ?: return null
         if (!valid(1.0, distance, duration)) return null
 
-        val amount = closestAmountBefore(text, total.range.first, maxGap = 1000)
+        // W prawdziwym OCR kolejnosc blokow nie zawsze jest taka sama jak
+        // na ekranie. Kwota moze trafic za linie z czasem/dystansem mimo ze
+        // wizualnie jest nad nia. Dlatego bierzemy najblizsza kwote wokol
+        // podsumowania, preferujac jawne PLN/zl.
+        val amount = closestAmountAround(text, total.range, maxGap = 1200)
             ?.value?.toNumber() ?: return null
         if (amount !in 0.01..1000.0) return null
 
@@ -511,6 +520,26 @@ object OfferParser {
         }
         return null
     }
+
+    private fun closestAmountAround(text: String, anchorRange: IntRange, maxGap: Int): AmountMatch? =
+        findAmountMatches(text)
+            .asSequence()
+            .map { amount ->
+                val gap = when {
+                    amount.endExclusive <= anchorRange.first -> anchorRange.first - amount.endExclusive
+                    amount.start > anchorRange.last -> amount.start - anchorRange.last
+                    else -> 0
+                }
+                amount to gap
+            }
+            .filter { (_, gap) -> gap <= maxGap }
+            .sortedWith(
+                compareByDescending<Pair<AmountMatch, Int>> { it.first.explicitCurrency }
+                    .thenBy { it.second }
+                    .thenBy { it.first.start }
+            )
+            .firstOrNull()
+            ?.first
 
     private fun closestAmountBefore(text: String, anchorPosition: Int, maxGap: Int): AmountMatch? =
         findAmountMatches(text)

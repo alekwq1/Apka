@@ -715,8 +715,13 @@ class DeliveryAccessibilityService : AccessibilityService() {
                 (("czas aktywności" in lower || "czas aktywnosci" in lower || "active time" in lower) &&
                     ("szacowana odległość" in lower || "szacowana odleglosc" in lower || "estimated distance" in lower)) -> CourierPlatform.PYSZNE
             "bolt food" in lower || (Regex("""\d+[.,]?\d*\s*km\s*[,·|]\s*\d+\s*min\s*[,·|]\s*\d+[.,]\d{1,2}\s*z[łl]""", RegexOption.IGNORE_CASE).containsMatchIn(text)) -> CourierPlatform.BOLT
+            // Polski Uber bywa OCR-owany bez slowa "Dostawa" albo z blokami
+            // w innej kolejnosci. Uklad: kwota + Lacznie/total + min + km oraz
+            // przycisk Akceptuj/Confirm jest wystarczajaco charakterystyczny.
+            (Regex("""(?is)(?:łącznie|lacznie|total)[\s\S]{0,180}?\d{1,3}\s*(?:m|rn)\s*i\s*n[\s\S]{0,160}?\d{1,4}(?:[.,]\d{1,2})?\s*k\s*(?:m|rn)""").containsMatchIn(text) &&
+                ("akceptuj" in lower || "confirm" in lower || "delivery" in lower || "dostawa" in lower)) -> CourierPlatform.UBER
             (("delivery" in lower || "dostawa" in lower) &&
-                ("confirm" in lower || "łącznie" in lower || "lacznie" in lower || "stops" in lower || "przystank" in lower) &&
+                ("confirm" in lower || "akceptuj" in lower || "łącznie" in lower || "lacznie" in lower || "stops" in lower || "przystank" in lower) &&
                 ("pln" in lower || "zł" in lower || "zl" in lower)) -> CourierPlatform.UBER
             "wolt" in lower -> CourierPlatform.WOLT
             "glovo" in lower -> CourierPlatform.GLOVO

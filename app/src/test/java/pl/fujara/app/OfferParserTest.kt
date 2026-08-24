@@ -597,3 +597,43 @@ class OfferParserFieldTest081 {
         assertEquals(1569, offer.durationSeconds)
     }
 }
+
+class OfferParserFieldTest082 {
+    @Test
+    fun uberPolishCardSurvivesOcrBlockReordering() {
+        val text = """
+            Dostawa
+            Łącznie 20 min
+            (5.1 km)
+            McDonald's Orunia Górna
+            11,31 zł
+            Akceptuj
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text, CourierPlatform.UBER)
+
+        assertNotNull(offer)
+        assertEquals(11.31, offer!!.amountPln, 0.001)
+        assertEquals(5.1, offer.distanceKm, 0.001)
+        assertEquals(20, offer.durationMinutes)
+    }
+
+    @Test
+    fun uberPolishCardSurvivesSplitOcrLineAndMissingCurrencyToken() {
+        val text = """
+            11,31
+            Dostawa
+            Łącznie 20 min
+            etykieta mapy
+            (5.1 krn)
+            Akceptuj
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text, CourierPlatform.UBER)
+
+        assertNotNull(offer)
+        assertEquals(11.31, offer!!.amountPln, 0.001)
+        assertEquals(5.1, offer.distanceKm, 0.001)
+        assertEquals(20, offer.durationMinutes)
+    }
+}
