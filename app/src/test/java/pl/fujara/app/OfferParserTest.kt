@@ -637,3 +637,51 @@ class OfferParserFieldTest082 {
         assertEquals(20, offer.durationMinutes)
     }
 }
+
+class OfferParserFieldTest083 {
+    @Test
+    fun pyszneDetailsUsesTotalRevenueWhenOverlayHidesTopAmount() {
+        val text = """
+            Szczegóły zlecenia
+            Zlecenie przyjęte 21 sierpnia 2026 8:06 PM
+            Zlecenie dostarczone 21 sierpnia 2026 8:31 PM
+            Odbiór Berlin Döner Kebab (Obrońców Wybrzeża 1)
+            Czas aktywności 25 min 30 sec
+            Szacowana odległość 5,7 km
+            Szczegóły przychodów
+            Stawka bazowa 19,28 zł
+            Dodatkowe korzyści 0,00 zł
+            Przyznany napiwek 6,00 zł
+            Inne 0,00 zł
+            Suma przychodów 25,28 zł
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text, CourierPlatform.PYSZNE)
+
+        assertNotNull(offer)
+        assertEquals(25.28, offer!!.amountPln, 0.001)
+        assertEquals(5.7, offer.distanceKm, 0.001)
+        assertEquals(1530, offer.durationSeconds)
+    }
+
+    @Test
+    fun pyszneDetailsReadsTotalRevenueWhenLabelAndAmountAreOnSeparateLines() {
+        val text = """
+            Szczegóły zlecenia
+            Suma przychodów
+            25,28 zł
+            Czas aktywności 25 min 30 sec
+            Szacowana odległość 5,7 km
+            Szczegóły przychodów
+            Stawka bazowa 19,28 zł
+            Przyznany napiwek 6,00 zł
+            Suma przychodów
+            25,28 zł
+        """.trimIndent()
+
+        val offer = OfferParser.parse(text, CourierPlatform.PYSZNE)
+
+        assertNotNull(offer)
+        assertEquals(25.28, offer!!.amountPln, 0.001)
+    }
+}

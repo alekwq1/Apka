@@ -312,6 +312,11 @@ object OfferParser {
         )
     }
 
+    private val pyszneTotalRevenueLabelRegex = Regex(
+        """\b(?:suma\s+przychod\w*|total\s+(?:earnings|income|revenue)|earnings\s+total)\b""",
+        RegexOption.IGNORE_CASE
+    )
+
     /** Ekran Pyszne: Szczegoly zlecenia / Order details. */
     private fun parsePyszneHistoryDetails(text: String): Offer? {
         val durationMatch = detailedDurationRegex.find(text) ?: return null
@@ -323,13 +328,17 @@ object OfferParser {
             .mapNotNull { it.groupValues.getOrNull(1)?.toNumber() }
             .firstOrNull { it in 0.01..500.0 } ?: return null
 
-        // Na ekranie szczegolow pierwsza kwota jest suma przychodow. Kolejne
-        // pozycje to stawka bazowa, napiwek itd., wiec nie wybieramy maksimum.
-        val firstCurrency = amountRegex.find(text)
-        val amount = firstCurrency?.groupValues
-            ?.drop(1)
-            ?.firstOrNull { it.isNotBlank() }
-            ?.toNumber() ?: return null
+        /*
+         * Nie wolno brac po prostu pierwszej widocznej kwoty. Gdy nakladka FUJARA
+         * zaslania gorna czesc ekranu Pyszne, OCR nie widzi duzej kwoty u gory i
+         * pierwsza liczba staje sie np. "Stawka bazowa 19,28 zl". To powodowalo,
+         * ze po 1-2 sekundach poprawne 25,28 zl bylo zastepowane przez 19,28 zl.
+         *
+         * Na ekranie szczegolow jedynym zrodlem kwoty calego zlecenia jest wiersz
+         * "Suma przychodow" (lub jego angielski odpowiednik). Szukamy wiec kwoty
+         * bezposrednio przy tej etykiecie i ignorujemy stawke bazowa, napiwek itd.
+         */
+        val amount = findPyszneTotalRevenue(text) ?: return null
         if (amount !in 0.0..1000.0) return null
 
         return Offer(
@@ -338,6 +347,44 @@ object OfferParser {
             durationSeconds = minutes * 60 + seconds,
             applyExtraTimeBuffer = false
         )
+    }
+
+    private fun findPyszneTotalRevenue(text: String): Double? {
+        val amountMatches = findAmountMatches(text).filter { it.explicitCurrency }
+        if (amountMatches.isEmpty()) return null
+
+        return pyszneTotalRevenueLabelRegex.findAll(text)
+            .mapNotNull { label ->
+                // Preferujemy kwote po etykiecie: "Suma przychodow 25,28 zl" albo
+                // etykieta w jednej linii i kwota w nastepnej. Jesli OCR odwroci
+                // kolejnosc blokow, dopuszczamy tez kwote tuz przed etykieta.
+                val after = amountMatches
+                    .asSequence()
+                    .filter { it.start >= label.range.last + 1 }
+                    .map { it to (it.start - (label.range.last + 1)) }
+                    .filter { (_, gap) -> gap <= 120 }
+                    .minByOrNull { it.second }
+
+                val before = amountMatches
+                    .asSequence()
+                    .filter { it.endExclusive <= label.range.first }
+                    .map { it to (label.range.first - it.endExclusive) }
+                    .filter { (_, gap) -> gap <= 80 }
+                    .minByOrNull { it.second }
+
+                val selected = after ?: before ?: return@mapNotNull null
+                val value = selected.first.value.toNumber() ?: return@mapNotNull null
+
+                // Jezeli etykieta jest naglowkiem u gory ekranu, a OCR polaczyl z nia
+                // zbyt duzy fragment, ograniczenie dystansu powyzej chroni przed
+                // przeskoczeniem do "Stawka bazowa" nizej.
+                Triple(value, label.range.first, selected.second)
+            }
+            // Dolny wiersz "Suma przychodow" jest zwykle najlepiej widoczny, gdy
+            // nakladka zaslania gorna duza kwote, dlatego przy remisie bierzemy
+            // ostatnia poprawna etykiete na ekranie.
+            .maxWithOrNull(compareBy<Triple<Double, Int, Int>> { -it.third }.thenBy { it.second })
+            ?.first
     }
 
     data class Schedule(

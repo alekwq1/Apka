@@ -1,4 +1,4 @@
-# FUJARA 0.8.2
+# FUJARA 0.8.3
 
 Android app for local courier-offer profitability analysis.
 
@@ -6,7 +6,7 @@ Android app for local courier-offer profitability analysis.
 - applicationId / namespace: `pl.fujara.app`
 - targetSdk / compileSdk: 36
 - versionCode: 19
-- versionName: 0.8.2
+- versionName: 0.8.3
 - signed AAB workflow: `.github/workflows/build-play-aab.yml`
 - debug APK workflow: `.github/workflows/test-apk.yml`
 - privacy page: `docs/privacy.html`
@@ -18,3 +18,7 @@ Start with `PLAY-CONSOLE-START-HERE.md`.
 
 ## Privacy page
 The current support/privacy contact is `aleksanue@gmail.com`. Publish `/docs` using GitHub Pages before submitting the store listing.
+
+
+## 0.8.3
+Na ekranie szczegolow Pyszne kwota jest pobierana z pola `Suma przychodow`, a nie z pierwszej widocznej pozycji finansowej.
