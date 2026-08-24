@@ -9,6 +9,9 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -753,18 +756,28 @@ private fun PyszneSummaryScreen(
                 val key = PyszneHistoryParser.orderKeyForId(id)
                 savedDayEntries.any { entry -> entry.key == key || entry.orderId?.equals(id, ignoreCase = true) == true }
             }
-            val missingKnownIds = knownOrderIds.filterNot { it in savedKnownIds }
+            val unmatchedKnownIds = knownOrderIds.filterNot { it in savedKnownIds }
 
             if (dayReference != null) {
                 val expected = dayReference.orderCount.coerceAtLeast(1)
                 val savedCount = summary.orderCount.coerceAtMost(expected)
+                val missingSlots = (expected - savedCount).coerceAtLeast(0)
                 val allIdsScanned = knownOrderIds.size >= expected
+                val amountMatches = abs(summary.grossPln - dayReference.amountPln) < 0.02
+                val dayComplete = savedCount == expected && amountMatches
                 val completeness = (savedCount.toFloat() / expected.toFloat()).coerceIn(0f, 1f)
+                val explicitSavedIdCount = savedDayEntries.count { !it.orderId.isNullOrBlank() }
+                val legacySavedCount = (savedDayEntries.size - explicitSavedIdCount).coerceAtLeast(0)
+                val exactMissingIds = if (missingSlots > 0 && legacySavedCount == 0) {
+                    unmatchedKnownIds.take(missingSlots)
+                } else {
+                    emptyList()
+                }
 
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(14.dp),
-                    color = if (savedCount == expected) {
+                    color = if (dayComplete) {
                         MaterialTheme.colorScheme.primary.copy(alpha = 0.09f)
                     } else {
                         MaterialTheme.colorScheme.secondary.copy(alpha = 0.11f)
@@ -787,7 +800,32 @@ private fun PyszneSummaryScreen(
                             modifier = Modifier.fillMaxWidth()
                         )
 
-                        if (missingKnownIds.isNotEmpty()) {
+                        if (dayComplete) {
+                            Text(
+                                tx(
+                                    language,
+                                    "✓ Komplet. Liczba zleceń i kwota zgadzają się z Pyszne — nic więcej nie zapisuj.",
+                                    "✓ Complete. Saved count matches Pyszne — do not save anything else.",
+                                    "✓ Комплект. Кількість збігається — більше нічого не зберігайте.",
+                                    "✓ Комплект. Количество совпадает — больше ничего не сохраняйте."
+                                ),
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        } else if (savedCount == expected && !amountMatches) {
+                            Text(
+                                tx(
+                                    language,
+                                    "⚠ Liczba zapisów się zgadza, ale kwota różni się od Pyszne. Nie zapisuj kolejnych zleceń — sprawdź, czy któryś zapis ma złą kwotę.",
+                                    "⚠ Saved count matches, but the amount differs from Pyszne. Do not save more orders — check whether one saved order has the wrong amount.",
+                                    "⚠ Кількість збігається, але сума відрізняється. Не додавайте нові замовлення — перевірте суми записів.",
+                                    "⚠ Количество совпадает, но сумма отличается. Не добавляйте новые заказы — проверьте суммы записей."
+                                ),
+                                color = MaterialTheme.colorScheme.secondary,
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        } else if (exactMissingIds.isNotEmpty()) {
                             Text(
                                 if (allIdsScanned) {
                                     tx(language, "Do zapisania:", "Still to save:", "Ще зберегти:", "Ещё сохранить:")
@@ -797,13 +835,26 @@ private fun PyszneSummaryScreen(
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.error
                             )
-                            missingKnownIds.chunked(4).forEach { rowIds ->
+                            exactMissingIds.chunked(4).forEach { rowIds ->
                                 Text(
                                     rowIds.joinToString("   ") { "#$it" },
                                     fontWeight = FontWeight.Black,
                                     style = MaterialTheme.typography.bodyMedium
                                 )
                             }
+                        } else if (savedCount < expected && legacySavedCount > 0) {
+                            Text(
+                                tx(
+                                    language,
+                                    "Brakuje $missingSlots zapisów. Część starszych logów nie ma przypisanego numeru zlecenia, więc FUJARA nie zgaduje numerów — sprawdź tylko brakującą liczbę dostaw.",
+                                    "$missingSlots saves are missing. Some older logs have no order ID, so FUJARA will not guess which IDs are missing — check only the missing delivery count.",
+                                    "Бракує $missingSlots записів. Старі логи можуть не мати ID замовлення, тому FUJARA не вгадує номери.",
+                                    "Не хватает $missingSlots записей. Старые логи могут быть без ID заказа, поэтому FUJARA не угадывает номера."
+                                ),
+                                color = MaterialTheme.colorScheme.secondary,
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.bodySmall
+                            )
                         } else if (savedCount < expected && !allIdsScanned) {
                             Text(
                                 tx(
@@ -817,15 +868,9 @@ private fun PyszneSummaryScreen(
                                 fontWeight = FontWeight.Bold,
                                 style = MaterialTheme.typography.bodySmall
                             )
-                        } else if (savedCount == expected) {
-                            Text(
-                                tx(language, "✓ Liczba zapisów zgadza się z Pyszne.", "✓ Saved count matches Pyszne.", "✓ Кількість збігається.", "✓ Количество совпадает."),
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.Bold
-                            )
                         }
 
-                        if (!allIdsScanned) {
+                        if (!allIdsScanned && savedCount < expected) {
                             Text(
                                 tx(
                                     language,
@@ -1279,20 +1324,26 @@ private fun DayCelebrationDialog(
     language: AppLanguage,
     onDismiss: () -> Unit
 ) {
+    val context = LocalContext.current
     var stage by remember(summary.date, summary.orderCount, summary.grossPln) { mutableStateOf(0) }
 
     LaunchedEffect(summary.date, summary.orderCount, summary.grossPln) {
         stage = 0
         delay(250)
         stage = 1
+        vibrateCelebrationStage(context, summary.status, 1)
         delay(700)
         stage = 2
+        vibrateCelebrationStage(context, summary.status, 2)
         delay(700)
         stage = 3
+        vibrateCelebrationStage(context, summary.status, 3)
         delay(750)
         stage = 4
+        vibrateCelebrationStage(context, summary.status, 4)
         delay(650)
         stage = 5
+        vibrateCelebrationStage(context, summary.status, 5)
     }
 
     val accent = summaryStatusColor(summary.status)
@@ -1545,6 +1596,42 @@ private fun DayCelebrationDialog(
             }
         }
     }
+}
+
+private fun vibrateCelebrationStage(
+    context: Context,
+    status: ProfitabilityStatus,
+    stage: Int
+) {
+    val vibrator: Vibrator = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        context.getSystemService(VibratorManager::class.java)?.defaultVibrator
+    } else {
+        @Suppress("DEPRECATION")
+        context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+    }) ?: return
+
+    if (!vibrator.hasVibrator()) return
+
+    val (timings, amplitudes) = when (stage) {
+        1 -> longArrayOf(0, 28, 55, 38) to intArrayOf(0, 85, 0, 125)
+        2 -> longArrayOf(0, 20, 55, 20, 70, 28) to intArrayOf(0, 80, 0, 105, 0, 135)
+        3 -> longArrayOf(0, 32) to intArrayOf(0, 115)
+        4 -> when (status) {
+            ProfitabilityStatus.PROFITABLE -> longArrayOf(0, 38, 45, 55, 45, 78) to intArrayOf(0, 125, 0, 175, 0, 225)
+            ProfitabilityStatus.ALMOST_PROFITABLE -> longArrayOf(0, 42, 70, 55) to intArrayOf(0, 135, 0, 185)
+            ProfitabilityStatus.UNPROFITABLE -> longArrayOf(0, 75, 55, 75) to intArrayOf(0, 175, 0, 145)
+            ProfitabilityStatus.NO_TIME -> longArrayOf(0, 35, 60, 35) to intArrayOf(0, 105, 0, 135)
+        }
+        5 -> when (status) {
+            ProfitabilityStatus.PROFITABLE -> longArrayOf(0, 35, 40, 55, 40, 95) to intArrayOf(0, 145, 0, 195, 0, 255)
+            ProfitabilityStatus.ALMOST_PROFITABLE -> longArrayOf(0, 45, 55, 75) to intArrayOf(0, 155, 0, 215)
+            ProfitabilityStatus.UNPROFITABLE -> longArrayOf(0, 90, 65, 45) to intArrayOf(0, 195, 0, 120)
+            ProfitabilityStatus.NO_TIME -> longArrayOf(0, 40, 60, 55) to intArrayOf(0, 120, 0, 155)
+        }
+        else -> return
+    }
+
+    vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
 }
 
 @Composable

@@ -50,6 +50,8 @@ class DeliveryAccessibilityService : AccessibilityService() {
     private var lastNotificationLanguage: String? = null
     private var activePyszneDayDate: LocalDate? = null
     private var activePyszneDaySeenAt = 0L
+    private val pyszneDisplayGate = PyszneDisplayGate()
+    private var lastPyszneOverlayWasHistoryDetails = false
 
     private val scanIntervalMs = 1200L
     private val minimumScreenshotGapMs = 700L
@@ -106,6 +108,20 @@ class DeliveryAccessibilityService : AccessibilityService() {
             !::overlay.isInitialized
         ) {
             return
+        }
+
+        // Pyszne potrafi przez ulamek sekundy wyswietlac dane poprzedniego
+        // zlecenia po kliknieciu w kolejna pozycje. Chowamy nakladke od razu po
+        // przejsciu i blokujemy ostatnie ID do czasu stabilnego odczytu nowego.
+        if (
+            platformForPackage(eventPackage) == CourierPlatform.PYSZNE &&
+            lastPyszneOverlayWasHistoryDetails &&
+            (event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED ||
+                event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)
+        ) {
+            pyszneDisplayGate.beginDirectTransition(SystemClock.elapsedRealtime())
+            lastPyszneOverlayWasHistoryDetails = false
+            if (::overlay.isInitialized) overlay.hide()
         }
 
         pendingImmediateScan?.let { handler.removeCallbacks(it) }
@@ -303,9 +319,69 @@ class DeliveryAccessibilityService : AccessibilityService() {
                 val platform = inferredPlatform ?: packagePlatform
                 val resolved = OcrTextResolver.resolve(result, platform)
 
-                // Dla historii Pyszne laczymy dwa niezalezne zrodla: Accessibility +
-                // najlepszy wariant OCR. Dzieki temu przycisk ZAPISZ DANE nie znika,
-                // gdy nakladka lub pojedynczy skan zasloni/zgubi jedna linie.
+                val recognizedName = platform?.displayName
+                    ?: if (
+                        configuredPackage.isNotBlank() &&
+                        sourcePackageName == configuredPackage
+                    ) {
+                        appLabel(sourcePackageName)
+                    } else {
+                        null
+                    }
+
+                if (platform == CourierPlatform.PYSZNE) {
+                    val independentTexts = listOf(
+                        pyszneAccessibilityText,
+                        resolved?.text.orEmpty(),
+                        recognitionText
+                    )
+                        .map { it.trim() }
+                        .filter { it.isNotBlank() }
+                        .distinct()
+
+                    val joinedForState = independentTexts.joinToString("\n")
+                    if (isPyszneNavigationScreen(joinedForState)) {
+                        pyszneDisplayGate.noteNavigationScreen()
+                        lastPyszneOverlayWasHistoryDetails = false
+                        if (::overlay.isInitialized) overlay.hide()
+                    }
+
+                    // Nie laczymy bezwarunkowo Accessibility i OCR na ekranie
+                    // szczegolow. Podczas przejscia jedno zrodlo moze juz widziec
+                    // nowe zlecenie, a drugie jeszcze stare. Taki miks byl glowna
+                    // przyczyna sekundowego migniecia starymi danymi.
+                    val historyResolution = resolvePyszneHistory(independentTexts)
+                    if (historyResolution.detailsDetected) {
+                        val candidate = historyResolution.candidate
+                        if (historyResolution.conflict || candidate == null || recognizedName == null) {
+                            pyszneDisplayGate.noteConflict()
+                            lastPyszneOverlayWasHistoryDetails = false
+                            misses = 0
+                            if (::overlay.isInitialized) overlay.hide()
+                            return@addOnSuccessListener
+                        }
+
+                        misses = 0
+                        lastDeliverySignalAt = SystemClock.elapsedRealtime()
+                        if (sourcePackageName.isNotBlank() && packagePlatform == CourierPlatform.PYSZNE) {
+                            lastDeliveryPackage = sourcePackageName
+                        }
+
+                        showOffer(
+                            offer = candidate.offer,
+                            applicationName = recognizedName,
+                            sourceText = candidate.sourceText,
+                            packageName = if (
+                                isGalleryPackage(sourcePackageName) ||
+                                packagePlatform != CourierPlatform.PYSZNE
+                            ) "" else sourcePackageName
+                        )
+                        return@addOnSuccessListener
+                    }
+                }
+
+                // Dla zwyklej, biezacej oferty Pyszne nadal mozemy laczyc zrodla,
+                // bo nie ma tam ryzyka zapisania danych poprzedniego zlecenia.
                 val pyszneSourceText = if (platform == CourierPlatform.PYSZNE) {
                     listOf(pyszneAccessibilityText, resolved?.text ?: recognitionText)
                         .map { it.trim() }
@@ -321,16 +397,6 @@ class DeliveryAccessibilityService : AccessibilityService() {
                     null
                 }
                 val finalOffer = pyszneFallbackOffer ?: resolved?.offer
-
-                val recognizedName = platform?.displayName
-                    ?: if (
-                        configuredPackage.isNotBlank() &&
-                        sourcePackageName == configuredPackage
-                    ) {
-                        appLabel(sourcePackageName)
-                    } else {
-                        null
-                    }
 
                 if (recognizedName != null && finalOffer != null) {
                     misses = 0
@@ -538,6 +604,11 @@ class DeliveryAccessibilityService : AccessibilityService() {
             val platform = platformForPackage(pkg)
             if (platform == CourierPlatform.PYSZNE) {
                 capturePyszneDayData(text)
+                if (isPyszneNavigationScreen(text)) {
+                    pyszneDisplayGate.noteNavigationScreen()
+                    lastPyszneOverlayWasHistoryDetails = false
+                    if (::overlay.isInitialized) overlay.hide()
+                }
             }
             val applicationName = platform?.displayName
                 ?: if (configuredPackage.isNotBlank() && pkg == configuredPackage) appLabel(pkg) else null
@@ -586,6 +657,11 @@ class DeliveryAccessibilityService : AccessibilityService() {
                 val platform = platformForPackage(pkg)
                 if (platform == CourierPlatform.PYSZNE) {
                     capturePyszneDayData(text)
+                    if (isPyszneNavigationScreen(text)) {
+                        pyszneDisplayGate.noteNavigationScreen()
+                        lastPyszneOverlayWasHistoryDetails = false
+                        if (::overlay.isInitialized) overlay.hide()
+                    }
                 }
                 val applicationName = platform?.displayName
                     ?: if (configuredPackage.isNotBlank() && pkg == configuredPackage) appLabel(pkg) else null
@@ -653,6 +729,89 @@ class DeliveryAccessibilityService : AccessibilityService() {
             pyszneLogStore.mergeDayOrderIds(activeDate, ids)
             activePyszneDaySeenAt = SystemClock.elapsedRealtime()
         }
+    }
+
+    /**
+     * Rozpoznaje ekran historii/listy Pyszne. Na takim ekranie chowamy panel i
+     * uzbrajamy ponownie stabilizator przed otwarciem kolejnego zlecenia.
+     */
+    private fun isPyszneNavigationScreen(text: String): Boolean {
+        val lower = text.lowercase()
+        val navigation =
+            "historia przychodów" in lower ||
+                "historia przychodow" in lower ||
+                "earnings history" in lower ||
+                "podsumowanie dnia" in lower ||
+                "daily summary" in lower ||
+                "day summary" in lower
+        return navigation && !isPyszneHistoryDetailsScreen(text)
+    }
+
+    private fun isPyszneHistoryDetailsScreen(text: String): Boolean {
+        val lower = text.lowercase()
+        val detailsMarker =
+            "szczegóły zlecenia" in lower ||
+                "szczegoly zlecenia" in lower ||
+                "order details" in lower
+        val completedMarker =
+            "dostarczone" in lower || "delivered" in lower ||
+                "anulowane" in lower || "cancelled" in lower || "canceled" in lower
+        val metricsMarker =
+            (("czas aktywności" in lower || "czas aktywnosci" in lower || "active time" in lower) &&
+                ("szacowana odległość" in lower || "szacowana odleglosc" in lower || "estimated distance" in lower))
+        return detailsMarker || (completedMarker && metricsMarker)
+    }
+
+    /**
+     * Na szczegolach Pyszne OCR i Accessibility sa analizowane OSOBNO.
+     * Jesli widza dwa rozne numery zlecenia, uznajemy ekran za przejsciowy i
+     * niczego nie pokazujemy. Kandydat musi miec jawna date i ID zlecenia.
+     */
+    private fun resolvePyszneHistory(textSources: List<String>): PyszneHistoryResolution {
+        val detailsTexts = textSources
+            .map { it.trim() }
+            .filter { it.isNotBlank() && isPyszneHistoryDetailsScreen(it) }
+            .distinct()
+
+        if (detailsTexts.isEmpty()) return PyszneHistoryResolution(detailsDetected = false)
+
+        val candidates = detailsTexts.mapNotNull { text ->
+            // Brak daty albo kilka dat oznacza niepelny/mieszany ekran.
+            val dates = PyszneHistoryParser.parseDatesFromText(text).distinct()
+            if (dates.size != 1) return@mapNotNull null
+
+            val offer = OfferParser.parse(text, CourierPlatform.PYSZNE) ?: return@mapNotNull null
+            val entry = PyszneHistoryParser.parse(sourceText = text, offer = offer) ?: return@mapNotNull null
+            val orderId = entry.orderId?.trim()?.uppercase()?.takeIf { it.isNotBlank() }
+                ?: return@mapNotNull null
+
+            PyszneHistoryCandidate(
+                identity = orderId,
+                offer = offer,
+                entry = entry,
+                sourceText = text,
+                score = historyCandidateScore(entry, text)
+            )
+        }
+
+        val identities = candidates.map { it.identity }.distinct()
+        if (identities.size > 1) {
+            return PyszneHistoryResolution(detailsDetected = true, conflict = true)
+        }
+
+        return PyszneHistoryResolution(
+            detailsDetected = true,
+            conflict = false,
+            candidate = candidates.maxByOrNull { it.score }
+        )
+    }
+
+    private fun historyCandidateScore(entry: PyszneDeliveryLog, text: String): Int {
+        var score = 100
+        if (!entry.restaurant.equals("Nieznana restauracja", ignoreCase = true)) score += 20
+        if (entry.acceptedMinuteOfDay != null) score += 10
+        if (text.contains("Suma przychod", ignoreCase = true) || text.contains("total earnings", ignoreCase = true)) score += 10
+        return score
     }
 
     private fun buildAccessibilityText(root: AccessibilityNodeInfo): String {
@@ -783,6 +942,30 @@ class DeliveryAccessibilityService : AccessibilityService() {
             PyszneHistoryParser.parse(sourceText = sourceText, offer = offer)
         } else {
             null
+        }
+
+        if (platform == CourierPlatform.PYSZNE && isPyszneHistoryDetailsScreen(sourceText)) {
+            val identity = historyEntry?.orderId?.trim()?.uppercase()
+            if (identity.isNullOrBlank()) {
+                pyszneDisplayGate.noteConflict()
+                lastPyszneOverlayWasHistoryDetails = false
+                if (::overlay.isInitialized) overlay.hide()
+                scheduleThrottledScan(450L)
+                return
+            }
+
+            if (!pyszneDisplayGate.shouldShow(identity, SystemClock.elapsedRealtime())) {
+                // Pierwszy poprawny odczyt jest tylko kandydatem. Panel pozostaje
+                // schowany, a szybszy kolejny skan potwierdza, ze Pyszne zdazylo
+                // juz podmienic wszystkie dane na nowe zlecenie.
+                lastPyszneOverlayWasHistoryDetails = false
+                if (::overlay.isInitialized) overlay.hide()
+                scheduleThrottledScan(450L)
+                return
+            }
+            lastPyszneOverlayWasHistoryDetails = true
+        } else if (platform == CourierPlatform.PYSZNE) {
+            lastPyszneOverlayWasHistoryDetails = false
         }
 
         overlay.show(
@@ -1013,6 +1196,20 @@ class DeliveryAccessibilityService : AccessibilityService() {
 
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density).toInt()
+
+    private data class PyszneHistoryCandidate(
+        val identity: String,
+        val offer: Offer,
+        val entry: PyszneDeliveryLog,
+        val sourceText: String,
+        val score: Int
+    )
+
+    private data class PyszneHistoryResolution(
+        val detailsDetected: Boolean,
+        val conflict: Boolean = false,
+        val candidate: PyszneHistoryCandidate? = null
+    )
 
     private data class WindowCandidate(
         val window: AccessibilityWindowInfo,

@@ -1,12 +1,12 @@
-# FUJARA 0.8.7
+# FUJARA 0.8.9
 
 Android app for local courier-offer profitability analysis.
 
 ## Google Play readiness
 - applicationId / namespace: `pl.fujara.app`
 - targetSdk / compileSdk: 36
-- versionCode: 24
-- versionName: 0.8.7
+- versionCode: 25
+- versionName: 0.8.9
 - signed AAB workflow: `.github/workflows/build-play-aab.yml`
 - debug APK workflow: `.github/workflows/test-apk.yml`
 - privacy page: `docs/privacy.html`
@@ -31,6 +31,13 @@ Na ekranie szczegolow Pyszne kwota jest pobierana z pola `Suma przychodow`, a ni
 - Animowane podsumowanie i udostepnianie wyniku przez system Android.
 - Bez permission `INTERNET`; wspolny scoreboard online nie jest jeszcze wlaczony.
 
+
+
+## 0.8.8
+
+- poprawiona kontrola kompletności: gdy liczba zleceń i kwota zgadzają się z Pyszne, aplikacja nie pokazuje fałszywej listy „Do zapisania”, nawet jeśli część starszych logów nie ma przypiętych ID,
+- przy zgodnej liczbie, ale różnej kwocie pojawia się osobne ostrzeżenie zamiast sugerowania kolejnych zapisów,
+- podsumowanie dnia ma wieloetapową wibrację zsynchronizowaną z animacją; finał różni się dla SUPER / NA STYK / FUJARA.
 
 ## 0.8.7
 

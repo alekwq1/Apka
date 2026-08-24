@@ -1,4 +1,4 @@
-# Pyszne - podsumowanie dnia (FUJARA 0.8.7)
+# Pyszne - podsumowanie dnia (FUJARA 0.8.9)
 
 ## Przeplyw uzytkownika
 1. W Pyszne wejdz w historie i otworz szczegoly zakonczonego lub anulowanego zlecenia.
@@ -37,3 +37,15 @@ Po poprawnej kontroli dnia aplikacja pokazuje osobną animację wyniku. Warto sp
 - Na szczegółach zlecenia przycisk pokazuje `+ ZAPISZ #NUMER` albo `✓ ZAPISANE #NUMER`.
 - PLN/h dla całego dnia jest liczone bez limitu 6 godzin. Limit pozostaje tylko zabezpieczeniem dla pojedynczej oferty.
 - Lista restauracji jest skrócona do TOP 3 i DO POPRAWY 3. Pełną listę można rozwinąć przyciskiem.
+
+
+## 0.8.8 — komplet bez fałszywych braków + haptics
+
+- Jeżeli zapisano komplet zleceń i suma zgadza się z kontrolą Pyszne, lista brakujących ID jest ukrywana.
+- Starsze wpisy bez ID nie powodują już komunikatu „Do zapisania”, gdy kompletność wynosi 100%.
+- Gdy liczba się zgadza, ale suma nie, aplikacja każe sprawdzić kwoty zamiast dodawać zlecenia.
+- Animacja podsumowania ma zsynchronizowane impulsy wibracji oraz mocniejszy finał zależny od statusu dnia.
+
+## 0.8.9 — stabilizacja szczegółów
+
+Na ekranie pojedynczego zlecenia panel FUJARA jest celowo opóźniony do chwili, gdy nowe dane są spójne. Po przejściu między zleceniami stary panel znika od razu. OCR i Accessibility nie są już bezwarunkowo łączone na tym ekranie: jeśli podają różne numery zleceń, panel pozostaje ukryty do następnego poprawnego odczytu.
