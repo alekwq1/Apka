@@ -510,7 +510,7 @@ class PyszneLogStore(context: Context) {
     @Synchronized
     fun save(entry: PyszneDeliveryLog): PyszneSaveResult {
         val references = allDayReferences()
-        val referenceDate = PyszneWorkDayResolver.resolveDate(entry, references)
+        val referenceDate = PyszneWorkDayResolver.resolveDate(entry, references.values)
         val normalizedEntry = referenceDate?.let { entry.copy(date = it) } ?: entry
         val current = all().toMutableList()
         val duplicateIndex = current.indexOfFirst { sameDelivery(it, normalizedEntry) }
@@ -538,7 +538,7 @@ class PyszneLogStore(context: Context) {
     }
 
     fun contains(entry: PyszneDeliveryLog): Boolean {
-        val referenceDate = PyszneWorkDayResolver.resolveDate(entry, allDayReferences())
+        val referenceDate = PyszneWorkDayResolver.resolveDate(entry, allDayReferences().values)
         val normalizedEntry = referenceDate?.let { entry.copy(date = it) } ?: entry
         val existing = all().firstOrNull { sameDelivery(it, normalizedEntry) } ?: return false
         val needsDateRepair = referenceDate != null &&
