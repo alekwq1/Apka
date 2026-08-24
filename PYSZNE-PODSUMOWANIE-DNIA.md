@@ -1,4 +1,4 @@
-# Pyszne - podsumowanie dnia (FUJARA 0.8.5)
+# Pyszne - podsumowanie dnia (FUJARA 0.8.7)
 
 ## Przeplyw uzytkownika
 1. W Pyszne wejdz w historie i otworz szczegoly zakonczonego lub anulowanego zlecenia.
@@ -23,3 +23,17 @@ Zlecenie z markerem `Anulowane` / `Zlecenie anulowane` jest traktowane jako zako
 
 ## Udostepnianie
 Wynik tekstowy ma teraz czytelne sekcje: przychod/zlecenia/dystans/czas, stawki po kosztach, SUPER/STYK/FUJARA oraz najlepsza/najslabsza restauracja. Nadal korzysta z Android Share Sheet i nie wysyla danych na backend.
+
+
+## 0.8.6 — finał dnia
+
+Po poprawnej kontroli dnia aplikacja pokazuje osobną animację wyniku. Warto sprawdzić na urządzeniu trzy warianty: SUPER, NA STYK oraz FUJARA. Animacja kończy się przyciskiem „Pokaż pełne podsumowanie”, po czym karty restauracji odsłaniają się kolejno.
+
+
+## 0.8.7 — kompletność zleceń i krótszy wynik
+
+- Na ekranie `Historia przychodów` FUJARA zapamiętuje nagłówek dnia (data, liczba zleceń, kwota), a podczas przewijania zbiera numery `#XXXXXX`.
+- W `Pyszne -> dzień` pojawia się pasek kompletności i lista numerów, których jeszcze nie zapisano. Jeżeli nie odczytano wszystkich numerów, aplikacja prosi o przewinięcie listy dnia do końca.
+- Na szczegółach zlecenia przycisk pokazuje `+ ZAPISZ #NUMER` albo `✓ ZAPISANE #NUMER`.
+- PLN/h dla całego dnia jest liczone bez limitu 6 godzin. Limit pozostaje tylko zabezpieczeniem dla pojedynczej oferty.
+- Lista restauracji jest skrócona do TOP 3 i DO POPRAWY 3. Pełną listę można rozwinąć przyciskiem.

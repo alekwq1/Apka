@@ -10,12 +10,14 @@ import java.util.Locale
 
 /**
  * Minimalny zapis historii Pyszne potrzebny do podsumowan.
- * Nie zapisujemy pelnego OCR, adresu klienta ani surowego numeru zlecenia.
- * [key] jest lokalnym hashem uzywanym tylko do blokowania duplikatow.
+ * Nie zapisujemy pelnego OCR ani adresu klienta. Numer zlecenia zapisujemy lokalnie
+ * tylko po to, aby user widzial co juz ma zebrane; [key] nadal blokuje duplikaty.
  */
 data class PyszneDeliveryLog(
     val key: String,
     val fingerprint: String,
+    /** Jawny numer zlecenia jest przechowywany tylko lokalnie, aby pokazac userowi co juz zapisano. */
+    val orderId: String? = null,
     val date: LocalDate,
     val acceptedMinuteOfDay: Int?,
     val restaurant: String,
@@ -132,6 +134,7 @@ object PyszneHistoryParser {
         return PyszneDeliveryLog(
             key = sha256(identity).take(24),
             fingerprint = sha256(fallbackIdentity).take(24),
+            orderId = rawOrderId,
             date = date,
             acceptedMinuteOfDay = acceptedMinute,
             restaurant = restaurant,
@@ -275,6 +278,11 @@ object PyszneHistoryParser {
         .trim(' ', '-', ':', '|')
         .take(140)
 
+    fun orderKeyForId(rawOrderId: String): String {
+        val normalized = rawOrderId.trim().removePrefix("#").uppercase(Locale.ROOT)
+        return sha256("id|$normalized").take(24)
+    }
+
     fun normalizeRestaurant(value: String): String = value
         .substringBefore(" (")
         .substringBefore(" – ")
@@ -294,6 +302,8 @@ data class PyszneDayReference(
     val date: LocalDate,
     val orderCount: Int,
     val amountPln: Double,
+    /** Numery zlecen odczytane podczas przewijania listy dnia w Pyszne. */
+    val orderIds: List<String> = emptyList(),
     val capturedAtMillis: Long = System.currentTimeMillis()
 )
 
@@ -308,6 +318,13 @@ object PyszneDayReferenceParser {
     private val moneyRegex = Regex(
         """(?i)(\d{1,5}(?:[ .]\d{3})*[,.]\d{2})\s*(?:zł|zl|pln)(?![\p{L}\p{N}])"""
     )
+    private val listOrderIdRegex = Regex("""(?i)#\s*([A-Z0-9]{6})\b""")
+
+    fun parseOrderIds(text: String): List<String> = listOrderIdRegex.findAll(text)
+        .map { it.groupValues[1].uppercase(Locale.ROOT) }
+        .filter { it !in setOf("FUJARA", "PYSZNE") }
+        .distinct()
+        .toList()
 
     fun parse(text: String): PyszneDayReference? {
         if (!daySummaryMarker.containsMatchIn(text)) return null
@@ -365,7 +382,8 @@ object PyszneDayReferenceParser {
         return PyszneDayReference(
             date = date,
             orderCount = count,
-            amountPln = amountCents / 100.0
+            amountPln = amountCents / 100.0,
+            orderIds = parseOrderIds(text)
         )
     }
 }
@@ -381,6 +399,7 @@ class PyszneLogStore(context: Context) {
             val existing = current[duplicateIndex]
             if (needsUpgrade(existing, entry)) {
                 current[duplicateIndex] = existing.copy(
+                    orderId = existing.orderId ?: entry.orderId,
                     restaurant = if (restaurantQuality(entry.restaurant) > restaurantQuality(existing.restaurant)) entry.restaurant else existing.restaurant,
                     cancelled = existing.cancelled || entry.cancelled
                 )
@@ -399,7 +418,8 @@ class PyszneLogStore(context: Context) {
     }
 
     private fun needsUpgrade(existing: PyszneDeliveryLog, incoming: PyszneDeliveryLog): Boolean =
-        restaurantQuality(incoming.restaurant) > restaurantQuality(existing.restaurant) ||
+        (existing.orderId.isNullOrBlank() && !incoming.orderId.isNullOrBlank()) ||
+            restaurantQuality(incoming.restaurant) > restaurantQuality(existing.restaurant) ||
             (!existing.cancelled && incoming.cancelled)
 
     private fun restaurantQuality(value: String): Int {
@@ -437,21 +457,36 @@ class PyszneLogStore(context: Context) {
     @Synchronized
     fun saveDayReference(reference: PyszneDayReference) {
         val refs = allDayReferences().toMutableMap()
-        refs[reference.date] = reference
-        val obj = JSONObject()
-        refs.toSortedMap().forEach { (date, item) ->
-            obj.put(
-                date.toString(),
-                JSONObject()
-                    .put("count", item.orderCount)
-                    .put("amount", item.amountPln)
-                    .put("capturedAt", item.capturedAtMillis)
-            )
-        }
-        prefs.edit().putString(KEY_DAY_REFERENCES, obj.toString()).apply()
+        val previous = refs[reference.date]
+        refs[reference.date] = reference.copy(
+            orderIds = mergeOrderIds(previous?.orderIds.orEmpty(), reference.orderIds),
+            capturedAtMillis = System.currentTimeMillis()
+        )
+        persistDayReferences(refs)
+    }
+
+    /** Dopisuje numery widoczne po przewinieciu listy, gdy naglowek dnia nie jest juz na ekranie. */
+    @Synchronized
+    fun mergeDayOrderIds(date: LocalDate, orderIds: List<String>) {
+        if (orderIds.isEmpty()) return
+        val refs = allDayReferences().toMutableMap()
+        val previous = refs[date] ?: return
+        refs[date] = previous.copy(
+            orderIds = mergeOrderIds(previous.orderIds, orderIds),
+            capturedAtMillis = System.currentTimeMillis()
+        )
+        persistDayReferences(refs)
     }
 
     fun dayReference(date: LocalDate): PyszneDayReference? = allDayReferences()[date]
+
+    fun latestDayReference(): PyszneDayReference? = allDayReferences().values.maxByOrNull { it.capturedAtMillis }
+
+    private fun mergeOrderIds(first: List<String>, second: List<String>): List<String> =
+        (first + second)
+            .map { it.trim().removePrefix("#").uppercase(Locale.ROOT) }
+            .filter { it.matches(Regex("""[A-Z0-9]{6}""")) }
+            .distinct()
 
     private fun allDayReferences(): Map<LocalDate, PyszneDayReference> {
         val raw = prefs.getString(KEY_DAY_REFERENCES, null).orEmpty()
@@ -473,6 +508,13 @@ class PyszneLogStore(context: Context) {
                             date = date,
                             orderCount = count,
                             amountPln = amount,
+                            orderIds = item.optJSONArray("orderIds")?.let { array ->
+                                buildList {
+                                    for (i in 0 until array.length()) {
+                                        array.optString(i).takeIf { it.isNotBlank() }?.let(::add)
+                                    }
+                                }
+                            }.orEmpty(),
                             capturedAtMillis = item.optLong("capturedAt", 0L)
                         )
                     )
@@ -485,16 +527,28 @@ class PyszneLogStore(context: Context) {
     fun deleteDate(date: LocalDate) {
         persist(all().filterNot { it.date == date })
         val refs = allDayReferences().toMutableMap().apply { remove(date) }
-        val obj = JSONObject()
-        refs.toSortedMap().forEach { (refDate, item) ->
-            obj.put(refDate.toString(), JSONObject().put("count", item.orderCount).put("amount", item.amountPln).put("capturedAt", item.capturedAtMillis))
-        }
-        prefs.edit().putString(KEY_DAY_REFERENCES, obj.toString()).apply()
+        persistDayReferences(refs)
     }
 
     @Synchronized
     fun clear() {
         prefs.edit().remove(KEY_ENTRIES).remove(KEY_DAY_REFERENCES).apply()
+    }
+
+    private fun persistDayReferences(refs: Map<LocalDate, PyszneDayReference>) {
+        val obj = JSONObject()
+        refs.toSortedMap().forEach { (date, item) ->
+            val ids = JSONArray().apply { item.orderIds.forEach { put(it) } }
+            obj.put(
+                date.toString(),
+                JSONObject()
+                    .put("count", item.orderCount)
+                    .put("amount", item.amountPln)
+                    .put("orderIds", ids)
+                    .put("capturedAt", item.capturedAtMillis)
+            )
+        }
+        prefs.edit().putString(KEY_DAY_REFERENCES, obj.toString()).apply()
     }
 
     private fun persist(entries: List<PyszneDeliveryLog>) {
@@ -504,6 +558,7 @@ class PyszneLogStore(context: Context) {
                 JSONObject()
                     .put("key", entry.key)
                     .put("fingerprint", entry.fingerprint)
+                    .put("orderId", entry.orderId ?: JSONObject.NULL)
                     .put("date", entry.date.toString())
                     .put("acceptedMinute", entry.acceptedMinuteOfDay ?: JSONObject.NULL)
                     .put("restaurant", entry.restaurant)
@@ -521,6 +576,7 @@ class PyszneLogStore(context: Context) {
         PyszneDeliveryLog(
             key = obj.getString("key"),
             fingerprint = obj.optString("fingerprint", obj.getString("key")),
+            orderId = if (obj.isNull("orderId")) null else obj.optString("orderId").takeIf { it.isNotBlank() },
             date = LocalDate.parse(obj.getString("date")),
             acceptedMinuteOfDay = if (obj.isNull("acceptedMinute")) null else obj.getInt("acceptedMinute"),
             restaurant = obj.optString("restaurant", "Nieznana restauracja").let {
@@ -633,26 +689,110 @@ object PyszneDaySummaryCalculator {
         )
     }
 
+    /**
+     * Podsumowanie dnia moze miec > 6 godzin. Zwykly kalkulator ofert celowo
+     * odrzuca tak dlugi czas jako niemozliwy dla pojedynczego zlecenia, dlatego
+     * agregaty dnia/restauracji liczymy bez limitu 360 min.
+     */
     private fun profitabilityFor(
         entries: List<PyszneDeliveryLog>,
         rules: ProfitabilityCalculator.Rules,
         decisionBasis: DecisionBasis,
         zusPercent: Double
     ): Profitability {
-        val offer = Offer(
-            amountPln = entries.sumOf { it.amountPln },
-            distanceKm = entries.sumOf { it.distanceKm },
-            durationSeconds = entries.sumOf { it.durationSeconds }.takeIf { it > 0 },
-            applyExtraTimeBuffer = false
+        val gross = entries.sumOf { it.amountPln }
+        val distance = entries.sumOf { it.distanceKm }
+        val durationSeconds = entries.sumOf { it.durationSeconds }.coerceAtLeast(0)
+
+        val vehicleCostPerKm = rules.vehicleCostPerKm.takeIf { it.isFinite() && it >= 0.0 } ?: 0.35
+        val minimumPerKm = rules.minimumNetPerKm.takeIf { it.isFinite() && it >= 0.0 } ?: 2.50
+        val tolerancePerKm = rules.toleranceNetPerKm.takeIf { it.isFinite() && it >= 0.0 } ?: 0.50
+        val minimumPerHour = rules.minimumNetPerHour.takeIf { it.isFinite() && it >= 0.0 } ?: 35.0
+        val tolerancePerHour = rules.toleranceNetPerHour.takeIf { it.isFinite() && it >= 0.0 } ?: 5.0
+        val safeZusPercent = zusPercent.takeIf { it.isFinite() }?.coerceIn(0.0, 100.0) ?: 0.0
+
+        val afterZus = gross * (1.0 - safeZusPercent / 100.0)
+        val net = afterZus - distance * vehicleCostPerKm
+        val perKm = distance.takeIf { it > 0.0 }?.let { net / it }
+        val perHour = durationSeconds.takeIf { it > 0 }?.let { net / (it / 3600.0) }
+        val status = aggregateStatus(
+            perKm = perKm,
+            perHour = perHour,
+            minimumPerKm = minimumPerKm,
+            tolerancePerKm = tolerancePerKm,
+            minimumPerHour = minimumPerHour,
+            tolerancePerHour = tolerancePerHour,
+            decisionBasis = decisionBasis
         )
-        return ProfitabilityCalculator.calculate(
-            offer = offer,
-            rules = rules,
-            currentMinuteOfDay = 0,
-            decisionBasis = decisionBasis,
-            zusPercent = zusPercent
+
+        return Profitability(
+            grossPln = gross,
+            afterZusPln = afterZus,
+            netPln = net,
+            distanceKm = distance,
+            durationMinutes = durationSeconds.takeIf { it > 0 }?.let { kotlin.math.ceil(it / 60.0).toInt() },
+            extraTimeMinutes = 0,
+            zusPercent = safeZusPercent,
+            netPerKm = perKm,
+            netPerHour = perHour,
+            profitable = when (status) {
+                ProfitabilityStatus.PROFITABLE -> true
+                ProfitabilityStatus.ALMOST_PROFITABLE, ProfitabilityStatus.UNPROFITABLE -> false
+                ProfitabilityStatus.NO_TIME -> null
+            },
+            status = status,
+            pickupTimeMinutesOfDay = null,
+            deliveryTimeMinutesOfDay = null,
+            durationSource = if (durationSeconds > 0) DurationSource.DIRECT_TOTAL else DurationSource.UNKNOWN
         )
     }
+
+    private fun aggregateStatus(
+        perKm: Double?,
+        perHour: Double?,
+        minimumPerKm: Double,
+        tolerancePerKm: Double,
+        minimumPerHour: Double,
+        tolerancePerHour: Double,
+        decisionBasis: DecisionBasis
+    ): ProfitabilityStatus {
+        val almostKm = (minimumPerKm - tolerancePerKm).coerceAtLeast(0.0)
+        val almostHour = (minimumPerHour - tolerancePerHour).coerceAtLeast(0.0)
+
+        fun kmStatus(): ProfitabilityStatus {
+            val value = perKm?.takeIf { it.isFinite() } ?: return ProfitabilityStatus.NO_TIME
+            return when {
+                value >= minimumPerKm -> ProfitabilityStatus.PROFITABLE
+                value >= almostKm -> ProfitabilityStatus.ALMOST_PROFITABLE
+                else -> ProfitabilityStatus.UNPROFITABLE
+            }
+        }
+
+        fun hourStatus(): ProfitabilityStatus {
+            val value = perHour?.takeIf { it.isFinite() } ?: return ProfitabilityStatus.NO_TIME
+            return when {
+                value >= minimumPerHour -> ProfitabilityStatus.PROFITABLE
+                value >= almostHour -> ProfitabilityStatus.ALMOST_PROFITABLE
+                else -> ProfitabilityStatus.UNPROFITABLE
+            }
+        }
+
+        return when (decisionBasis) {
+            DecisionBasis.PER_KM -> kmStatus()
+            DecisionBasis.HOURLY -> hourStatus()
+            DecisionBasis.MIXED -> {
+                val km = kmStatus()
+                val hour = hourStatus()
+                when {
+                    km == ProfitabilityStatus.NO_TIME || hour == ProfitabilityStatus.NO_TIME -> ProfitabilityStatus.NO_TIME
+                    km == ProfitabilityStatus.UNPROFITABLE || hour == ProfitabilityStatus.UNPROFITABLE -> ProfitabilityStatus.UNPROFITABLE
+                    km == ProfitabilityStatus.ALMOST_PROFITABLE || hour == ProfitabilityStatus.ALMOST_PROFITABLE -> ProfitabilityStatus.ALMOST_PROFITABLE
+                    else -> ProfitabilityStatus.PROFITABLE
+                }
+            }
+        }
+    }
+
 }
 
 fun PyszneDaySummary.shareText(nickname: String = ""): String {

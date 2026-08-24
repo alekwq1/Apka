@@ -78,12 +78,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.core.view.WindowCompat
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.math.sin
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
@@ -657,12 +659,16 @@ private fun PyszneSummaryScreen(
     var confirmDelete by remember { mutableStateOf(false) }
     var isCalculating by remember { mutableStateOf(false) }
     var calculationRequest by remember { mutableStateOf(0) }
+    var showCelebration by remember { mutableStateOf(false) }
+    var showAllRestaurants by remember { mutableStateOf(false) }
 
     LaunchedEffect(selectedDate, entries.size, dayReference) {
         showResult = false
         isCalculating = false
         validationMessage = ""
         confirmDelete = false
+        showCelebration = false
+        showAllRestaurants = false
     }
 
     LaunchedEffect(calculationRequest, selectedDate) {
@@ -670,6 +676,7 @@ private fun PyszneSummaryScreen(
         delay(1750)
         if (isCalculating) {
             showResult = true
+            showCelebration = true
             isCalculating = false
         }
     }
@@ -738,6 +745,101 @@ private fun PyszneSummaryScreen(
                     label = tx(language, "KWOTA", "AMOUNT", "СУМА", "СУММА"),
                     value = String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", summary.grossPln)
                 )
+            }
+
+            val knownOrderIds = dayReference?.orderIds.orEmpty()
+            val savedDayEntries = entries.filter { it.date == selectedDate }
+            val savedKnownIds = knownOrderIds.filter { id ->
+                val key = PyszneHistoryParser.orderKeyForId(id)
+                savedDayEntries.any { entry -> entry.key == key || entry.orderId?.equals(id, ignoreCase = true) == true }
+            }
+            val missingKnownIds = knownOrderIds.filterNot { it in savedKnownIds }
+
+            if (dayReference != null) {
+                val expected = dayReference.orderCount.coerceAtLeast(1)
+                val savedCount = summary.orderCount.coerceAtMost(expected)
+                val allIdsScanned = knownOrderIds.size >= expected
+                val completeness = (savedCount.toFloat() / expected.toFloat()).coerceIn(0f, 1f)
+
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    color = if (savedCount == expected) {
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.09f)
+                    } else {
+                        MaterialTheme.colorScheme.secondary.copy(alpha = 0.11f)
+                    }
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                tx(language, "Kompletność dnia", "Day completeness", "Повнота дня", "Полнота дня"),
+                                fontWeight = FontWeight.Black
+                            )
+                            Text("$savedCount / $expected", fontWeight = FontWeight.Black)
+                        }
+                        androidx.compose.material3.LinearProgressIndicator(
+                            progress = { completeness },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        if (missingKnownIds.isNotEmpty()) {
+                            Text(
+                                if (allIdsScanned) {
+                                    tx(language, "Do zapisania:", "Still to save:", "Ще зберегти:", "Ещё сохранить:")
+                                } else {
+                                    tx(language, "Na razie brakuje:", "Missing so far:", "Поки бракує:", "Пока не хватает:")
+                                },
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            missingKnownIds.chunked(4).forEach { rowIds ->
+                                Text(
+                                    rowIds.joinToString("   ") { "#$it" },
+                                    fontWeight = FontWeight.Black,
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                        } else if (savedCount < expected && !allIdsScanned) {
+                            Text(
+                                tx(
+                                    language,
+                                    "FUJARA zna ${knownOrderIds.size} z $expected numerów. Przewiń w Pyszne listę dnia od góry do dołu — wtedy pokażę dokładnie, których zleceń brakuje.",
+                                    "FUJARA knows ${knownOrderIds.size} of $expected order IDs. Scroll the Pyszne day list from top to bottom to identify the missing orders.",
+                                    "Прокрутіть список дня Pyszne, щоб знайти відсутні замовлення.",
+                                    "Прокрутите список дня Pyszne, чтобы найти отсутствующие заказы."
+                                ),
+                                color = MaterialTheme.colorScheme.secondary,
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        } else if (savedCount == expected) {
+                            Text(
+                                tx(language, "✓ Liczba zapisów zgadza się z Pyszne.", "✓ Saved count matches Pyszne.", "✓ Кількість збігається.", "✓ Количество совпадает."),
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        if (!allIdsScanned) {
+                            Text(
+                                tx(
+                                    language,
+                                    "Rozpoznane numery z listy: ${knownOrderIds.size}/$expected. Przewiń listę dnia w Pyszne do końca, żeby lista braków była kompletna.",
+                                    "Order IDs scanned from list: ${knownOrderIds.size}/$expected. Scroll the Pyszne day list to the end for a complete missing list.",
+                                    "Розпізнані номери: ${knownOrderIds.size}/$expected. Прокрутіть список до кінця.",
+                                    "Распознано номеров: ${knownOrderIds.size}/$expected. Прокрутите список до конца."
+                                ),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
             }
 
             Text(
@@ -1006,87 +1108,91 @@ private fun PyszneSummaryScreen(
 
             SectionCard(
                 step = "RESTAURACJE",
-                title = tx(language, "Gdzie było SUPER, a gdzie FUJARA", "Best and worst restaurants", "Найкращі й найгірші ресторани", "Лучшие и худшие рестораны")
+                title = tx(language, "Restauracje — skrót", "Restaurants — summary", "Ресторани — коротко", "Рестораны — кратко")
             ) {
-                val namedRestaurants = summary.restaurants.filterNot { it.name.equals("Nieznana restauracja", ignoreCase = true) }
+                val namedRestaurants = summary.restaurants
+                    .filterNot { it.name.equals("Nieznana restauracja", ignoreCase = true) }
                 val best = namedRestaurants.firstOrNull()
-                val worst = namedRestaurants.minByOrNull { it.netPerHour ?: Double.POSITIVE_INFINITY }
+                val worst = namedRestaurants.lastOrNull()
 
-                if (best != null) {
-                    Text(
-                        tx(language, "🏆 Najlepiej: ${best.name}", "🏆 Best: ${best.name}", "🏆 Найкраще: ${best.name}", "🏆 Лучшее: ${best.name}"),
-                        fontWeight = FontWeight.Black,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-                if (worst != null && worst.name != best?.name) {
-                    Text(
-                        tx(language, "🪈 Najsłabiej: ${worst.name}", "🪈 Weakest: ${worst.name}", "🪈 Найслабше: ${worst.name}", "🪈 Самое слабое: ${worst.name}"),
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.tertiary
-                    )
-                }
-
-                summary.restaurants.forEach { restaurant ->
+                if (best != null || worst != null) {
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(16.dp),
+                        shape = RoundedCornerShape(14.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
                     ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(9.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.Top,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            best?.let {
                                 Text(
-                                    restaurant.name,
-                                    modifier = Modifier.weight(1f),
+                                    tx(language, "🏆 Najlepiej: ${it.name}", "🏆 Best: ${it.name}", "🏆 Найкраще: ${it.name}", "🏆 Лучшее: ${it.name}"),
                                     fontWeight = FontWeight.Black,
-                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.primary,
                                     maxLines = 2,
                                     overflow = TextOverflow.Ellipsis
                                 )
-                                StatusPill(summaryStatusLabel(restaurant.status, language), summaryStatusColor(restaurant.status))
                             }
-
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                RestaurantMiniMetric(
-                                    modifier = Modifier.weight(1f),
-                                    label = tx(language, "ZLECENIA", "ORDERS", "ЗАМОВЛЕННЯ", "ЗАКАЗЫ"),
-                                    value = restaurant.orderCount.toString()
-                                )
-                                RestaurantMiniMetric(
-                                    modifier = Modifier.weight(1f),
-                                    label = tx(language, "PRZYCHÓD", "REVENUE", "ДОХІД", "ДОХОД"),
-                                    value = String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", restaurant.grossPln)
+                            if (worst != null && worst.name != best?.name) {
+                                Text(
+                                    tx(language, "🪈 Najsłabiej: ${worst.name}", "🪈 Weakest: ${worst.name}", "🪈 Найслабше: ${worst.name}", "🪈 Самое слабое: ${worst.name}"),
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.tertiary,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                RestaurantMiniMetric(
-                                    modifier = Modifier.weight(1f),
-                                    label = "PLN/H",
-                                    value = String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł/h", restaurant.netPerHour ?: 0.0)
-                                )
-                                RestaurantMiniMetric(
-                                    modifier = Modifier.weight(1f),
-                                    label = "PLN/KM",
-                                    value = String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł/km", restaurant.netPerKm ?: 0.0)
-                                )
-                            }
-
-                            Text(
-                                buildString {
-                                    append("🟢 ${restaurant.goodOrders} SUPER   🟡 ${restaurant.borderlineOrders} STYK   🔴 ${restaurant.poorOrders} FUJARA")
-                                    if (restaurant.cancelledOrders > 0) append("   ⛔ ${restaurant.cancelledOrders} ANUL.")
-                                },
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold
-                            )
                         }
+                    }
+                }
+
+                val topRestaurants = namedRestaurants.take(3)
+                val bottomRestaurants = namedRestaurants
+                    .takeLast(3)
+                    .reversed()
+                    .filterNot { low -> topRestaurants.any { it.name == low.name } }
+
+                if (topRestaurants.isNotEmpty()) {
+                    BrandEyebrow(tx(language, "TOP", "TOP", "ТОП", "ТОП"), MaterialTheme.colorScheme.primary)
+                    topRestaurants.forEach { restaurant ->
+                        CompactRestaurantRow(restaurant = restaurant, language = language)
+                    }
+                }
+
+                if (bottomRestaurants.isNotEmpty()) {
+                    BrandEyebrow(tx(language, "DO POPRAWY", "NEEDS WORK", "ДО ПОКРАЩЕННЯ", "НАДО УЛУЧШИТЬ"), MaterialTheme.colorScheme.tertiary)
+                    bottomRestaurants.forEach { restaurant ->
+                        CompactRestaurantRow(restaurant = restaurant, language = language)
+                    }
+                }
+
+                if (summary.restaurants.size > 6) {
+                    OutlinedButton(
+                        onClick = { showAllRestaurants = !showAllRestaurants },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            if (showAllRestaurants) {
+                                tx(language, "Zwiń pełną listę", "Collapse full list", "Згорнути список", "Свернуть список")
+                            } else {
+                                tx(
+                                    language,
+                                    "Pokaż wszystkie (${summary.restaurants.size})",
+                                    "Show all (${summary.restaurants.size})",
+                                    "Показати всі (${summary.restaurants.size})",
+                                    "Показать все (${summary.restaurants.size})"
+                                )
+                            }
+                        )
+                    }
+                }
+
+                if (showAllRestaurants) {
+                    HorizontalDivider()
+                    Text(
+                        tx(language, "Pełna lista", "Full list", "Повний список", "Полный список"),
+                        fontWeight = FontWeight.Black
+                    )
+                    summary.restaurants.forEach { restaurant ->
+                        CompactRestaurantRow(restaurant = restaurant, language = language)
                     }
                 }
             }
@@ -1157,6 +1263,413 @@ private fun PyszneSummaryScreen(
             }
         }
     }
+
+    if (showCelebration && summary.orderCount > 0) {
+        DayCelebrationDialog(
+            summary = summary,
+            language = language,
+            onDismiss = { showCelebration = false }
+        )
+    }
+}
+
+@Composable
+private fun DayCelebrationDialog(
+    summary: PyszneDaySummary,
+    language: AppLanguage,
+    onDismiss: () -> Unit
+) {
+    var stage by remember(summary.date, summary.orderCount, summary.grossPln) { mutableStateOf(0) }
+
+    LaunchedEffect(summary.date, summary.orderCount, summary.grossPln) {
+        stage = 0
+        delay(250)
+        stage = 1
+        delay(700)
+        stage = 2
+        delay(700)
+        stage = 3
+        delay(750)
+        stage = 4
+        delay(650)
+        stage = 5
+    }
+
+    val accent = summaryStatusColor(summary.status)
+    val celebrationProgress by animateFloatAsState(
+        targetValue = if (stage >= 1) 1f else 0f,
+        animationSpec = tween(durationMillis = 3300),
+        label = "day_celebration_progress"
+    )
+    val titleProgress by animateFloatAsState(
+        targetValue = if (stage >= 1) 1f else 0f,
+        animationSpec = tween(durationMillis = 480),
+        label = "day_celebration_title"
+    )
+    val metricProgress by animateFloatAsState(
+        targetValue = if (stage >= 2) 1f else 0f,
+        animationSpec = tween(durationMillis = 430),
+        label = "day_celebration_metrics"
+    )
+    val detailProgress by animateFloatAsState(
+        targetValue = if (stage >= 3) 1f else 0f,
+        animationSpec = tween(durationMillis = 430),
+        label = "day_celebration_details"
+    )
+    val scoreProgress by animateFloatAsState(
+        targetValue = if (stage >= 4) 1f else 0f,
+        animationSpec = tween(durationMillis = 520),
+        label = "day_celebration_score"
+    )
+    val levelProgress by animateFloatAsState(
+        targetValue = if (stage >= 5) 1f else 0f,
+        animationSpec = tween(durationMillis = 420),
+        label = "day_celebration_level"
+    )
+
+    val shakeX = if (summary.status == ProfitabilityStatus.UNPROFITABLE && stage in 1..3) {
+        (sin((celebrationProgress * 18f * Math.PI).toDouble()).toFloat() * 7f * (1f - celebrationProgress * 0.55f))
+    } else {
+        0f
+    }
+    val pulse = when (summary.status) {
+        ProfitabilityStatus.PROFITABLE -> 1f + sin((celebrationProgress * 8f * Math.PI).toDouble()).toFloat() * 0.025f
+        ProfitabilityStatus.ALMOST_PROFITABLE -> 1f + sin((celebrationProgress * 5f * Math.PI).toDouble()).toFloat() * 0.018f
+        ProfitabilityStatus.UNPROFITABLE -> 1f
+        ProfitabilityStatus.NO_TIME -> 1f
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 10.dp
+        ) {
+            Box(modifier = Modifier.fillMaxWidth()) {
+                CelebrationParticles(
+                    status = summary.status,
+                    progress = celebrationProgress,
+                    accent = accent,
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                Column(
+                    modifier = Modifier
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 18.dp, vertical = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Text(
+                        tx(language, "🏁 DZIEŃ ZAKOŃCZONY", "🏁 DAY COMPLETE", "🏁 ДЕНЬ ЗАВЕРШЕНО", "🏁 ДЕНЬ ЗАВЕРШЁН"),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Black,
+                        color = accent,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .graphicsLayer { alpha = titleProgress },
+                        textAlign = TextAlign.Center
+                    )
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .graphicsLayer {
+                                alpha = titleProgress
+                                scaleX = (0.78f + titleProgress * 0.22f) * pulse
+                                scaleY = (0.78f + titleProgress * 0.22f) * pulse
+                                translationX = shakeX
+                            },
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            celebrationHeadline(summary.status, language),
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Black,
+                            textAlign = TextAlign.Center
+                        )
+                        Text(
+                            celebrationSubtitle(summary.status, language),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        FujaraBrandMark(
+                            level = (0.18f + celebrationProgress * 0.82f).coerceIn(0.18f, 1f),
+                            color = accent,
+                            modifier = Modifier
+                                .size(width = 58.dp, height = 98.dp)
+                                .graphicsLayer {
+                                    alpha = titleProgress
+                                    scaleX = 0.72f + titleProgress * 0.34f
+                                    scaleY = 0.72f + titleProgress * 0.34f
+                                    translationX = shakeX * 0.55f
+                                }
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .graphicsLayer {
+                                alpha = metricProgress
+                                translationY = (1f - metricProgress) * 28f
+                            },
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        CelebrationMetric(
+                            modifier = Modifier.weight(1f),
+                            label = "PLN/H",
+                            value = summary.netPerHour ?: 0.0,
+                            decimals = 0,
+                            suffix = " zł/h",
+                            visible = stage >= 2,
+                            accent = accent
+                        )
+                        CelebrationMetric(
+                            modifier = Modifier.weight(1f),
+                            label = "PLN/KM",
+                            value = summary.netPerKm ?: 0.0,
+                            decimals = 2,
+                            suffix = " zł/km",
+                            visible = stage >= 2,
+                            accent = accent
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .graphicsLayer {
+                                alpha = detailProgress
+                                translationY = (1f - detailProgress) * 24f
+                            },
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        CelebrationMetric(
+                            modifier = Modifier.weight(1f),
+                            label = tx(language, "KM", "KM", "КМ", "КМ"),
+                            value = summary.distanceKm,
+                            decimals = 1,
+                            suffix = " km",
+                            visible = stage >= 3,
+                            accent = accent
+                        )
+                        CelebrationTextMetric(
+                            modifier = Modifier.weight(1f),
+                            label = tx(language, "CZAS", "TIME", "ЧАС", "ВРЕМЯ"),
+                            value = formatDuration(summary.durationSeconds),
+                            accent = accent
+                        )
+                    }
+
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .graphicsLayer {
+                                alpha = scoreProgress
+                                scaleX = 0.92f + scoreProgress * 0.08f
+                                scaleY = 0.92f + scoreProgress * 0.08f
+                            },
+                        shape = RoundedCornerShape(18.dp),
+                        color = accent.copy(alpha = 0.10f)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(13.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Text(
+                                "🟢 ${summary.goodOrders} SUPER   •   🟡 ${summary.borderlineOrders} STYK   •   🔴 ${summary.poorOrders} FUJARA",
+                                fontWeight = FontWeight.Black,
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                tx(
+                                    language,
+                                    "📦 ${summary.orderCount} dostaw • 💰 ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", summary.grossPln)}",
+                                    "📦 ${summary.orderCount} deliveries • 💰 ${String.format(Locale.US, "%.2f PLN", summary.grossPln)}",
+                                    "📦 ${summary.orderCount} доставок",
+                                    "📦 ${summary.orderCount} доставок"
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    if (stage >= 4) {
+                        Text(
+                            celebrationLevelMessage(summary.status, language),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .graphicsLayer {
+                                    alpha = levelProgress
+                                    scaleX = 0.90f + levelProgress * 0.10f
+                                    scaleY = 0.90f + levelProgress * 0.10f
+                                },
+                            textAlign = TextAlign.Center,
+                            fontWeight = FontWeight.Black,
+                            color = accent,
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    }
+
+                    Button(
+                        onClick = onDismiss,
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = stage >= 5,
+                        colors = ButtonDefaults.buttonColors(containerColor = accent)
+                    ) {
+                        Text(
+                            if (stage >= 5) {
+                                tx(language, "Pokaż pełne podsumowanie", "Show full summary", "Показати повний підсумок", "Показать полный итог")
+                            } else {
+                                tx(language, "FUJARA liczy wynik…", "FUJARA is revealing the result…", "FUJARA показує результат…", "FUJARA показывает результат…")
+                            },
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CelebrationParticles(
+    status: ProfitabilityStatus,
+    progress: Float,
+    accent: Color,
+    modifier: Modifier = Modifier
+) {
+    val count = when (status) {
+        ProfitabilityStatus.PROFITABLE -> 34
+        ProfitabilityStatus.ALMOST_PROFITABLE -> 22
+        ProfitabilityStatus.UNPROFITABLE -> 12
+        ProfitabilityStatus.NO_TIME -> 16
+    }
+    val palette = when (status) {
+        ProfitabilityStatus.PROFITABLE -> listOf(accent, Color(0xFFFFB300), Color(0xFFFFE082), Color(0xFF66BB6A))
+        ProfitabilityStatus.ALMOST_PROFITABLE -> listOf(accent, Color(0xFFFFC107), Color(0xFFFFE082), Color(0xFFFFA726))
+        ProfitabilityStatus.UNPROFITABLE -> listOf(accent, Color(0xFFEF5350), Color(0xFFFF8A80), Color(0xFFB3261E))
+        ProfitabilityStatus.NO_TIME -> listOf(accent, Color(0xFF90A4AE), Color(0xFFB0BEC5))
+    }
+
+    Canvas(modifier = modifier) {
+        if (progress <= 0f) return@Canvas
+        for (i in 0 until count) {
+            val xBase = ((i * 37 + 11) % 100) / 100f
+            val yBase = ((i * 53 + 7) % 100) / 100f
+            val wobble = sin((progress * 9f + i * 0.73f).toDouble()).toFloat() * 15f
+            val yFraction = (yBase + progress * (0.70f + (i % 5) * 0.08f)) % 1f
+            val radius = 2.8f + (i % 4) * 1.2f
+            drawCircle(
+                color = palette[i % palette.size].copy(alpha = (0.20f + progress * 0.55f).coerceAtMost(0.72f)),
+                radius = radius,
+                center = Offset(xBase * size.width + wobble, yFraction * size.height)
+            )
+        }
+    }
+}
+
+@Composable
+private fun CelebrationMetric(
+    modifier: Modifier,
+    label: String,
+    value: Double,
+    decimals: Int,
+    suffix: String,
+    visible: Boolean,
+    accent: Color
+) {
+    val animated by animateFloatAsState(
+        targetValue = if (visible) value.toFloat() else 0f,
+        animationSpec = tween(durationMillis = 1250),
+        label = "celebration_metric_$label"
+    )
+    val format = if (decimals == 0) "%.0f" else "%.${decimals}f"
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(17.dp),
+        color = accent.copy(alpha = 0.09f)
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                String.format(Locale.forLanguageTag("pl-PL"), format, animated) + suffix,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Black,
+                color = accent,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
+}
+
+@Composable
+private fun CelebrationTextMetric(
+    modifier: Modifier,
+    label: String,
+    value: String,
+    accent: Color
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(17.dp),
+        color = accent.copy(alpha = 0.09f)
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                value,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Black,
+                color = accent,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
+}
+
+private fun celebrationHeadline(status: ProfitabilityStatus, language: AppLanguage): String = when (status) {
+    ProfitabilityStatus.PROFITABLE -> tx(language, "🏆 SUPER DZIEŃ!", "🏆 SUPER DAY!", "🏆 СУПЕР ДЕНЬ!", "🏆 СУПЕР ДЕНЬ!")
+    ProfitabilityStatus.ALMOST_PROFITABLE -> tx(language, "🔥 UFF… WESZŁO!", "🔥 JUST MADE IT!", "🔥 ЛЕДВЕ, АЛЕ Є!", "🔥 ЕЛЕ ВОШЛО!")
+    ProfitabilityStatus.UNPROFITABLE -> tx(language, "🪈 FUJARA ALERT!", "🪈 FUJARA ALERT!", "🪈 FUJARA ALERT!", "🪈 FUJARA ALERT!")
+    ProfitabilityStatus.NO_TIME -> tx(language, "🏁 WYNIK GOTOWY", "🏁 RESULT READY", "🏁 РЕЗУЛЬТАТ ГОТОВИЙ", "🏁 РЕЗУЛЬТАТ ГОТОВ")
+}
+
+private fun celebrationSubtitle(status: ProfitabilityStatus, language: AppLanguage): String = when (status) {
+    ProfitabilityStatus.PROFITABLE -> tx(language, "Stawka dowieziona. Tak się kończy zmianę.", "Target smashed. That's how you finish a shift.", "Ціль виконано.", "Цель выполнена.")
+    ProfitabilityStatus.ALMOST_PROFITABLE -> tx(language, "Było blisko, ale wynik się obronił.", "It was close, but the result held.", "Було близько, але результат втримано.", "Было близко, но результат удержан.")
+    ProfitabilityStatus.UNPROFITABLE -> tx(language, "Dziś stawka uciekła. Zobacz niżej, gdzie ją zjadło.", "The rate slipped today. Check below where it went.", "Сьогодні ставка просіла.", "Сегодня ставка просела.")
+    ProfitabilityStatus.NO_TIME -> tx(language, "Dane zebrane. Sprawdź szczegóły dnia.", "Data collected. Check the day details.", "Дані зібрано.", "Данные собраны.")
+}
+
+private fun celebrationLevelMessage(status: ProfitabilityStatus, language: AppLanguage): String = when (status) {
+    ProfitabilityStatus.PROFITABLE -> tx(language, "✨ FUJARA +1 LEVEL", "✨ FUJARA +1 LEVEL", "✨ FUJARA +1 LEVEL", "✨ FUJARA +1 LEVEL")
+    ProfitabilityStatus.ALMOST_PROFITABLE -> tx(language, "⚡ FUJARA +1 XP — jutro celujemy wyżej", "⚡ FUJARA +1 XP — aim higher tomorrow", "⚡ FUJARA +1 XP", "⚡ FUJARA +1 XP")
+    ProfitabilityStatus.UNPROFITABLE -> tx(language, "🎯 MISJA NA JUTRO: ODBIĆ STAWKĘ", "🎯 TOMORROW'S MISSION: RECOVER THE RATE", "🎯 МІСІЯ НА ЗАВТРА", "🎯 МИССИЯ НА ЗАВТРА")
+    ProfitabilityStatus.NO_TIME -> tx(language, "✅ PODSUMOWANIE GOTOWE", "✅ SUMMARY READY", "✅ ПІДСУМОК ГОТОВИЙ", "✅ ИТОГ ГОТОВ")
 }
 
 @Composable
@@ -1173,6 +1686,129 @@ private fun SummarySmallMetric(
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(value, fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleMedium)
+        }
+    }
+}
+
+@Composable
+private fun CompactRestaurantRow(
+    restaurant: PyszneRestaurantSummary,
+    language: AppLanguage
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 11.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    restaurant.name,
+                    fontWeight = FontWeight.Black,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    buildString {
+                        append("${restaurant.orderCount} zlec. · ")
+                        append(String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł/h", restaurant.netPerHour ?: 0.0))
+                        append(" · ")
+                        append(String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł/km", restaurant.netPerKm ?: 0.0))
+                        if (restaurant.cancelledOrders > 0) append(" · ${restaurant.cancelledOrders} anul.")
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            StatusPill(summaryStatusLabel(restaurant.status, language), summaryStatusColor(restaurant.status))
+        }
+    }
+}
+
+@Composable
+private fun AnimatedRestaurantSummaryCard(
+    restaurant: PyszneRestaurantSummary,
+    language: AppLanguage,
+    visible: Boolean
+) {
+    val reveal by animateFloatAsState(
+        targetValue = if (visible) 1f else 0f,
+        animationSpec = tween(durationMillis = 430),
+        label = "restaurant_reveal_${restaurant.name}"
+    )
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                alpha = reveal
+                translationY = (1f - reveal) * 26f
+                scaleX = 0.97f + reveal * 0.03f
+                scaleY = 0.97f + reveal * 0.03f
+            },
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    restaurant.name,
+                    modifier = Modifier.weight(1f),
+                    fontWeight = FontWeight.Black,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                StatusPill(summaryStatusLabel(restaurant.status, language), summaryStatusColor(restaurant.status))
+            }
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                RestaurantMiniMetric(
+                    modifier = Modifier.weight(1f),
+                    label = tx(language, "ZLECENIA", "ORDERS", "ЗАМОВЛЕННЯ", "ЗАКАЗЫ"),
+                    value = restaurant.orderCount.toString()
+                )
+                RestaurantMiniMetric(
+                    modifier = Modifier.weight(1f),
+                    label = tx(language, "PRZYCHÓD", "REVENUE", "ДОХІД", "ДОХОД"),
+                    value = String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", restaurant.grossPln)
+                )
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                RestaurantMiniMetric(
+                    modifier = Modifier.weight(1f),
+                    label = "PLN/H",
+                    value = String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł/h", restaurant.netPerHour ?: 0.0)
+                )
+                RestaurantMiniMetric(
+                    modifier = Modifier.weight(1f),
+                    label = "PLN/KM",
+                    value = String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł/km", restaurant.netPerKm ?: 0.0)
+                )
+            }
+
+            Text(
+                buildString {
+                    append("🟢 ${restaurant.goodOrders} SUPER   🟡 ${restaurant.borderlineOrders} STYK   🔴 ${restaurant.poorOrders} FUJARA")
+                    if (restaurant.cancelledOrders > 0) append("   ⛔ ${restaurant.cancelledOrders} ANUL.")
+                },
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold
+            )
         }
     }
 }

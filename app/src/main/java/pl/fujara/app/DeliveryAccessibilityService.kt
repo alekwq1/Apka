@@ -27,6 +27,7 @@ import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import java.time.LocalDate
 import java.time.LocalTime
 import kotlin.math.abs
 
@@ -47,6 +48,8 @@ class DeliveryAccessibilityService : AccessibilityService() {
     private var lastDeliveryPackage = ""
     private var lastNotificationActive: Boolean? = null
     private var lastNotificationLanguage: String? = null
+    private var activePyszneDayDate: LocalDate? = null
+    private var activePyszneDaySeenAt = 0L
 
     private val scanIntervalMs = 1200L
     private val minimumScreenshotGapMs = 700L
@@ -291,9 +294,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
                 // z drzewa Accessibility, a OCR jest fallbackiem. Parser wymaga teraz
                 // jawnej daty oraz count+kwoty z tej samej gornej karty dnia.
                 if (packagePlatform == CourierPlatform.PYSZNE && !isGalleryPackage(sourcePackageName)) {
-                    val reference = PyszneDayReferenceParser.parse(pyszneAccessibilityText)
-                        ?: PyszneDayReferenceParser.parse(recognitionText)
-                    reference?.let { pyszneLogStore.saveDayReference(it) }
+                    capturePyszneDayData(pyszneAccessibilityText, recognitionText)
                 }
 
                 // Tekst karty ma pierwszenstwo przed zapamietanym package name. To jest
@@ -536,9 +537,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
             val text = buildAccessibilityText(root)
             val platform = platformForPackage(pkg)
             if (platform == CourierPlatform.PYSZNE) {
-                PyszneDayReferenceParser.parse(text)?.let { reference ->
-                    pyszneLogStore.saveDayReference(reference)
-                }
+                capturePyszneDayData(text)
             }
             val applicationName = platform?.displayName
                 ?: if (configuredPackage.isNotBlank() && pkg == configuredPackage) appLabel(pkg) else null
@@ -586,9 +585,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
                 val text = buildAccessibilityText(root)
                 val platform = platformForPackage(pkg)
                 if (platform == CourierPlatform.PYSZNE) {
-                    PyszneDayReferenceParser.parse(text)?.let { reference ->
-                        pyszneLogStore.saveDayReference(reference)
-                    }
+                    capturePyszneDayData(text)
                 }
                 val applicationName = platform?.displayName
                     ?: if (configuredPackage.isNotBlank() && pkg == configuredPackage) appLabel(pkg) else null
@@ -611,6 +608,51 @@ class DeliveryAccessibilityService : AccessibilityService() {
 
         if (hideOnFailure) registerMiss()
         return false
+    }
+
+    /**
+     * Zapamietuje naglowek dnia (data + liczba + kwota), a podczas przewijania
+     * tej samej listy dopisuje widoczne numery #XXXXXX. Dzieki temu ekran FUJARA
+     * moze powiedziec dokladnie, ktorych zlecen jeszcze nie zapisano.
+     */
+    private fun capturePyszneDayData(vararg textSources: String) {
+        val texts = textSources.map { it.trim() }.filter { it.isNotBlank() }
+        if (texts.isEmpty()) return
+
+        val reference = texts.asSequence().mapNotNull(PyszneDayReferenceParser::parse).firstOrNull()
+        if (reference != null) {
+            pyszneLogStore.saveDayReference(reference)
+            activePyszneDayDate = reference.date
+            activePyszneDaySeenAt = SystemClock.elapsedRealtime()
+        }
+
+        if (activePyszneDayDate == null) {
+            val recent = pyszneLogStore.latestDayReference()
+                ?.takeIf { System.currentTimeMillis() - it.capturedAtMillis in 0..(10 * 60_000L) }
+            if (recent != null) {
+                activePyszneDayDate = recent.date
+                activePyszneDaySeenAt = SystemClock.elapsedRealtime()
+            }
+        }
+
+        val activeDate = activePyszneDayDate ?: return
+        if (SystemClock.elapsedRealtime() - activePyszneDaySeenAt > 10 * 60_000L) return
+
+        val combined = texts.joinToString("\n")
+        val isHistoryList = Regex("""(?i)(?:historia\s+przychod[oó]w|earnings\s+history)""").containsMatchIn(combined)
+        val isOrderDetails = Regex("""(?i)(?:szczeg[oó][lł]y\s+zlecenia|order\s+details)""").containsMatchIn(combined)
+        if (!isHistoryList || isOrderDetails) return
+
+        // Jesli podczas przewijania jednak widac date, musi to byc ten sam dzien.
+        // To zabezpiecza przed dopisaniem numerow po szybkim przejsciu na inny dzien.
+        val explicitDates = PyszneHistoryParser.parseDatesFromText(combined).distinct()
+        if (explicitDates.size > 1 || (explicitDates.size == 1 && explicitDates.single() != activeDate)) return
+
+        val ids = PyszneDayReferenceParser.parseOrderIds(combined)
+        if (ids.isNotEmpty()) {
+            pyszneLogStore.mergeDayOrderIds(activeDate, ids)
+            activePyszneDaySeenAt = SystemClock.elapsedRealtime()
+        }
     }
 
     private fun buildAccessibilityText(root: AccessibilityNodeInfo): String {

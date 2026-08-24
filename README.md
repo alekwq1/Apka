@@ -1,12 +1,12 @@
-# FUJARA 0.8.5
+# FUJARA 0.8.7
 
 Android app for local courier-offer profitability analysis.
 
 ## Google Play readiness
 - applicationId / namespace: `pl.fujara.app`
 - targetSdk / compileSdk: 36
-- versionCode: 22
-- versionName: 0.8.5
+- versionCode: 24
+- versionName: 0.8.7
 - signed AAB workflow: `.github/workflows/build-play-aab.yml`
 - debug APK workflow: `.github/workflows/test-apk.yml`
 - privacy page: `docs/privacy.html`
@@ -31,6 +31,18 @@ Na ekranie szczegolow Pyszne kwota jest pobierana z pola `Suma przychodow`, a ni
 - Animowane podsumowanie i udostepnianie wyniku przez system Android.
 - Bez permission `INTERNET`; wspolny scoreboard online nie jest jeszcze wlaczony.
 
+
+## 0.8.7
+
+- Podsumowanie Pyszne zbiera numery zlecen z przewijanej listy dnia i pokazuje, ktore pozycje sa jeszcze do zapisania.
+- Przycisk na szczegolach pokazuje numer zlecenia oraz wyrazny stan `ZAPISANE`.
+- Naprawiono PLN/h dla dlugiego dnia (> 6 h); agregat dnia nie jest juz traktowany jak pojedyncza oferta.
+- Restauracje sa domyslnie pokazane jako krotkie TOP 3 / DO POPRAWY 3; pelna lista jest zwijana.
+
+## 0.8.6
+
+- Dodano pełny „FUJARA moment” po podsumowaniu dnia: animowany finał, liczniki PLN/h i PLN/km, konfetti/iskry, statusowe efekty SUPER/STYK/FUJARA oraz level-up.
+- Karty restauracji pojawiają się kolejno po zamknięciu animacji.
 
 ## 0.8.5
 - Pyszne: zapis rowniez zakonczonych zlecen anulowanych.

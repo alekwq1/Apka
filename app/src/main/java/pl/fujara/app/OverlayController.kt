@@ -565,12 +565,13 @@ class OverlayController(
             return
         }
 
+        val idSuffix = entry.orderId?.let { " #$it" }.orEmpty()
         if (currentHistoryAlreadySaved) {
-            button.text = tr(language, "✓ ZAPISANE", "✓ SAVED", "✓ ЗБЕРЕЖЕНО", "✓ СОХРАНЕНО")
+            button.text = tr(language, "✓ ZAPISANE", "✓ SAVED", "✓ ЗБЕРЕЖЕНО", "✓ СОХРАНЕНО") + idSuffix
             button.setTextColor(green)
             button.background = panelBackground(green, prefs.overlayOpacityPercent)
         } else {
-            button.text = tr(language, "＋ ZAPISZ DANE", "＋ SAVE DATA", "＋ ЗБЕРЕГТИ ДАНІ", "＋ СОХРАНИТЬ ДАННЫЕ")
+            button.text = tr(language, "＋ ZAPISZ", "＋ SAVE", "＋ ЗБЕРЕГТИ", "＋ СОХРАНИТЬ") + idSuffix
             button.setTextColor(white)
             button.background = panelBackground(amber, prefs.overlayOpacityPercent)
         }

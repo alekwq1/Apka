@@ -48,6 +48,8 @@ class PyszneHistoryParserTest {
         assertNotNull(first)
         assertNotNull(second)
         assertEquals(LocalDate.of(2026, 8, 20), first!!.date)
+        assertEquals("XX96G4", first.orderId)
+        assertEquals(first.key, PyszneHistoryParser.orderKeyForId("XX96G4"))
         assertEquals(17 * 60 + 31, first.acceptedMinuteOfDay)
         assertEquals("Faloviec (Obrońców Wybrzeża 2)", first.restaurant)
         assertEquals(20.97, first.amountPln, 0.001)
@@ -175,8 +177,10 @@ class PyszneDayReferenceParserTest {
             10 offers accepted
             Faloviec (Obrońców Wybrzeża 2)
             20,97 zł
+            #XX96G4
             Lekko Good Food & Friends
             24,51 zł
+            #CWPRCG
         """.trimIndent()
 
         val reference = PyszneDayReferenceParser.parse(text)
@@ -185,6 +189,7 @@ class PyszneDayReferenceParserTest {
         assertEquals(LocalDate.of(2026, 8, 20), reference!!.date)
         assertEquals(10, reference.orderCount)
         assertEquals(211.85, reference.amountPln, 0.001)
+        assertEquals(listOf("XX96G4", "CWPRCG"), reference.orderIds)
     }
 
     @Test
@@ -215,5 +220,39 @@ class PyszneDayReferenceParserTest {
         """.trimIndent()
 
         assertNull(PyszneDayReferenceParser.parse(text))
+    }
+}
+
+
+class PyszneDaySummaryCalculatorTest {
+    @Test
+    fun calculatesHourlyRateForDayLongerThanSixHours() {
+        val date = LocalDate.of(2026, 8, 23)
+        val totalSeconds = 11 * 3600 + 47 * 60
+        val entries = List(30) { index ->
+            PyszneDeliveryLog(
+                key = "key-$index",
+                fingerprint = "fp-$index",
+                orderId = "A${index.toString().padStart(5, '0')}",
+                date = date,
+                acceptedMinuteOfDay = null,
+                restaurant = "Test",
+                amountPln = 590.67 / 30.0,
+                distanceKm = 183.8 / 30.0,
+                durationSeconds = totalSeconds / 30
+            )
+        }
+
+        val summary = PyszneDaySummaryCalculator.calculate(
+            date = date,
+            entries = entries,
+            rules = ProfitabilityCalculator.Rules(vehicleCostPerKm = 0.35),
+            decisionBasis = DecisionBasis.MIXED,
+            zusPercent = 0.0
+        )
+
+        assertNotNull(summary.netPerHour)
+        assertTrue(summary.netPerHour!! > 40.0)
+        assertTrue(summary.netPerHour!! < 50.0)
     }
 }
