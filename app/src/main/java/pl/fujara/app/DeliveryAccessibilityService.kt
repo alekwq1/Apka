@@ -34,6 +34,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
 
     private lateinit var overlay: OverlayController
     private lateinit var prefs: AppPrefs
+    private lateinit var pyszneLogStore: PyszneLogStore
 
     private val handler = Handler(Looper.getMainLooper())
     private var recognizer: TextRecognizer? = null
@@ -61,6 +62,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         prefs = AppPrefs(this)
+        pyszneLogStore = PyszneLogStore(this)
         overlay = OverlayController(this)
         recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
         updateStatusNotification(prefs.analysisEnabled)
@@ -278,6 +280,15 @@ class DeliveryAccessibilityService : AccessibilityService() {
                 val packagePlatform = platformForPackage(sourcePackageName)
                 val inferredPlatform = inferPlatformFromText(recognitionText)
 
+                // Gdy user wejdzie w Pyszne -> Podsumowanie dnia, zapamietujemy
+                // lokalnie tylko date, liczbe zlecen i laczna kwote. Nie zapisujemy
+                // pelnego OCR. Screenshoty otwarte w Galerii nie moga zasilac logow.
+                if (packagePlatform == CourierPlatform.PYSZNE && !isGalleryPackage(sourcePackageName)) {
+                    PyszneDayReferenceParser.parse(recognitionText)?.let { reference ->
+                        pyszneLogStore.saveDayReference(reference)
+                    }
+                }
+
                 // Tekst karty ma pierwszenstwo przed zapamietanym package name. To jest
                 // wazne przy plywajacych kartach i launcherze: poprzednio po Uberze
                 // mogl zostac stary sygnal i ekran Wolt byl opisany jako Uber.
@@ -476,6 +487,11 @@ class DeliveryAccessibilityService : AccessibilityService() {
 
             val text = buildAccessibilityText(root)
             val platform = platformForPackage(pkg)
+            if (platform == CourierPlatform.PYSZNE) {
+                PyszneDayReferenceParser.parse(text)?.let { reference ->
+                    pyszneLogStore.saveDayReference(reference)
+                }
+            }
             val applicationName = platform?.displayName
                 ?: if (configuredPackage.isNotBlank() && pkg == configuredPackage) appLabel(pkg) else null
 
@@ -521,6 +537,11 @@ class DeliveryAccessibilityService : AccessibilityService() {
             if (allowed) {
                 val text = buildAccessibilityText(root)
                 val platform = platformForPackage(pkg)
+                if (platform == CourierPlatform.PYSZNE) {
+                    PyszneDayReferenceParser.parse(text)?.let { reference ->
+                        pyszneLogStore.saveDayReference(reference)
+                    }
+                }
                 val applicationName = platform?.displayName
                     ?: if (configuredPackage.isNotBlank() && pkg == configuredPackage) appLabel(pkg) else null
 
@@ -667,11 +688,25 @@ class DeliveryAccessibilityService : AccessibilityService() {
             zusPercent = if (prefs.zusEnabled) prefs.zusPercent else 0.0
         )
 
+        val platform = CourierPlatform.fromDisplayName(applicationName)
+        val historyEntry = if (platform == CourierPlatform.PYSZNE) {
+            PyszneHistoryParser.parse(sourceText = sourceText, offer = offer)
+        } else {
+            null
+        }
+
         overlay.show(
             result = result,
             applicationName = applicationName,
             applicationIcon = resolveIcon(applicationName, packageName),
-            blacklistHits = prefs.findBlacklistHits(sourceText)
+            blacklistHits = prefs.findBlacklistHits(sourceText),
+            historyEntry = historyEntry,
+            historyAlreadySaved = historyEntry?.let { pyszneLogStore.contains(it) } ?: false,
+            onSaveHistory = if (historyEntry != null) {
+                { entry -> pyszneLogStore.save(entry) }
+            } else {
+                null
+            }
         )
     }
 

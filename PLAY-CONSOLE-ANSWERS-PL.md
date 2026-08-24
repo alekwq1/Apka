@@ -1,6 +1,6 @@
 # FUJARA — propozycje odpowiedzi w Play Console
 
-Stan dla wersji 0.7.1. Odpowiedzi muszą zawsze odpowiadać faktycznemu buildowi.
+Stan dla wersji 0.8.4. Odpowiedzi muszą zawsze odpowiadać faktycznemu buildowi.
 
 ## Ads
 **Does your app contain ads?** → `No`
@@ -31,6 +31,8 @@ Dla obecnego kodu:
 - brak analytics/Firebase,
 - brak konta,
 - OCR i kalkulacja działają lokalnie.
+- opcjonalna historia Pyszne jest zapisywana lokalnie po ręcznym naciśnięciu `ZAPISZ DANE`; ekran `Podsumowanie dnia` może lokalnie zapisać tylko datę, liczbę zleceń i łączną kwotę do kontroli kompletności; brak automatycznej transmisji tej historii.
+- funkcja udostępniania otwiera systemowy Share Sheet dopiero po działaniu użytkownika.
 
 W związku z tym dane oferty nie są transmitowane poza urządzenie przez FUJARA. W formularzu Data safety odpowiedzi o `collection` i `sharing` powinny odzwierciedlać brak przesyłania danych poza urządzenie.
 

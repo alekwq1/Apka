@@ -13,6 +13,8 @@ import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -54,6 +56,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -69,13 +72,17 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
@@ -205,7 +212,14 @@ class MainActivity : ComponentActivity() {
                                 }
                             },
                             onSettings = { screen = AppScreen.SETTINGS },
-                            onSetup = { screen = AppScreen.SETUP }
+                            onSetup = { screen = AppScreen.SETUP },
+                            onPyszneSummary = { screen = AppScreen.PYSZNE_SUMMARY }
+                        )
+
+                        AppScreen.PYSZNE_SUMMARY -> PyszneSummaryScreen(
+                            prefs = prefs,
+                            language = language,
+                            onBack = { screen = AppScreen.HOME }
                         )
 
                         AppScreen.SETTINGS -> SettingsScreen(
@@ -287,6 +301,7 @@ private enum class AppScreen {
     PRIVACY,
     SETUP,
     HOME,
+    PYSZNE_SUMMARY,
     SETTINGS
 }
 
@@ -343,10 +358,10 @@ private fun PrivacyScreen(
             title = tx(language, "Dlaczego FUJARA używa AccessibilityService", "Why FUJARA uses AccessibilityService", "Навіщо FUJARA використовує AccessibilityService", "Зачем FUJARA использует AccessibilityService"),
             body = tx(
                 language,
-                "FUJARA używa systemowej usługi dostępności Android (AccessibilityService), aby rozpoznać widoczną kartę oferty z obsługiwanej aplikacji kurierskiej i wyświetlić nad nią obliczenie opłacalności. Odczytuje z oferty kwotę, dystans, czas oraz planowaną godzinę odbioru/dostawy, jeśli jest dostępna. Gdy oferta jest pływającą kartą nad innym ekranem, zrzut może obejmować także tło, ale dane spoza oferty nie są używane ani zapisywane.\n\nWszystkie obliczenia są wykonywane lokalnie na telefonie. FUJARA nie klika, nie przyjmuje ani nie odrzuca zleceń za Ciebie.",
-                "FUJARA uses Android's AccessibilityService to recognize a visible offer card from a supported courier app and show a profitability calculation above it. It reads the amount, distance, duration and planned pickup/delivery time when available. If the offer is a floating card over another screen, the screenshot can include the background, but content outside the offer is not used or stored.\n\nAll calculations are performed locally on the phone. FUJARA does not click, accept or reject jobs for you.",
-                "FUJARA використовує системну службу AccessibilityService Android, щоб розпізнати видиму картку пропозиції з підтримуваного кур'єрського застосунку та показати розрахунок вигідності. Дані обробляються локально на телефоні й не зберігаються. FUJARA не натискає кнопки та не приймає чи відхиляє замовлення за вас.",
-                "FUJARA использует системную службу AccessibilityService Android, чтобы распознать видимую карточку предложения из поддерживаемого курьерского приложения и показать расчет выгодности. Данные обрабатываются локально на телефоне и не сохраняются. FUJARA не нажимает кнопки и не принимает или отклоняет заказы за вас."
+                "FUJARA używa systemowej usługi dostępności Android (AccessibilityService), aby rozpoznać widoczną kartę oferty z obsługiwanej aplikacji kurierskiej i wyświetlić nad nią obliczenie opłacalności. Odczytuje z oferty kwotę, dystans, czas oraz planowaną godzinę odbioru/dostawy, jeśli jest dostępna. Gdy oferta jest pływającą kartą nad innym ekranem, zrzut może obejmować także tło, ale dane spoza rozpoznanej oferty nie są dodawane do historii.\n\nNa ekranie historii Pyszne użytkownik może sam nacisnąć „ZAPISZ DANE”. Wtedy FUJARA zapisuje lokalnie tylko datę, nazwę restauracji/punktu odbioru, kwotę, dystans, czas aktywności i techniczny hash do blokowania duplikatów. Nie zapisuje pełnego OCR, screenshotu ani adresu klienta. Gdy otworzysz w Pyszne „Podsumowanie dnia”, FUJARA może lokalnie zapamiętać datę, liczbę zleceń i łączną kwotę wyłącznie do kontroli kompletności logu. Log można usunąć w aplikacji.\n\nWszystkie obliczenia są wykonywane lokalnie na telefonie. FUJARA nie klika, nie przyjmuje ani nie odrzuca zleceń za Ciebie.",
+                "FUJARA uses Android's AccessibilityService to recognize a visible offer card from a supported courier app and show a profitability calculation above it. It reads the amount, distance, duration and planned pickup/delivery time when available. If the offer is a floating card over another screen, the screenshot can include the background, but content outside the recognized offer is not added to history.\n\nOn a Pyszne order-history screen the user may explicitly tap “SAVE DATA”. FUJARA then stores locally only the date, restaurant/pickup name, amount, distance, active time and a technical hash used to prevent duplicates. It does not store the full OCR text, screenshot or customer address. When you open Pyszne’s daily summary, FUJARA may locally cache the date, order count and total amount only to verify log completeness. The local log can be deleted in the app.\n\nAll calculations are performed locally on the phone. FUJARA does not click, accept or reject jobs for you.",
+                "FUJARA використовує AccessibilityService для локального розпізнавання видимої пропозиції. На екрані історії Pyszne користувач може сам натиснути «ЗБЕРЕГТИ ДАНІ»; тоді локально зберігаються лише дата, ресторан/точка отримання, сума, відстань, активний час і технічний hash для блокування дублікатів. Повний OCR, screenshot та адреса клієнта не зберігаються. На екрані підсумку дня Pyszne локально може зберігатися лише дата, кількість замовлень і загальна сума для перевірки повноти. FUJARA не натискає кнопки та не приймає чи відхиляє замовлення за вас.",
+                "FUJARA использует AccessibilityService для локального распознавания видимого предложения. На экране истории Pyszne пользователь может сам нажать «СОХРАНИТЬ ДАННЫЕ»; тогда локально сохраняются только дата, ресторан/точка получения, сумма, расстояние, активное время и технический hash для блокировки дублей. Полный OCR, screenshot и адрес клиента не сохраняются. На экране итогов дня Pyszne локально могут сохраняться только дата, количество заказов и общая сумма для проверки полноты. FUJARA не нажимает кнопки и не принимает или отклоняет заказы за вас."
             )
         )
 
@@ -504,7 +519,8 @@ private fun HomeScreen(
     analysisEnabled: Boolean,
     onToggle: () -> Unit,
     onSettings: () -> Unit,
-    onSetup: () -> Unit
+    onSetup: () -> Unit,
+    onPyszneSummary: () -> Unit
 ) {
     val active = serviceEnabled && analysisEnabled
     var showDemo by remember { mutableStateOf(false) }
@@ -560,6 +576,24 @@ private fun HomeScreen(
             )
         }
 
+        SectionCard(
+            step = "PYSZNE",
+            title = tx(language, "Podsumowanie dnia", "Daily summary", "Підсумок дня", "Итоги дня")
+        ) {
+            Text(
+                tx(
+                    language,
+                    "Zapisuj pojedyncze dostawy z historii Pyszne, a FUJARA policzy km, czas, zł/h, zł/km i najlepsze restauracje.",
+                    "Save individual Pyszne deliveries and FUJARA will calculate distance, time, hourly/per-km rates and restaurant ranking.",
+                    "Зберігайте окремі доставки Pyszne — FUJARA порахує кілометри, час, ставки та рейтинг ресторанів.",
+                    "Сохраняйте отдельные доставки Pyszne — FUJARA посчитает километры, время, ставки и рейтинг ресторанов."
+                ),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            OutlinedButton(onClick = onPyszneSummary, modifier = Modifier.fillMaxWidth()) {
+                Text(tx(language, "Otwórz podsumowanie Pyszne", "Open Pyszne summary", "Відкрити підсумок Pyszne", "Открыть итоги Pyszne"))
+            }
+        }
 
         SectionCard(
             step = "LIVE",
@@ -576,6 +610,485 @@ private fun HomeScreen(
         }
     }
 }
+
+@Composable
+private fun PyszneSummaryScreen(
+    prefs: AppPrefs,
+    language: AppLanguage,
+    onBack: () -> Unit
+) {
+    val context = LocalContext.current
+    val store = remember { PyszneLogStore(context) }
+    var refreshToken by remember { mutableStateOf(0) }
+    val entries = remember(refreshToken) { store.all() }
+    val availableDates = entries.map { it.date }.distinct().sortedDescending()
+    var selectedDate by remember { mutableStateOf(availableDates.firstOrNull() ?: LocalDate.now()) }
+
+    LaunchedEffect(availableDates) {
+        if (availableDates.isNotEmpty() && selectedDate !in availableDates) {
+            selectedDate = availableDates.first()
+        }
+    }
+
+    val dayReference = remember(refreshToken, selectedDate) { store.dayReference(selectedDate) }
+    val rules = prefs.rulesForPlatform(CourierPlatform.PYSZNE)
+    val summary = PyszneDaySummaryCalculator.calculate(
+        date = selectedDate,
+        entries = entries,
+        rules = rules,
+        decisionBasis = prefs.decisionBasis,
+        zusPercent = if (prefs.zusEnabled) prefs.zusPercent else 0.0
+    )
+
+    var officialCountText by remember { mutableStateOf("") }
+    var officialAmountText by remember { mutableStateOf("") }
+    var showResult by remember { mutableStateOf(false) }
+    var validationMessage by remember { mutableStateOf("") }
+    var nickname by remember { mutableStateOf("") }
+    var confirmDelete by remember { mutableStateOf(false) }
+
+    LaunchedEffect(selectedDate, entries.size, dayReference) {
+        officialCountText = (dayReference?.orderCount ?: summary.orderCount).toString()
+        officialAmountText = String.format(
+            Locale.forLanguageTag("pl-PL"),
+            "%.2f",
+            dayReference?.amountPln ?: summary.grossPln
+        )
+        showResult = false
+        validationMessage = ""
+        confirmDelete = false
+    }
+
+    val resultProgress by animateFloatAsState(
+        targetValue = if (showResult) 1f else 0.10f,
+        animationSpec = tween(durationMillis = 1200),
+        label = "pyszne_summary_progress"
+    )
+
+    ScreenContainer(scrollable = true) {
+        TopBar(
+            title = tx(language, "Pyszne · dzień", "Pyszne · day", "Pyszne · день", "Pyszne · день"),
+            onBack = onBack
+        )
+
+        SectionCard(
+            step = "1 / ZAPISY",
+            title = tx(language, "Zebrane dostawy", "Saved deliveries", "Збережені доставки", "Сохранённые доставки")
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        val currentIndex = availableDates.indexOf(selectedDate)
+                        val older = availableDates.getOrNull(currentIndex + 1)
+                        if (older != null) selectedDate = older
+                    },
+                    enabled = availableDates.indexOf(selectedDate) in 0 until (availableDates.size - 1)
+                ) { Text("‹") }
+
+                Text(
+                    text = formatSummaryDate(selectedDate, language),
+                    modifier = Modifier.weight(1f),
+                    textAlign = TextAlign.Center,
+                    fontWeight = FontWeight.Bold
+                )
+
+                OutlinedButton(
+                    onClick = {
+                        val currentIndex = availableDates.indexOf(selectedDate)
+                        val newer = availableDates.getOrNull(currentIndex - 1)
+                        if (newer != null) selectedDate = newer
+                    },
+                    enabled = availableDates.indexOf(selectedDate) > 0
+                ) { Text("›") }
+            }
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                SummarySmallMetric(
+                    modifier = Modifier.weight(1f),
+                    label = tx(language, "ZAPISANE", "SAVED", "ЗБЕРЕЖЕНО", "СОХРАНЕНО"),
+                    value = summary.orderCount.toString()
+                )
+                SummarySmallMetric(
+                    modifier = Modifier.weight(1f),
+                    label = tx(language, "KWOTA", "AMOUNT", "СУМА", "СУММА"),
+                    value = String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", summary.grossPln)
+                )
+            }
+
+            Text(
+                tx(
+                    language,
+                    "W szczegółach pojedynczego zlecenia Pyszne pojawia się przycisk „ZAPISZ DANE”. Ten sam numer zlecenia nie zostanie dodany drugi raz.",
+                    "On an individual Pyszne order screen use “SAVE DATA”. The same order will not be added twice.",
+                    "У деталях окремого замовлення Pyszne натисніть «ЗБЕРЕГТИ ДАНІ». Те саме замовлення не додасться двічі.",
+                    "В деталях отдельного заказа Pyszne нажмите «СОХРАНИТЬ ДАННЫЕ». Один и тот же заказ не добавится дважды."
+                ),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall
+            )
+
+            OutlinedButton(
+                onClick = { refreshToken += 1 },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(tx(language, "Odśwież logi", "Refresh logs", "Оновити записи", "Обновить записи"))
+            }
+        }
+
+        SectionCard(
+            step = "2 / KONTROLA",
+            title = tx(language, "Potwierdź z Pyszne", "Confirm with Pyszne", "Підтвердьте з Pyszne", "Подтвердите с Pyszne")
+        ) {
+            if (dayReference != null) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            tx(language, "✓ Odczytano z ekranu Pyszne", "✓ Read from Pyszne screen", "✓ Зчитано з екрана Pyszne", "✓ Считано с экрана Pyszne"),
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            "${dayReference.orderCount} zleceń · ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", dayReference.amountPln)}",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
+            }
+
+            Text(
+                tx(
+                    language,
+                    "Jeżeli wcześniej otworzysz w Pyszne ekran „Podsumowanie dnia”, FUJARA uzupełni te pola automatycznie. Możesz je też wpisać ręcznie. Potem sprawdzi, czy zapisano komplet.",
+                    "If you first open Pyszne's daily summary, FUJARA fills these values automatically. You can also enter them manually. It then checks whether the saved log is complete.",
+                    "Введіть кількість замовлень і суму з підсумку Pyszne. FUJARA перевірить повноту записів.",
+                    "Введите количество заказов и сумму из итогов Pyszne. FUJARA проверит полноту записей."
+                ),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            OutlinedTextField(
+                value = officialCountText,
+                onValueChange = { officialCountText = it.filter(Char::isDigit).take(4) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text(tx(language, "Liczba zleceń wg Pyszne", "Orders according to Pyszne", "Замовлень за Pyszne", "Заказов по Pyszne")) },
+                singleLine = true
+            )
+
+            OutlinedTextField(
+                value = officialAmountText,
+                onValueChange = { officialAmountText = it.filter { ch -> ch.isDigit() || ch == ',' || ch == '.' }.take(12) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text(tx(language, "Kwota wg Pyszne", "Amount according to Pyszne", "Сума за Pyszne", "Сумма по Pyszne")) },
+                singleLine = true
+            )
+
+            Button(
+                onClick = {
+                    val expectedCount = officialCountText.toIntOrNull()
+                    val expectedAmount = officialAmountText.replace(',', '.').toDoubleOrNull()
+                    val countOk = expectedCount == summary.orderCount
+                    val amountOk = expectedAmount != null && abs(expectedAmount - summary.grossPln) < 0.02
+                    validationMessage = when {
+                        expectedCount == null || expectedAmount == null -> tx(language, "Uzupełnij liczbę zleceń i kwotę.", "Enter both order count and amount.", "Введіть кількість і суму.", "Введите количество и сумму.")
+                        countOk && amountOk -> tx(language, "✓ Zgadza się z logami. Można liczyć dzień.", "✓ Matches the saved log. Ready to calculate.", "✓ Збігається із записами. Можна рахувати день.", "✓ Совпадает с записями. Можно считать день.")
+                        else -> {
+                            val missing = expectedCount - summary.orderCount
+                            val amountDiff = expectedAmount - summary.grossPln
+                            tx(
+                                language,
+                                "⚠ Różnica: zlecenia ${if (missing >= 0) "+$missing" else missing}, kwota ${String.format(Locale.forLanguageTag("pl-PL"), "%+.2f zł", amountDiff)}. Sprawdź brakujące/podwójne zapisy.",
+                                "⚠ Difference: orders ${if (missing >= 0) "+$missing" else missing}, amount ${String.format(Locale.US, "%+.2f PLN", amountDiff)}. Check missing/duplicate saves.",
+                                "⚠ Є різниця в кількості або сумі. Перевірте збережені замовлення.",
+                                "⚠ Есть разница в количестве или сумме. Проверьте сохранённые заказы."
+                            )
+                        }
+                    }
+                    // Nie pokazujemy ladnego wyniku na niekompletnych danych.
+                    // Najpierw liczba zlecen i kwota musza zgadzac sie z Pyszne.
+                    showResult = countOk && amountOk
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = summary.orderCount > 0
+            ) {
+                Text(tx(language, "Potwierdź i policz", "Confirm and calculate", "Підтвердити й порахувати", "Подтвердить и посчитать"))
+            }
+
+            if (validationMessage.isNotBlank()) {
+                Text(
+                    validationMessage,
+                    color = if (validationMessage.startsWith("✓")) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        if (showResult && summary.orderCount > 0) {
+            val accent = summaryStatusColor(summary.status)
+            SectionCard(
+                step = "3 / WYNIK",
+                title = summaryCelebration(summary.status, language)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    FujaraBrandMark(
+                        level = resultProgress,
+                        color = accent,
+                        modifier = Modifier
+                            .size(width = 52.dp, height = 86.dp)
+                            .graphicsLayer {
+                                scaleX = 0.82f + resultProgress * 0.25f
+                                scaleY = 0.82f + resultProgress * 0.25f
+                            }
+                    )
+                    Spacer(Modifier.width(14.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        BrandEyebrow(tx(language, "PODSUMOWANIE DNIA", "DAILY RESULT", "ПІДСУМОК ДНЯ", "ИТОГ ДНЯ"), accent)
+                        Text(
+                            text = "${summary.goodOrders} SUPER · ${summary.borderlineOrders} NA STYK · ${summary.poorOrders} FUJARA",
+                            fontWeight = FontWeight.Black
+                        )
+                    }
+                }
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AnimatedSummaryMetric(
+                        modifier = Modifier.weight(1f),
+                        label = "PLN/H",
+                        value = summary.netPerHour ?: 0.0,
+                        decimals = 0,
+                        suffix = " zł/h",
+                        visible = showResult
+                    )
+                    AnimatedSummaryMetric(
+                        modifier = Modifier.weight(1f),
+                        label = "PLN/KM",
+                        value = summary.netPerKm ?: 0.0,
+                        decimals = 2,
+                        suffix = " zł/km",
+                        visible = showResult
+                    )
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AnimatedSummaryMetric(
+                        modifier = Modifier.weight(1f),
+                        label = tx(language, "DYSTANS", "DISTANCE", "ВІДСТАНЬ", "РАССТОЯНИЕ"),
+                        value = summary.distanceKm,
+                        decimals = 1,
+                        suffix = " km",
+                        visible = showResult
+                    )
+                    SummarySmallMetric(
+                        modifier = Modifier.weight(1f),
+                        label = tx(language, "CZAS", "TIME", "ЧАС", "ВРЕМЯ"),
+                        value = formatDuration(summary.durationSeconds)
+                    )
+                }
+
+                Text(
+                    tx(language, "Wynik po ustawionych kosztach pojazdu${if (prefs.zusEnabled) " i ZUS" else ""}.", "Result after your configured vehicle cost${if (prefs.zusEnabled) " and ZUS" else ""}.", "Результат після налаштованих витрат.", "Результат после настроенных расходов."),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+
+            SectionCard(
+                step = "RESTAURACJE",
+                title = tx(language, "Gdzie było SUPER, a gdzie FUJARA", "Best and worst restaurants", "Найкращі й найгірші ресторани", "Лучшие и худшие рестораны")
+            ) {
+                val best = summary.restaurants.firstOrNull()
+                val worst = summary.restaurants.minByOrNull { it.netPerHour ?: Double.POSITIVE_INFINITY }
+
+                if (best != null) {
+                    Text(
+                        tx(language, "🏆 Najlepiej: ${best.name}", "🏆 Best: ${best.name}", "🏆 Найкраще: ${best.name}", "🏆 Лучшее: ${best.name}"),
+                        fontWeight = FontWeight.Black,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                if (worst != null && worst.name != best?.name) {
+                    Text(
+                        tx(language, "🪈 Najsłabiej: ${worst.name}", "🪈 Weakest: ${worst.name}", "🪈 Найслабше: ${worst.name}", "🪈 Самое слабое: ${worst.name}"),
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.tertiary
+                    )
+                }
+
+                summary.restaurants.take(8).forEachIndexed { index, restaurant ->
+                    if (index > 0) HorizontalDivider()
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(restaurant.name, fontWeight = FontWeight.Bold)
+                            Text(
+                                "${restaurant.orderCount} zlec. · ${String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł/h", restaurant.netPerHour ?: 0.0)} · ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł/km", restaurant.netPerKm ?: 0.0)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                "SUPER ${restaurant.goodOrders} · STYK ${restaurant.borderlineOrders} · FUJARA ${restaurant.poorOrders}",
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                        StatusPill(summaryStatusLabel(restaurant.status, language), summaryStatusColor(restaurant.status))
+                    }
+                }
+            }
+
+            SectionCard(
+                step = "SHARE",
+                title = tx(language, "Podziel się wynikiem", "Share your result", "Поділитися результатом", "Поделиться результатом")
+            ) {
+                OutlinedTextField(
+                    value = nickname,
+                    onValueChange = { nickname = it.take(32) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(tx(language, "Nick do wyniku (opcjonalnie)", "Nickname (optional)", "Нік (необов'язково)", "Ник (необязательно)")) },
+                    singleLine = true
+                )
+                Button(
+                    onClick = {
+                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, summary.shareText(nickname))
+                        }
+                        context.startActivity(
+                            Intent.createChooser(
+                                shareIntent,
+                                tx(language, "Udostępnij wynik FUJARA", "Share FUJARA result", "Поділитися FUJARA", "Поделиться FUJARA")
+                            )
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(tx(language, "Udostępnij wynik", "Share result", "Поділитися результатом", "Поделиться результатом"))
+                }
+                Text(
+                    tx(
+                        language,
+                        "Ta wersja udostępnia gotowy wynik przez system Android. Wspólny ranking online wymaga osobnego backendu i zgody użytkownika na wysyłanie danych.",
+                        "This version shares a ready result through Android. A shared online leaderboard needs a backend and explicit user consent for uploading data.",
+                        "Ця версія ділиться готовим результатом через Android. Спільний онлайн-рейтинг потребує backend та згоди користувача.",
+                        "Эта версия делится готовым результатом через Android. Общий онлайн-рейтинг требует backend и согласия пользователя."
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        if (summary.orderCount > 0) {
+            TextButton(
+                onClick = {
+                    if (confirmDelete) {
+                        store.deleteDate(selectedDate)
+                        refreshToken += 1
+                        confirmDelete = false
+                    } else {
+                        confirmDelete = true
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    if (confirmDelete) {
+                        tx(language, "Kliknij ponownie: usuń zapisy tego dnia", "Tap again: delete this day", "Ще раз: видалити день", "Ещё раз: удалить день")
+                    } else {
+                        tx(language, "Usuń zapisy tego dnia", "Delete this day's logs", "Видалити записи дня", "Удалить записи дня")
+                    },
+                    color = MaterialTheme.colorScheme.tertiary
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SummarySmallMetric(
+    modifier: Modifier,
+    label: String,
+    value: String
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant
+    ) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleMedium)
+        }
+    }
+}
+
+@Composable
+private fun AnimatedSummaryMetric(
+    modifier: Modifier,
+    label: String,
+    value: Double,
+    decimals: Int,
+    suffix: String,
+    visible: Boolean
+) {
+    val animated by animateFloatAsState(
+        targetValue = if (visible) value.toFloat() else 0f,
+        animationSpec = tween(durationMillis = 1450),
+        label = "summary_metric_$label"
+    )
+    val format = if (decimals == 0) "%.0f" else "%.${decimals}f"
+    SummarySmallMetric(
+        modifier = modifier,
+        label = label,
+        value = String.format(Locale.forLanguageTag("pl-PL"), format, animated) + suffix
+    )
+}
+
+private fun summaryStatusColor(status: ProfitabilityStatus): Color = when (status) {
+    ProfitabilityStatus.PROFITABLE -> Color(0xFF176A35)
+    ProfitabilityStatus.ALMOST_PROFITABLE -> Color(0xFF9A7400)
+    ProfitabilityStatus.UNPROFITABLE -> Color(0xFFB3261E)
+    ProfitabilityStatus.NO_TIME -> Color(0xFF7B5E00)
+}
+
+private fun summaryStatusLabel(status: ProfitabilityStatus, language: AppLanguage): String = when (status) {
+    ProfitabilityStatus.PROFITABLE -> tx(language, "SUPER", "SUPER", "СУПЕР", "СУПЕР")
+    ProfitabilityStatus.ALMOST_PROFITABLE -> tx(language, "NA STYK", "BORDERLINE", "НА МЕЖІ", "НА ГРАНИ")
+    ProfitabilityStatus.UNPROFITABLE -> "FUJARA"
+    ProfitabilityStatus.NO_TIME -> tx(language, "BRAK CZASU", "NO TIME", "НЕМАЄ ЧАСУ", "НЕТ ВРЕМЕНИ")
+}
+
+private fun summaryCelebration(status: ProfitabilityStatus, language: AppLanguage): String = when (status) {
+    ProfitabilityStatus.PROFITABLE -> tx(language, "🎉 Super robota! FUJARA rośnie", "🎉 Great job! FUJARA grows", "🎉 Супер! FUJARA росте", "🎉 Супер! FUJARA растёт")
+    ProfitabilityStatus.ALMOST_PROFITABLE -> tx(language, "🔥 Dobra robota — było na styku", "🔥 Good job — close to target", "🔥 Добре — майже ціль", "🔥 Хорошо — почти цель")
+    ProfitabilityStatus.UNPROFITABLE -> tx(language, "🪈 FUJARA wie, gdzie uciekła stawka", "🪈 FUJARA found where the rate leaked", "🪈 FUJARA знає, де втратилась ставка", "🪈 FUJARA знает, где потерялась ставка")
+    ProfitabilityStatus.NO_TIME -> tx(language, "Podsumowanie dnia", "Daily summary", "Підсумок дня", "Итог дня")
+}
+
+private fun formatDuration(seconds: Int): String {
+    val hours = seconds / 3600
+    val minutes = (seconds % 3600) / 60
+    return if (hours > 0) "${hours}h ${minutes}min" else "${minutes} min"
+}
+
+private fun formatSummaryDate(date: LocalDate, language: AppLanguage): String {
+    val locale = when (language) {
+        AppLanguage.EN -> Locale.US
+        AppLanguage.UK -> Locale.forLanguageTag("uk-UA")
+        AppLanguage.RU -> Locale.forLanguageTag("ru-RU")
+        AppLanguage.PL -> Locale.forLanguageTag("pl-PL")
+    }
+    return date.format(DateTimeFormatter.ofPattern("d MMMM yyyy", locale))
+}
+
 
 @Composable
 private fun StatusHeroCard(language: AppLanguage, active: Boolean, serviceEnabled: Boolean) {

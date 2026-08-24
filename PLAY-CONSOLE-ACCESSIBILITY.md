@@ -19,11 +19,13 @@ Przy pływającej karcie techniczny screenshot może obejmować tło, ale FUJARA
 - lokalnie rozpoznaje tekst,
 - lokalnie oblicza wynik po kosztach, zł/km i zł/h,
 - wyświetla wynik w nakładce.
+- tylko po ręcznym naciśnięciu `ZAPISZ DANE` na ekranie historii Pyszne zapisuje lokalnie datę, restaurację/punkt odbioru, kwotę, dystans i czas aktywności; do deduplikacji przechowuje hash/fingerprint, nie surowy numer zlecenia.
+- na ekranie `Podsumowanie dnia` Pyszne może lokalnie zapamiętać datę, liczbę zleceń i łączną kwotę wyłącznie do porównania kompletności lokalnego logu.
 
 ## Czego nie robi
 - nie klika,
 - nie przyjmuje i nie odrzuca zleceń,
-- nie wysyła ofert na serwer,
+- nie wysyła ofert ani lokalnej historii Pyszne na serwer,
 - nie używa danych do reklam ani profilowania.
 
 ## Prominent disclosure

@@ -28,7 +28,7 @@
 <main>
   <p class="brand">FUJARA</p>
   <h1>Polityka prywatności</h1>
-  <p class="muted">Ostatnia aktualizacja: 13 sierpnia 2026 r.</p>
+  <p class="muted">Ostatnia aktualizacja: 24 sierpnia 2026 r.</p>
 
   <section class="card">
     <h2>1. Co robi FUJARA</h2>
@@ -44,14 +44,16 @@
 
   <section class="card">
     <h2>3. OCR i sposób przetwarzania</h2>
-    <p>Tekst oferty może być rozpoznawany lokalnie przy użyciu mechanizmu OCR w aplikacji. Rozpoznane informacje są używane wyłącznie do bieżącej analizy oferty i wyświetlenia wyniku na nakładce.</p>
-    <p>FUJARA nie posiada własnego konta użytkownika, panelu internetowego ani serwera, do którego wysyła treść odczytanych ofert.</p>
+    <p>Tekst oferty może być rozpoznawany lokalnie przy użyciu mechanizmu OCR w aplikacji. Przy zwykłej analizie informacje służą do bieżącego obliczenia i wyświetlenia wyniku na nakładce.</p>
+    <p>Na ekranie historii pojedynczego zlecenia Pyszne użytkownik może sam wybrać przycisk „ZAPISZ DANE”. Dopiero wtedy aplikacja tworzy lokalny wpis historii potrzebny do podsumowania dnia. Gdy użytkownik otworzy w Pyszne ekran „Podsumowanie dnia”, aplikacja może lokalnie zapamiętać datę, liczbę zleceń i łączną kwotę, aby automatycznie porównać je z zapisanymi dostawami.</p>
+    <p>FUJARA nie posiada własnego konta użytkownika, panelu internetowego ani serwera, do którego automatycznie wysyła treść odczytanych ofert.</p>
   </section>
 
   <section class="card">
     <h2>4. Dane zapisywane na urządzeniu</h2>
-    <p>Aplikacja zapisuje lokalnie ustawienia potrzebne do działania, np. język, motyw, koszt przejazdu, zapas czasu, progi opłacalności, opcjonalny procent ZUS, wygląd nakładki oraz wpisane przez użytkownika listy restauracji i odbiorców do lokalnych ostrzeżeń. Ustawienia i te listy pozostają na urządzeniu w pamięci aplikacji i nie są wysyłane na serwer FUJARA.</p>
-    <p>FUJARA nie zapisuje rozpoznanych ofert jako historii dostaw.</p>
+    <p>Aplikacja zapisuje lokalnie ustawienia potrzebne do działania, np. język, motyw, koszt przejazdu, zapas czasu, progi opłacalności, opcjonalny procent ZUS, wygląd nakładki oraz wpisane przez użytkownika listy restauracji i odbiorców do lokalnych ostrzeżeń.</p>
+    <p>Po ręcznym naciśnięciu „ZAPISZ DANE” na ekranie historii Pyszne aplikacja może zapisać lokalnie: datę zlecenia, nazwę restauracji/punktu odbioru, kwotę, dystans i czas aktywności. Do wykrywania duplikatów przechowywany jest techniczny hash identyfikatora zlecenia albo fingerprint z podstawowych parametrów. Surowy numer zlecenia, pełny tekst OCR, screenshot i adres klienta nie są zapisywane w historii FUJARA.</p>
+    <p>Historia Pyszne oraz wartości kontrolne podsumowania dnia pozostają w pamięci aplikacji. Automatyczny backup aplikacji Android jest wyłączony dla tego buildu. Użytkownik może usunąć zapisy wybranego dnia w aplikacji.</p>
   </section>
 
   <section class="card">
@@ -60,13 +62,15 @@
       <li>treść odczytanych ofert nie jest sprzedawana ani przekazywana reklamodawcom;</li>
       <li>aplikacja nie wykorzystuje treści ofert do profilowania reklamowego;</li>
       <li>aktualna wersja nie zawiera kont użytkowników, reklam ani własnej analityki zachowania użytkownika;</li>
-      <li>obliczenia opłacalności wykonywane są na urządzeniu.</li>
+      <li>obliczenia opłacalności wykonywane są na urządzeniu;</li>
+      <li>funkcja „Udostępnij wynik” działa przez systemowy arkusz udostępniania Android i uruchamia się wyłącznie po działaniu użytkownika;</li>
+      <li>wersja 0.8.4 nie zawiera wspólnego internetowego scoreboardu ani automatycznej wysyłki logów.</li>
     </ul>
   </section>
 
   <section class="card">
     <h2>6. Kontrola użytkownika</h2>
-    <p>Użytkownik sam włącza usługę dostępności w ustawieniach Androida. Może ją w dowolnym momencie wyłączyć, zatrzymać analizę w FUJARA, zmienić ustawienia aplikacji albo odinstalować aplikację.</p>
+    <p>Użytkownik sam włącza usługę dostępności w ustawieniach Androida. Może ją w dowolnym momencie wyłączyć, zatrzymać analizę w FUJARA, zmienić ustawienia aplikacji, usunąć lokalne zapisy Pyszne albo odinstalować aplikację.</p>
   </section>
 
   <section class="card">
@@ -84,7 +88,7 @@
     <p>Pytania dotyczące prywatności lub działania aplikacji można wysłać na: <a href="mailto:aleksanue@gmail.com">aleksanue@gmail.com</a>.</p>
   </section>
 
-  <p class="muted">Dokument dotyczy FUJARA 0.7.7.</p>
+  <p class="muted">Dokument dotyczy FUJARA 0.8.4.</p>
 </main>
 </body>
 </html>

@@ -41,6 +41,10 @@ class OverlayController(
     private var blacklistText: TextView? = null
     private var collapseRoot: TextView? = null
     private var restoreRoot: TextView? = null
+    private var saveHistoryRoot: TextView? = null
+    private var currentHistoryEntry: PyszneDeliveryLog? = null
+    private var currentHistoryAlreadySaved: Boolean = false
+    private var onSaveHistory: ((PyszneDeliveryLog) -> PyszneSaveResult)? = null
     private var userCollapsed = false
     private var overlayLanguage = ""
     private var fujaraGauge: FujaraGaugeView? = null
@@ -56,7 +60,10 @@ class OverlayController(
         result: Profitability,
         applicationName: String,
         applicationIcon: Drawable?,
-        blacklistHits: BlacklistHits = BlacklistHits()
+        blacklistHits: BlacklistHits = BlacklistHits(),
+        historyEntry: PyszneDeliveryLog? = null,
+        historyAlreadySaved: Boolean = false,
+        onSaveHistory: ((PyszneDeliveryLog) -> PyszneSaveResult)? = null
     ) {
         val language = prefs.languageCode
         if (root == null || overlayLanguage != language) {
@@ -183,14 +190,25 @@ class OverlayController(
 
         fujaraGauge?.setStatus(result.status)
         root?.background = panelBackground(accent, prefs.overlayOpacityPercent)
+
+        currentHistoryEntry = historyEntry
+        currentHistoryAlreadySaved = historyAlreadySaved
+        this.onSaveHistory = onSaveHistory
+        updateHistorySaveButton(language)
+
         if (userCollapsed) {
             root?.visibility = View.GONE
             collapseRoot?.visibility = View.GONE
             restoreRoot?.visibility = View.VISIBLE
+            saveHistoryRoot?.visibility = View.GONE
         } else {
             root?.visibility = View.VISIBLE
             collapseRoot?.visibility = View.VISIBLE
             restoreRoot?.visibility = View.GONE
+            if (historyEntry != null) {
+                saveHistoryRoot?.visibility = View.VISIBLE
+                positionHistorySaveButton()
+            }
         }
     }
 
@@ -199,6 +217,9 @@ class OverlayController(
         root?.visibility = View.GONE
         collapseRoot?.visibility = View.GONE
         restoreRoot?.visibility = View.GONE
+        saveHistoryRoot?.visibility = View.GONE
+        currentHistoryEntry = null
+        onSaveHistory = null
     }
 
     fun isVisible(): Boolean =
@@ -209,30 +230,41 @@ class OverlayController(
     }
 
     fun screenBounds(): Rect? {
-        val view = when {
-            root?.visibility == View.VISIBLE -> root
-            restoreRoot?.visibility == View.VISIBLE -> restoreRoot
-            else -> null
-        } ?: return null
-        if (view.width <= 0 || view.height <= 0) return null
+        val visibleViews = listOfNotNull(
+            root?.takeIf { it.visibility == View.VISIBLE },
+            restoreRoot?.takeIf { it.visibility == View.VISIBLE },
+            saveHistoryRoot?.takeIf { it.visibility == View.VISIBLE }
+        ).filter { it.width > 0 && it.height > 0 }
 
-        val location = IntArray(2)
-        view.getLocationOnScreen(location)
-        return Rect(
-            location[0],
-            location[1],
-            location[0] + view.width,
-            location[1] + view.height
-        )
+        if (visibleViews.isEmpty()) return null
+
+        var union: Rect? = null
+        visibleViews.forEach { view ->
+            val location = IntArray(2)
+            view.getLocationOnScreen(location)
+            val bounds = Rect(
+                location[0],
+                location[1],
+                location[0] + view.width,
+                location[1] + view.height
+            )
+            union = union?.apply { this.union(bounds) } ?: bounds
+        }
+        return union
     }
 
     private fun removeOverlayView() {
         root?.let { runCatching { windowManager.removeView(it) } }
         collapseRoot?.let { runCatching { windowManager.removeView(it) } }
         restoreRoot?.let { runCatching { windowManager.removeView(it) } }
+        saveHistoryRoot?.let { runCatching { windowManager.removeView(it) } }
         root = null
         collapseRoot = null
         restoreRoot = null
+        saveHistoryRoot = null
+        currentHistoryEntry = null
+        currentHistoryAlreadySaved = false
+        onSaveHistory = null
         amountRow = null
         distanceRow = null
         rateRow = null
@@ -424,6 +456,7 @@ class OverlayController(
                 panel.visibility = View.GONE
                 visibility = View.GONE
                 restoreRoot?.visibility = View.VISIBLE
+                saveHistoryRoot?.visibility = View.GONE
             }
         }
         val collapseParams = WindowManager.LayoutParams(
@@ -459,6 +492,10 @@ class OverlayController(
                 visibility = View.GONE
                 panel.visibility = View.VISIBLE
                 collapseRoot?.visibility = View.VISIBLE
+                if (currentHistoryEntry != null) {
+                    saveHistoryRoot?.visibility = View.VISIBLE
+                    positionHistorySaveButton()
+                }
             }
         }
         val restoreParams = WindowManager.LayoutParams(
@@ -476,6 +513,86 @@ class OverlayController(
         }
         windowManager.addView(restore, restoreParams)
         restoreRoot = restore
+
+        val saveHistory = TextView(service).apply {
+            textSize = 10f
+            gravity = Gravity.CENTER
+            setTextColor(white)
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            background = panelBackground(green, prefs.overlayOpacityPercent)
+            visibility = View.GONE
+            isClickable = true
+            isFocusable = false
+            contentDescription = tr(language, "Zapisz dane zlecenia", "Save order data", "Зберегти дані замовлення", "Сохранить данные заказа")
+            setOnClickListener {
+                val entry = currentHistoryEntry ?: return@setOnClickListener
+                if (currentHistoryAlreadySaved) {
+                    updateHistorySaveButton(language)
+                    return@setOnClickListener
+                }
+                when (onSaveHistory?.invoke(entry)) {
+                    PyszneSaveResult.SAVED, PyszneSaveResult.DUPLICATE -> {
+                        currentHistoryAlreadySaved = true
+                        updateHistorySaveButton(language)
+                    }
+                    null -> Unit
+                }
+            }
+        }
+        val saveHistoryParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.END
+            x = dp(8)
+            y = dp(58)
+        }
+        windowManager.addView(saveHistory, saveHistoryParams)
+        saveHistoryRoot = saveHistory
+    }
+
+    private fun updateHistorySaveButton(language: String) {
+        val button = saveHistoryRoot ?: return
+        val entry = currentHistoryEntry
+        if (entry == null) {
+            button.visibility = View.GONE
+            return
+        }
+
+        if (currentHistoryAlreadySaved) {
+            button.text = tr(language, "✓ ZAPISANE", "✓ SAVED", "✓ ЗБЕРЕЖЕНО", "✓ СОХРАНЕНО")
+            button.setTextColor(green)
+            button.background = panelBackground(green, prefs.overlayOpacityPercent)
+        } else {
+            button.text = tr(language, "＋ ZAPISZ DANE", "＋ SAVE DATA", "＋ ЗБЕРЕГТИ ДАНІ", "＋ СОХРАНИТЬ ДАННЫЕ")
+            button.setTextColor(white)
+            button.background = panelBackground(amber, prefs.overlayOpacityPercent)
+        }
+    }
+
+    private fun positionHistorySaveButton() {
+        val panel = root ?: return
+        val button = saveHistoryRoot ?: return
+        panel.post panelPost@ {
+            if (button.visibility != View.VISIBLE || panel.visibility != View.VISIBLE) return@panelPost
+            button.post buttonPost@ {
+                if (button.visibility != View.VISIBLE || panel.visibility != View.VISIBLE) return@buttonPost
+                val location = IntArray(2)
+                panel.getLocationOnScreen(location)
+                val params = button.layoutParams as? WindowManager.LayoutParams ?: return@buttonPost
+                // Przycisk lezy W obrebie panelu FUJARA, zamiast pod nim. Dzieki temu
+                // nie zaslania dodatkowego fragmentu Pyszne i nie pogarsza kolejnych OCR.
+                params.y = location[1] + (panel.height - button.height - dp(6)).coerceAtLeast(0)
+                params.x = dp(8)
+                runCatching { windowManager.updateViewLayout(button, params) }
+            }
+        }
     }
 
     private fun metricRow(
