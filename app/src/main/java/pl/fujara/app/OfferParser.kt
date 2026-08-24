@@ -313,8 +313,8 @@ object OfferParser {
     }
 
     private val pyszneTotalRevenueLabelRegex = Regex(
-        """\b(?:suma\s+przychod\w*|total\s+(?:earnings|income|revenue)|earnings\s+total)\b""",
-        RegexOption.IGNORE_CASE
+    """(?<![\p{L}\p{N}_])(?:suma\s+przychod\p{L}*|total\s+(?:earnings|income|revenue)|earnings\s+total)(?![\p{L}\p{N}_])""",
+    RegexOption.IGNORE_CASE
     )
 
     /** Ekran Pyszne: Szczegoly zlecenia / Order details. */
