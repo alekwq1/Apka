@@ -44,15 +44,22 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.BarChart
+import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.ReceiptLong
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -153,17 +160,17 @@ class MainActivity : ComponentActivity() {
                 )
             } else {
                 lightColorScheme(
-                    primary = Color(0xFF176A35),
+                    primary = Color(0xFF188A4A),
                     onPrimary = Color.White,
-                    secondary = Color(0xFF7B5E00),
-                    tertiary = Color(0xFFB3261E),
-                    background = Color(0xFFF6F8F7),
-                    onBackground = Color(0xFF17201A),
+                    secondary = Color(0xFF6B7280),
+                    tertiary = Color(0xFFD94A4A),
+                    background = Color(0xFFF5F6FA),
+                    onBackground = Color(0xFF17191D),
                     surface = Color(0xFFFFFFFF),
-                    onSurface = Color(0xFF17201A),
-                    surfaceVariant = Color(0xFFEDF2EE),
-                    onSurfaceVariant = Color(0xFF536159),
-                    outline = Color(0xFFC7D0C9)
+                    onSurface = Color(0xFF17191D),
+                    surfaceVariant = Color(0xFFF0F1F5),
+                    onSurfaceVariant = Color(0xFF777C87),
+                    outline = Color(0xFFE5E7EC)
                 )
             }
 
@@ -645,77 +652,102 @@ private fun HomeScreen(
     onSetup: () -> Unit,
     onPyszneSummary: () -> Unit
 ) {
+    val context = LocalContext.current
+    val latestResult = remember { PyszneResultStore(context).all().maxByOrNull { it.date } }
     val active = serviceEnabled && analysisEnabled
+    val today = LocalDate.now()
+
     ScreenContainer(scrollable = true) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                FujaraBrandMark(
-                    level = if (active) 1f else 0.30f,
-                    color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary,
-                    modifier = Modifier.size(width = 34.dp, height = 54.dp)
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    tx(language, "Dzień dobry 👋", "Good morning 👋", "Добрий день 👋", "Добрый день 👋"),
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Black
                 )
-                Spacer(Modifier.width(10.dp))
-                Column {
-                    Text("FUJARA", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
-                    Text(
-                        text = tx(language, "KALKULATOR OPŁACALNOŚCI", "PROFITABILITY CHECK", "ПЕРЕВІРКА ВИГІДНОСТІ", "ПРОВЕРКА ВЫГОДНОСТИ"),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                Text(
+                    formatSummaryDate(today, language),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyLarge
+                )
+            }
+            Surface(
+                modifier = Modifier.size(52.dp).clickable(onClick = onSettings),
+                shape = RoundedCornerShape(18.dp),
+                color = bankInk()
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    FujaraBrandMark(
+                        level = if (active) 1f else 0.30f,
+                        color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.size(width = 24.dp, height = 40.dp)
                     )
                 }
             }
-            CompactAction("✓", onSetup)
-            Spacer(Modifier.width(6.dp))
-            CompactAction("⚙", onSettings)
         }
 
-        Text(
-            text = tx(language, "Sprawdź marżę, zanim przyjmiesz zlecenie.", "Check the margin before you accept.", "Перевір маржу перед прийняттям.", "Проверь маржу до принятия."),
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Black
+        HomeBalanceCard(
+            latest = latestResult,
+            language = language,
+            onOpenDay = onPyszneSummary
         )
 
-        StatusHeroCard(language = language, active = active, serviceEnabled = serviceEnabled)
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            BankMetricCard(
+                modifier = Modifier.weight(1f),
+                dotColor = MaterialTheme.colorScheme.primary,
+                label = tx(language, "Zlecenia", "Orders", "Замовлення", "Заказы"),
+                value = latestResult?.orderCount?.toString() ?: "—",
+                supporting = latestResult?.date?.let { formatShortDate(it) }
+            )
+            BankMetricCard(
+                modifier = Modifier.weight(1f),
+                dotColor = Color(0xFF5B7CFA),
+                label = tx(language, "Dystans", "Distance", "Відстань", "Расстояние"),
+                value = latestResult?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.1f km", it.distanceKm) } ?: "—",
+                supporting = latestResult?.let { formatDuration(it.durationSeconds) }
+            )
+        }
+
+        SectionHeader(
+            title = tx(language, "Tryb pracy", "Work mode", "Режим роботи", "Режим работы"),
+            action = if (!serviceEnabled) tx(language, "Konfiguruj", "Set up", "Налаштувати", "Настроить") else null,
+            onAction = if (!serviceEnabled) onSetup else null
+        )
+
+        WorkModeCard(
+            language = language,
+            active = active,
+            serviceEnabled = serviceEnabled
+        )
 
         Button(
             onClick = onToggle,
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(18.dp),
             colors = ButtonDefaults.buttonColors(
-                containerColor = if (active) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primary,
-                contentColor = if (active) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onPrimary
+                containerColor = if (active) MaterialTheme.colorScheme.surface else bankInk(),
+                contentColor = if (active) MaterialTheme.colorScheme.onSurface else Color.White
             ),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 16.dp)
         ) {
             Text(
-                if (active) tx(language, "Wyłącz analizę", "Stop analysis", "Вимкнути аналіз", "Выключить анализ")
+                if (active) tx(language, "Wstrzymaj analizę", "Pause analysis", "Призупинити аналіз", "Приостановить анализ")
                 else tx(language, "Włącz analizę", "Start analysis", "Увімкнути аналіз", "Включить анализ"),
                 fontWeight = FontWeight.Bold
             )
         }
 
-        SectionCard(
-            step = "PYSZNE",
-            title = tx(language, "Podsumowanie dnia", "Daily summary", "Підсумок дня", "Итоги дня")
-        ) {
-            Text(
-                tx(
-                    language,
-                    "Zapisuj pojedyncze dostawy z historii Pyszne, a FUJARA policzy km, czas, zł/h, zł/km i najlepsze restauracje.",
-                    "Save individual Pyszne deliveries and FUJARA will calculate distance, time, hourly/per-km rates and restaurant ranking.",
-                    "Зберігайте окремі доставки Pyszne — FUJARA порахує кілометри, час, ставки та рейтинг ресторанів.",
-                    "Сохраняйте отдельные доставки Pyszne — FUJARA посчитает километры, время, ставки и рейтинг ресторанов."
-                ),
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            OutlinedButton(onClick = onPyszneSummary, modifier = Modifier.fillMaxWidth()) {
-                Text(tx(language, "Otwórz podsumowanie Pyszne", "Open Pyszne summary", "Відкрити підсумок Pyszne", "Открыть итоги Pyszne"))
-            }
-        }
-
+        SectionHeader(title = tx(language, "Szybki dostęp", "Quick access", "Швидкий доступ", "Быстрый доступ"))
+        HomeShortcutCard(
+            title = tx(language, "Podsumowanie dnia", "Daily summary", "Підсумок дня", "Итоги дня"),
+            subtitle = tx(language, "Wynik, zlecenia i szczegóły Pyszne", "Result, orders and Pyszne details", "Результат і замовлення Pyszne", "Результат и заказы Pyszne"),
+            value = latestResult?.netPerHour?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł/h", it) } ?: "Otwórz",
+            onClick = onPyszneSummary
+        )
     }
 }
 
@@ -726,21 +758,38 @@ private fun AppBottomNavigation(
     onNavigate: (AppScreen) -> Unit
 ) {
     val items = listOf(
-        Triple(AppScreen.HOME, "⌂", tx(language, "Start", "Home", "Головна", "Главная")),
-        Triple(AppScreen.PYSZNE_SUMMARY, "▣", tx(language, "Dzień", "Day", "День", "День")),
-        Triple(AppScreen.ANALYSIS, "↗", tx(language, "Analiza", "Analysis", "Аналіз", "Анализ")),
-        Triple(AppScreen.SETTINGS, "⚙", tx(language, "Ustawienia", "Settings", "Налаштування", "Настройки"))
+        Triple(AppScreen.HOME, Icons.Rounded.Home, tx(language, "Start", "Home", "Головна", "Главная")),
+        Triple(AppScreen.PYSZNE_SUMMARY, Icons.Rounded.ReceiptLong, tx(language, "Dzień", "Day", "День", "День")),
+        Triple(AppScreen.ANALYSIS, Icons.Rounded.BarChart, tx(language, "Analiza", "Analysis", "Аналіз", "Анализ")),
+        Triple(AppScreen.SETTINGS, Icons.Rounded.Settings, tx(language, "Ustawienia", "Settings", "Налаштування", "Настройки"))
     )
-    NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+    NavigationBar(
+        containerColor = bankInk(),
+        tonalElevation = 0.dp
+    ) {
         items.forEach { (screen, icon, label) ->
             NavigationBarItem(
                 selected = current == screen,
                 onClick = { onNavigate(screen) },
-                icon = { Text(icon, fontWeight = FontWeight.Black) },
-                label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                icon = { Icon(icon, contentDescription = label) },
+                label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = Color.White,
+                    selectedTextColor = Color.White,
+                    indicatorColor = Color.Transparent,
+                    unselectedIconColor = Color(0xFF858A94),
+                    unselectedTextColor = Color(0xFF858A94)
+                )
             )
         }
     }
+}
+
+private enum class AnalysisRange(val days: Long) {
+    WEEK(7),
+    MONTH(30),
+    QUARTER(90),
+    YEAR(365)
 }
 
 @Composable
@@ -749,98 +798,110 @@ private fun WeeklyAnalysisScreen(language: AppLanguage) {
     val resultStore = remember { PyszneResultStore(context) }
     val results = remember { resultStore.all() }
     val latestDate = results.maxByOrNull { it.date }?.date ?: LocalDate.now()
-    var weekStart by remember {
-        mutableStateOf(latestDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)))
-    }
-    val weekEnd = weekStart.plusDays(6)
-    val week = results.filter { !it.date.isBefore(weekStart) && !it.date.isAfter(weekEnd) }
-    val orders = week.sumOf { it.orderCount }
-    val gross = week.sumOf { it.grossPln }
-    val distance = week.sumOf { it.distanceKm }
-    val duration = week.sumOf { it.durationSeconds }
-    val net = week.sumOf { it.netPln }
+    var range by remember { mutableStateOf(AnalysisRange.WEEK) }
+    var periodEnd by remember { mutableStateOf(latestDate) }
+
+    LaunchedEffect(range) { periodEnd = latestDate }
+
+    val periodStart = periodEnd.minusDays(range.days - 1)
+    val periodResults = results.filter { !it.date.isBefore(periodStart) && !it.date.isAfter(periodEnd) }
+    val orders = periodResults.sumOf { it.orderCount }
+    val gross = periodResults.sumOf { it.grossPln }
+    val distance = periodResults.sumOf { it.distanceKm }
+    val duration = periodResults.sumOf { it.durationSeconds }
+    val net = periodResults.sumOf { it.netPln }
     val perHour = duration.takeIf { it > 0 }?.let { net / (it / 3600.0) }
     val perKm = distance.takeIf { it > 0.0 }?.let { net / it }
-    val bestDay = week.maxByOrNull { it.netPerHour ?: Double.NEGATIVE_INFINITY }
+    val bestDay = periodResults.maxByOrNull { it.netPerHour ?: Double.NEGATIVE_INFINITY }
+    val chartPoints = buildAnalysisChartPoints(periodResults, periodStart, periodEnd, range)
 
     ScreenContainer(scrollable = true) {
-        BrandEyebrow(tx(language, "ANALIZA", "ANALYSIS", "АНАЛІЗ", "АНАЛИЗ"))
-        Text(
-            tx(language, "Tydzień pracy", "Work week", "Робочий тиждень", "Рабочая неделя"),
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Black
-        )
-
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedButton(onClick = { weekStart = weekStart.minusWeeks(1) }) { Text("‹") }
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
-                "${weekStart.format(DateTimeFormatter.ofPattern("dd.MM"))} – ${weekEnd.format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))}",
-                modifier = Modifier.weight(1f),
-                textAlign = TextAlign.Center,
-                fontWeight = FontWeight.Bold
+                tx(language, "Analiza", "Analysis", "Аналіз", "Анализ"),
+                style = MaterialTheme.typography.headlineLarge,
+                fontWeight = FontWeight.Black
             )
-            OutlinedButton(
-                onClick = { weekStart = weekStart.plusWeeks(1) },
-                enabled = weekStart.plusWeeks(1) <= LocalDate.now().with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-            ) { Text("›") }
+            Text(
+                "${formatShortDate(periodStart)} – ${formatShortDate(periodEnd)}",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyLarge
+            )
         }
 
-        if (week.isEmpty()) {
-            InfoCard(
-                title = tx(language, "Brak zatwierdzonych dni", "No confirmed days", "Немає підтверджених днів", "Нет подтверждённых дней"),
-                body = tx(language, "Po użyciu „Potwierdź i policz” wynik dnia zapisze się tutaj automatycznie.", "After using Confirm and calculate, the day result will be saved here automatically.", "Після підтвердження результат збережеться тут.", "После подтверждения результат сохранится здесь.")
-            )
+        AnalysisRangeSelector(range = range, language = language, onSelected = { range = it })
+
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = { periodEnd = periodEnd.minusDays(range.days) }) { Text("‹", style = MaterialTheme.typography.headlineSmall) }
+            Spacer(Modifier.weight(1f))
+            TextButton(
+                onClick = { periodEnd = periodEnd.plusDays(range.days).coerceAtMost(latestDate) },
+                enabled = periodEnd < latestDate
+            ) { Text("›", style = MaterialTheme.typography.headlineSmall) }
+        }
+
+        if (periodResults.isEmpty()) {
+            EmptyAnalysisCard(language)
         } else {
-            SectionCard(step = "TYDZIEŃ", title = tx(language, "Wynik łączny", "Weekly total", "Підсумок тижня", "Итог недели")) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SummarySmallMetric(Modifier.weight(1f), tx(language, "PRZYCHÓD", "REVENUE", "ДОХІД", "ДОХОД"), String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", gross))
-                    SummarySmallMetric(Modifier.weight(1f), tx(language, "ZLECENIA", "ORDERS", "ЗАМОВЛЕННЯ", "ЗАКАЗЫ"), orders.toString())
-                }
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SummarySmallMetric(Modifier.weight(1f), "PLN/h", perHour?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł", it) } ?: "—")
-                    SummarySmallMetric(Modifier.weight(1f), "PLN/km", perKm?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", it) } ?: "—")
-                }
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SummarySmallMetric(Modifier.weight(1f), tx(language, "DYSTANS", "DISTANCE", "ВІДСТАНЬ", "РАССТОЯНИЕ"), String.format(Locale.forLanguageTag("pl-PL"), "%.1f km", distance))
-                    SummarySmallMetric(Modifier.weight(1f), tx(language, "CZAS", "TIME", "ЧАС", "ВРЕМЯ"), formatDuration(duration))
-                }
-                if (orders > 0) {
+            AnalysisHeroCard(
+                net = net,
+                gross = gross,
+                perHour = perHour,
+                perKm = perKm,
+                orders = orders,
+                language = language
+            )
+
+            SectionHeader(title = tx(language, "Wynik w czasie", "Performance over time", "Результат у часі", "Результат во времени"))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Text(
-                        tx(language, "Średnio na zlecenie: ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", gross / orders)}", "Average per order: ${String.format(Locale.US, "%.2f PLN", gross / orders)}", "Середнє на замовлення", "Среднее на заказ"),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        tx(language, "Zysk po kosztach", "Net after costs", "Після витрат", "После расходов"),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium
                     )
-                }
-                bestDay?.let {
-                    Text(
-                        tx(language, "Najmocniejszy dzień wg PLN/h: ${it.date.format(DateTimeFormatter.ofPattern("dd.MM"))} · ${String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł/h", it.netPerHour ?: 0.0)}", "Best day by PLN/h: ${it.date} · ${String.format(Locale.US, "%.0f PLN/h", it.netPerHour ?: 0.0)}", "Найкращий день за PLN/h: ${it.date}", "Лучший день по PLN/h: ${it.date}"),
-                        fontWeight = FontWeight.Bold
-                    )
+                    AnalysisBarChart(points = chartPoints)
                 }
             }
 
-            SectionCard(step = "DNI", title = tx(language, "Zatwierdzone wyniki", "Confirmed results", "Підтверджені результати", "Подтверждённые результаты")) {
-                week.sortedByDescending { it.date }.forEach { item ->
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(14.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(item.date.format(DateTimeFormatter.ofPattern("EEEE, dd.MM", Locale.forLanguageTag("pl-PL"))), fontWeight = FontWeight.Bold)
-                                Text("${item.orderCount} · ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", item.grossPln)}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                            }
-                            Column(horizontalAlignment = Alignment.End) {
-                                Text(item.netPerHour?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł/h", it) } ?: "—", fontWeight = FontWeight.Black)
-                                Text(item.netPerKm?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł/km", it) } ?: "—", style = MaterialTheme.typography.bodySmall)
-                            }
-                        }
-                    }
-                }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                BankMetricCard(
+                    modifier = Modifier.weight(1f),
+                    dotColor = MaterialTheme.colorScheme.primary,
+                    label = "PLN/h",
+                    value = perHour?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł", it) } ?: "—",
+                    supporting = tx(language, "po kosztach", "after costs", "після витрат", "после расходов")
+                )
+                BankMetricCard(
+                    modifier = Modifier.weight(1f),
+                    dotColor = Color(0xFF5B7CFA),
+                    label = "PLN/km",
+                    value = perKm?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", it) } ?: "—",
+                    supporting = String.format(Locale.forLanguageTag("pl-PL"), "%.1f km", distance)
+                )
+            }
+
+            SectionHeader(title = tx(language, "Dni", "Days", "Дні", "Дни"))
+            periodResults.sortedByDescending { it.date }.forEach { item ->
+                AnalysisDayRow(item = item, language = language)
+            }
+
+            bestDay?.let { item ->
+                Text(
+                    tx(
+                        language,
+                        "Najlepszy dzień: ${formatShortDate(item.date)} · ${String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł/h", item.netPerHour ?: 0.0)}",
+                        "Best day: ${formatShortDate(item.date)} · ${String.format(Locale.US, "%.0f PLN/h", item.netPerHour ?: 0.0)}",
+                        "Найкращий день: ${formatShortDate(item.date)}",
+                        "Лучший день: ${formatShortDate(item.date)}"
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
         }
     }
@@ -951,9 +1012,14 @@ private fun PyszneSummaryScreen(
             ""
         }
         confirmDelete = false
-        showCelebration = false
         showAllRestaurants = false
         selectedOrder = null
+    }
+
+    // Celebracja ma przeżyć zapis snapshotu i automatyczne odświeżenie danych.
+    // Zamykamy ją dopiero przy zmianie dnia albo świadomym kliknięciu użytkownika.
+    LaunchedEffect(selectedDate) {
+        showCelebration = false
     }
 
     LaunchedEffect(calculationRequest, selectedDate) {
@@ -973,16 +1039,15 @@ private fun PyszneSummaryScreen(
         label = "pyszne_calculation_progress"
     )
 
-    val resultProgress by animateFloatAsState(
-        targetValue = if (showResult) 1f else 0.10f,
-        animationSpec = tween(durationMillis = 1200),
-        label = "pyszne_summary_progress"
-    )
-
     ScreenContainer(scrollable = true) {
         TopBar(
-            title = tx(language, "Pyszne · dzień", "Pyszne · day", "Pyszne · день", "Pyszne · день"),
+            title = tx(language, "Dzień", "Day", "День", "День"),
             onBack = onBack
+        )
+        Text(
+            "Pyszne",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyLarge
         )
 
         SectionCard(
@@ -1404,74 +1469,26 @@ private fun PyszneSummaryScreen(
         }
 
         if (showResult && summary.orderCount > 0) {
-            val accent = summaryStatusColor(summary.status)
-            SectionCard(
-                step = "3 / WYNIK",
-                title = summaryCelebration(summary.status, language)
+            DayResultHeroCard(
+                summary = summary,
+                language = language,
+                showResult = showResult
+            )
+
+            SectionHeader(title = tx(language, "Przebieg dnia", "Day performance", "Перебіг дня", "Ход дня"))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    FujaraBrandMark(
-                        level = resultProgress,
-                        color = accent,
-                        modifier = Modifier
-                            .size(width = 52.dp, height = 86.dp)
-                            .graphicsLayer {
-                                scaleX = 0.82f + resultProgress * 0.25f
-                                scaleY = 0.82f + resultProgress * 0.25f
-                            }
+                Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        tx(language, "PLN/h dla kolejnych zleceń", "PLN/h by order", "PLN/h для замовлень", "PLN/h по заказам"),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium
                     )
-                    Spacer(Modifier.width(14.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        BrandEyebrow(tx(language, "PODSUMOWANIE DNIA", "DAILY RESULT", "ПІДСУМОК ДНЯ", "ИТОГ ДНЯ"), accent)
-                        Text(
-                            text = buildString {
-                                append("${summary.goodOrders} SUPER · ${summary.borderlineOrders} NA STYK · ${summary.poorOrders} FUJARA")
-                                if (summary.cancelledOrders > 0) append(" · ${summary.cancelledOrders} ANUL.")
-                            },
-                            fontWeight = FontWeight.Black
-                        )
-                    }
+                    OrderEfficiencyChart(summary.restaurants)
                 }
-
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    AnimatedSummaryMetric(
-                        modifier = Modifier.weight(1f),
-                        label = "PLN/H",
-                        value = summary.netPerHour ?: 0.0,
-                        decimals = 0,
-                        suffix = " zł/h",
-                        visible = showResult
-                    )
-                    AnimatedSummaryMetric(
-                        modifier = Modifier.weight(1f),
-                        label = "PLN/KM",
-                        value = summary.netPerKm ?: 0.0,
-                        decimals = 2,
-                        suffix = " zł/km",
-                        visible = showResult
-                    )
-                }
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    AnimatedSummaryMetric(
-                        modifier = Modifier.weight(1f),
-                        label = tx(language, "DYSTANS", "DISTANCE", "ВІДСТАНЬ", "РАССТОЯНИЕ"),
-                        value = summary.distanceKm,
-                        decimals = 1,
-                        suffix = " km",
-                        visible = showResult
-                    )
-                    SummarySmallMetric(
-                        modifier = Modifier.weight(1f),
-                        label = tx(language, "CZAS", "TIME", "ЧАС", "ВРЕМЯ"),
-                        value = formatDuration(summary.durationSeconds)
-                    )
-                }
-
-                Text(
-                    tx(language, "Wynik po ustawionych kosztach pojazdu${if (prefs.zusEnabled) " i ZUS" else ""}.", "Result after your configured vehicle cost${if (prefs.zusEnabled) " and ZUS" else ""}.", "Результат після налаштованих витрат.", "Результат после настроенных расходов."),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall
-                )
             }
 
             SectionCard(
@@ -1606,7 +1623,7 @@ private fun PyszneSummaryScreen(
     }
 
     if (showCelebration && summary.orderCount > 0) {
-        ProfessionalDayResultDialog(
+        DayCelebrationDialog(
             summary = summary,
             language = language,
             onDismiss = { showCelebration = false }
@@ -1729,21 +1746,24 @@ private fun DayCelebrationDialog(
 
     LaunchedEffect(summary.date, summary.orderCount, summary.grossPln) {
         stage = 0
-        delay(250)
+        delay(400)
         stage = 1
         vibrateCelebrationStage(context, summary.status, 1)
-        delay(700)
+        delay(900)
         stage = 2
         vibrateCelebrationStage(context, summary.status, 2)
-        delay(700)
+        delay(1000)
         stage = 3
         vibrateCelebrationStage(context, summary.status, 3)
-        delay(750)
+        delay(1100)
         stage = 4
         vibrateCelebrationStage(context, summary.status, 4)
-        delay(650)
+        delay(1200)
         stage = 5
         vibrateCelebrationStage(context, summary.status, 5)
+        // Daj użytkownikowi chwilę nacieszyć się pełnym wynikiem zanim można go zamknąć.
+        delay(1600)
+        stage = 6
     }
 
     val accent = summaryStatusColor(summary.status)
@@ -1790,7 +1810,7 @@ private fun DayCelebrationDialog(
         ProfitabilityStatus.NO_TIME -> 1f
     }
 
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(onDismissRequest = { if (stage >= 6) onDismiss() }) {
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(28.dp),
@@ -1980,12 +2000,14 @@ private fun DayCelebrationDialog(
                     Button(
                         onClick = onDismiss,
                         modifier = Modifier.fillMaxWidth(),
-                        enabled = stage >= 5,
+                        enabled = stage >= 6,
                         colors = ButtonDefaults.buttonColors(containerColor = accent)
                     ) {
                         Text(
-                            if (stage >= 5) {
+                            if (stage >= 6) {
                                 tx(language, "Pokaż pełne podsumowanie", "Show full summary", "Показати повний підсумок", "Показать полный итог")
+                            } else if (stage >= 5) {
+                                tx(language, "Smakuj wynik…", "Enjoy the result…", "Насолоджуйтесь результатом…", "Насладитесь результатом…")
                             } else {
                                 tx(language, "FUJARA liczy wynik…", "FUJARA is revealing the result…", "FUJARA показує результат…", "FUJARA показывает результат…")
                             },
@@ -2159,6 +2181,583 @@ private fun celebrationLevelMessage(status: ProfitabilityStatus, language: AppLa
     ProfitabilityStatus.NO_TIME -> tx(language, "✅ PODSUMOWANIE GOTOWE", "✅ SUMMARY READY", "✅ ПІДСУМОК ГОТОВИЙ", "✅ ИТОГ ГОТОВ")
 }
 
+private fun bankInk(): Color = Color(0xFF191B20)
+
+private fun formatShortDate(date: LocalDate): String =
+    date.format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))
+
+@Composable
+private fun SectionHeader(
+    title: String,
+    action: String? = null,
+    onAction: (() -> Unit)? = null
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            title,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Black
+        )
+        if (action != null && onAction != null) {
+            TextButton(onClick = onAction) {
+                Text(action, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeBalanceCard(
+    latest: PyszneDayResultSnapshot?,
+    language: AppLanguage,
+    onOpenDay: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenDay),
+        shape = RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(containerColor = bankInk())
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 22.dp, vertical = 22.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    latest?.date?.let { tx(language, "Ostatni zapisany dzień", "Latest saved day", "Останній збережений день", "Последний сохранённый день") }
+                        ?: tx(language, "Podsumowanie dnia", "Daily summary", "Підсумок дня", "Итоги дня"),
+                    modifier = Modifier.weight(1f),
+                    color = Color(0xFFB7BAC2),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Text("›", color = Color.White, style = MaterialTheme.typography.titleLarge)
+            }
+
+            Text(
+                latest?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", it.netPln) } ?: "—",
+                color = Color.White,
+                style = MaterialTheme.typography.displaySmall,
+                fontWeight = FontWeight.Black
+            )
+
+            if (latest != null) {
+                HorizontalDivider(color = Color(0xFF34373E))
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("PLN/h", color = Color(0xFF9EA3AD), style = MaterialTheme.typography.labelMedium)
+                        Text(
+                            latest.netPerHour?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł", it) } ?: "—",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("PLN/km", color = Color(0xFF9EA3AD), style = MaterialTheme.typography.labelMedium)
+                        Text(
+                            latest.netPerKm?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", it) } ?: "—",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    }
+                }
+            } else {
+                Text(
+                    tx(language, "Po pierwszym zatwierdzeniu dnia zobaczysz tutaj wynik po kosztach.", "Your after-cost result will appear here after the first confirmed day.", "Після першого підтвердження тут буде результат.", "После первого подтверждения здесь будет результат."),
+                    color = Color(0xFFB7BAC2),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BankMetricCard(
+    modifier: Modifier,
+    dotColor: Color,
+    label: String,
+    value: String,
+    supporting: String? = null
+) {
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(Modifier.size(9.dp).clip(RoundedCornerShape(99.dp)).background(dotColor))
+            Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+            Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
+            if (!supporting.isNullOrBlank()) {
+                Text(supporting, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorkModeCard(
+    language: AppLanguage,
+    active: Boolean,
+    serviceEnabled: Boolean
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Row(
+            modifier = Modifier.padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Box(
+                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(16.dp))
+                    .background((if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant).copy(alpha = if (active) 0.12f else 1f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    Modifier.size(10.dp).clip(RoundedCornerShape(99.dp))
+                        .background(if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                )
+            }
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    when {
+                        !serviceEnabled -> tx(language, "Wymaga konfiguracji", "Setup required", "Потрібне налаштування", "Нужна настройка")
+                        active -> tx(language, "Analiza aktywna", "Analysis active", "Аналіз активний", "Анализ активен")
+                        else -> tx(language, "Analiza wstrzymana", "Analysis paused", "Аналіз призупинено", "Анализ приостановлен")
+                    },
+                    fontWeight = FontWeight.Black,
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Text(
+                    when {
+                        !serviceEnabled -> tx(language, "Włącz dostępność FUJARY.", "Enable FUJARA Accessibility.", "Увімкніть Accessibility.", "Включите Accessibility.")
+                        active -> tx(language, "Panel pojawi się automatycznie przy ofercie.", "The panel will appear automatically with an offer.", "Панель з’явиться автоматично.", "Панель появится автоматически.")
+                        else -> tx(language, "Włącz przed rozpoczęciem jazdy.", "Turn it on before starting your shift.", "Увімкніть перед роботою.", "Включите перед работой.")
+                    },
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeShortcutCard(
+    title: String,
+    subtitle: String,
+    value: String,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Row(
+            modifier = Modifier.padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.ReceiptLong, contentDescription = null)
+                }
+            }
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(title, fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleMedium)
+                Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(value, fontWeight = FontWeight.Black, style = MaterialTheme.typography.bodyMedium)
+                Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.titleMedium)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AnalysisRangeSelector(
+    range: AnalysisRange,
+    language: AppLanguage,
+    onSelected: (AnalysisRange) -> Unit
+) {
+    val items = listOf(
+        AnalysisRange.WEEK to tx(language, "7 dni", "7 days", "7 днів", "7 дней"),
+        AnalysisRange.MONTH to tx(language, "30 dni", "30 days", "30 днів", "30 дней"),
+        AnalysisRange.QUARTER to tx(language, "3 mies.", "3 months", "3 міс.", "3 мес."),
+        AnalysisRange.YEAR to tx(language, "Rok", "Year", "Рік", "Год")
+    )
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant
+    ) {
+        Row(modifier = Modifier.padding(5.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            items.forEach { (item, label) ->
+                val selected = range == item
+                Surface(
+                    modifier = Modifier.weight(1f).clickable { onSelected(item) },
+                    shape = RoundedCornerShape(17.dp),
+                    color = if (selected) bankInk() else Color.Transparent
+                ) {
+                    Text(
+                        label,
+                        modifier = Modifier.padding(vertical = 11.dp),
+                        textAlign = TextAlign.Center,
+                        color = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AnalysisHeroCard(
+    net: Double,
+    gross: Double,
+    perHour: Double?,
+    perKm: Double?,
+    orders: Int,
+    language: AppLanguage
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(containerColor = bankInk())
+    ) {
+        Column(modifier = Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Text(
+                tx(language, "Wynik po kosztach", "After-cost result", "Результат після витрат", "Результат после расходов"),
+                color = Color(0xFFB7BAC2),
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", net),
+                color = Color.White,
+                style = MaterialTheme.typography.displaySmall,
+                fontWeight = FontWeight.Black
+            )
+            HorizontalDivider(color = Color(0xFF34373E))
+            Row(modifier = Modifier.fillMaxWidth()) {
+                DarkMetric(
+                    modifier = Modifier.weight(1f),
+                    label = "PLN/h",
+                    value = perHour?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł", it) } ?: "—"
+                )
+                DarkMetric(
+                    modifier = Modifier.weight(1f),
+                    label = "PLN/km",
+                    value = perKm?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", it) } ?: "—",
+                    alignEnd = true
+                )
+            }
+            Text(
+                tx(
+                    language,
+                    "Przychód ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", gross)} · $orders zleceń",
+                    "Revenue ${String.format(Locale.US, "%.2f PLN", gross)} · $orders orders",
+                    "Дохід ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", gross)} · $orders",
+                    "Доход ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", gross)} · $orders"
+                ),
+                color = Color(0xFF9EA3AD),
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+}
+
+@Composable
+private fun DarkMetric(
+    modifier: Modifier,
+    label: String,
+    value: String,
+    alignEnd: Boolean = false
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = if (alignEnd) Alignment.End else Alignment.Start,
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(label, color = Color(0xFF9EA3AD), style = MaterialTheme.typography.labelMedium)
+        Text(value, color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+    }
+}
+
+@Composable
+private fun EmptyAnalysisCard(language: AppLanguage) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(modifier = Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                tx(language, "Brak danych w tym okresie", "No data in this period", "Немає даних за період", "Нет данных за период"),
+                fontWeight = FontWeight.Black,
+                style = MaterialTheme.typography.titleMedium
+            )
+            Text(
+                tx(language, "Zatwierdzone dni pojawią się tutaj automatycznie.", "Confirmed days will appear here automatically.", "Підтверджені дні з’являться тут автоматично.", "Подтверждённые дни появятся здесь автоматически."),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun AnalysisDayRow(item: PyszneDayResultSnapshot, language: AppLanguage) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                Column(
+                    modifier = Modifier.size(48.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text(item.date.dayOfMonth.toString(), fontWeight = FontWeight.Black)
+                    Text(item.date.month.name.take(3), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    tx(language, "${item.orderCount} zleceń", "${item.orderCount} orders", "${item.orderCount} замовлень", "${item.orderCount} заказов"),
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł · %.1f km", item.grossPln, item.distanceKm),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    item.netPerHour?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł/h", it) } ?: "—",
+                    fontWeight = FontWeight.Black
+                )
+                Text(
+                    item.netPerKm?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł/km", it) } ?: "—",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelMedium
+                )
+            }
+        }
+    }
+}
+
+private data class AnalysisChartPoint(
+    val label: String,
+    val value: Double
+)
+
+private fun buildAnalysisChartPoints(
+    results: List<PyszneDayResultSnapshot>,
+    start: LocalDate,
+    end: LocalDate,
+    range: AnalysisRange
+): List<AnalysisChartPoint> {
+    val bucketSize = when (range) {
+        AnalysisRange.WEEK -> 1L
+        AnalysisRange.MONTH -> 3L
+        AnalysisRange.QUARTER -> 9L
+        AnalysisRange.YEAR -> 31L
+    }
+    val points = mutableListOf<AnalysisChartPoint>()
+    var cursor = start
+    while (!cursor.isAfter(end)) {
+        val bucketEnd = minOf(cursor.plusDays(bucketSize - 1), end)
+        val value = results
+            .filter { !it.date.isBefore(cursor) && !it.date.isAfter(bucketEnd) }
+            .sumOf { it.netPln }
+        points += AnalysisChartPoint(
+            label = cursor.format(DateTimeFormatter.ofPattern("dd.MM")),
+            value = value
+        )
+        cursor = bucketEnd.plusDays(1)
+    }
+    return points
+}
+
+@Composable
+private fun AnalysisBarChart(points: List<AnalysisChartPoint>) {
+    val positive = MaterialTheme.colorScheme.primary
+    val negative = MaterialTheme.colorScheme.tertiary
+    val empty = MaterialTheme.colorScheme.surfaceVariant
+    val maxValue = points.maxOfOrNull { abs(it.value) }?.coerceAtLeast(1.0) ?: 1.0
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Canvas(modifier = Modifier.fillMaxWidth().height(150.dp)) {
+            if (points.isEmpty()) return@Canvas
+            val slot = size.width / points.size
+            val barWidth = slot * 0.54f
+            val maxHeight = size.height - 8.dp.toPx()
+            points.forEachIndexed { index, point ->
+                val magnitude = (abs(point.value) / maxValue).toFloat()
+                val barHeight = if (point.value == 0.0) 4.dp.toPx() else (maxHeight * magnitude).coerceAtLeast(8.dp.toPx())
+                val left = index * slot + (slot - barWidth) / 2f
+                drawRoundRect(
+                    color = when {
+                        point.value > 0.0 -> positive
+                        point.value < 0.0 -> negative
+                        else -> empty
+                    },
+                    topLeft = Offset(left, size.height - barHeight),
+                    size = Size(barWidth, barHeight),
+                    cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f)
+                )
+            }
+        }
+        if (points.isNotEmpty()) {
+            val labels = listOf(points.first(), points[points.lastIndex / 2], points.last()).distinctBy { it.label }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                labels.forEach { point ->
+                    Text(point.label, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DayResultHeroCard(
+    summary: PyszneDaySummary,
+    language: AppLanguage,
+    showResult: Boolean
+) {
+    val accent = summaryStatusColor(summary.status)
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(containerColor = bankInk())
+    ) {
+        Column(modifier = Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(
+                        tx(language, "Wynik dnia", "Day result", "Результат дня", "Результат дня"),
+                        color = Color(0xFFB7BAC2),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(formatShortDate(summary.date), color = Color(0xFF858A94), style = MaterialTheme.typography.labelMedium)
+                }
+                Surface(shape = RoundedCornerShape(99.dp), color = accent.copy(alpha = 0.18f)) {
+                    Text(
+                        summaryStatusLabel(summary.status, language),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                        color = accent,
+                        fontWeight = FontWeight.Black,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+            }
+
+            AnimatedMoneyValue(
+                value = summary.netPln,
+                visible = showResult,
+                color = Color.White
+            )
+
+            HorizontalDivider(color = Color(0xFF34373E))
+            Row(modifier = Modifier.fillMaxWidth()) {
+                DarkMetric(
+                    modifier = Modifier.weight(1f),
+                    label = "PLN/h",
+                    value = summary.netPerHour?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł", it) } ?: "—"
+                )
+                DarkMetric(
+                    modifier = Modifier.weight(1f),
+                    label = "PLN/km",
+                    value = summary.netPerKm?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", it) } ?: "—",
+                    alignEnd = true
+                )
+            }
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    tx(language, "${summary.orderCount} zleceń · ${String.format(Locale.forLanguageTag("pl-PL"), "%.1f km", summary.distanceKm)}", "${summary.orderCount} orders · ${String.format(Locale.US, "%.1f km", summary.distanceKm)}", "${summary.orderCount} замовлень", "${summary.orderCount} заказов"),
+                    modifier = Modifier.weight(1f),
+                    color = Color(0xFF9EA3AD),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(formatDuration(summary.durationSeconds), color = Color(0xFF9EA3AD), style = MaterialTheme.typography.bodySmall)
+            }
+            Text(
+                "● ${summary.goodOrders}   ● ${summary.borderlineOrders}   ● ${summary.poorOrders}",
+                color = Color(0xFFB7BAC2),
+                fontWeight = FontWeight.Bold,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+}
+
+@Composable
+private fun AnimatedMoneyValue(value: Double, visible: Boolean, color: Color) {
+    val animated by animateFloatAsState(
+        targetValue = if (visible) value.toFloat() else 0f,
+        animationSpec = tween(durationMillis = 950),
+        label = "money_value"
+    )
+    Text(
+        String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", animated),
+        color = color,
+        style = MaterialTheme.typography.displaySmall,
+        fontWeight = FontWeight.Black
+    )
+}
+
+@Composable
+private fun OrderEfficiencyChart(orders: List<PyszneRestaurantSummary>) {
+    val chronological = orders.sortedWith(compareBy<PyszneRestaurantSummary> { it.acceptedMinuteOfDay ?: Int.MAX_VALUE }.thenBy { it.orderId ?: it.orderKey })
+    val values = chronological.map { it.netPerHour ?: 0.0 }
+    val maxValue = values.maxOfOrNull { abs(it) }?.coerceAtLeast(1.0) ?: 1.0
+
+    Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+        Canvas(modifier = Modifier.fillMaxWidth().height(120.dp)) {
+            if (chronological.isEmpty()) return@Canvas
+            val slot = size.width / chronological.size
+            val width = (slot * 0.54f).coerceAtMost(24.dp.toPx())
+            val maxHeight = size.height - 6.dp.toPx()
+            chronological.forEachIndexed { index, order ->
+                val value = order.netPerHour ?: 0.0
+                val height = if (value == 0.0) 4.dp.toPx() else (maxHeight * (abs(value) / maxValue).toFloat()).coerceAtLeast(8.dp.toPx())
+                val left = index * slot + (slot - width) / 2f
+                drawRoundRect(
+                    color = summaryStatusColor(order.status),
+                    topLeft = Offset(left, size.height - height),
+                    size = Size(width, height),
+                    cornerRadius = CornerRadius(width / 2f, width / 2f)
+                )
+            }
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("1", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+            Text("${chronological.size.coerceAtLeast(1)}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+        }
+    }
+}
+
 @Composable
 private fun SummarySmallMetric(
     modifier: Modifier,
@@ -2167,10 +2766,10 @@ private fun SummarySmallMetric(
 ) {
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
     ) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 13.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(value, fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleMedium)
         }
@@ -3375,14 +3974,14 @@ private fun ScreenContainer(
         .fillMaxSize()
         .statusBarsPadding()
         .navigationBarsPadding()
-        .padding(horizontal = 24.dp, vertical = 18.dp)
+        .padding(horizontal = 20.dp, vertical = 16.dp)
         .let {
             if (scrollable) it.verticalScroll(rememberScrollState()) else it
         }
 
     Column(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
         content = content
     )
 }
@@ -3394,19 +3993,25 @@ private fun TopBar(
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         if (onBack != null) {
-            TextButton(onClick = onBack) {
-                Text("‹", style = MaterialTheme.typography.headlineMedium)
+            Surface(
+                modifier = Modifier.size(46.dp).clickable(onClick = onBack),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text("‹", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                }
             }
-            Spacer(Modifier.width(4.dp))
         }
 
         Text(
             text = title,
             style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold
+            fontWeight = FontWeight.Black
         )
     }
 }
@@ -3474,15 +4079,21 @@ private fun SectionCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Column(
             modifier = Modifier.padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(13.dp)
         ) {
-            if (step != null) BrandEyebrow(step)
+            if (step != null) {
+                Text(
+                    step,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold
+                )
+            }
             Text(text = title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
             content()
         }

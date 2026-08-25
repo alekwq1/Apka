@@ -1,12 +1,12 @@
-# FUJARA 0.8.11
+# FUJARA 0.8.14
 
 Android app for local courier-offer profitability analysis.
 
 ## Google Play readiness
 - applicationId / namespace: `pl.fujara.app`
 - targetSdk / compileSdk: 36
-- versionCode: 28
-- versionName: 0.8.11
+- versionCode: 31
+- versionName: 0.8.14
 - signed AAB workflow: `.github/workflows/build-play-aab.yml`
 - debug APK workflow: `.github/workflows/test-apk.yml`
 - privacy page: `docs/privacy.html`
@@ -15,6 +15,24 @@ Android app for local courier-offer profitability analysis.
 - no `INTERNET` permission, no ads, no analytics in the current project
 
 Start with `PLAY-CONSOLE-START-HERE.md`.
+
+
+## 0.8.14
+
+- poprawiona celebracja po „Potwierdź i policz” — nie znika już przy automatycznym odświeżeniu zapisanego wyniku,
+- około 6,2 s etapowego reveal wyniku z wibracjami,
+- kolejne metryki pojawiają się sekwencyjnie, a pełny wynik ma dodatkową chwilę ekspozycji,
+- podczas animacji nie można przypadkowo zamknąć okna tapnięciem poza nim ani przyciskiem Back,
+- po zakończeniu sekwencji aktywuje się przycisk „Pokaż pełne podsumowanie”.
+
+## 0.8.13
+
+- minimalistyczny UI inspirowany aplikacjami finansowymi: jasne tło, białe karty i ciemne karty wynikowe,
+- ekran Start z dużym wynikiem ostatniego dnia oraz szybkimi metrykami,
+- ciemny dolny pasek z ikonami Start / Dzień / Analiza / Ustawienia,
+- Analiza dla 7 / 30 / 90 / 365 dni z wykresem realnie zapisanych wyników,
+- podsumowanie dnia z dużym wynikiem po kosztach i wykresem PLN/h kolejnych zleceń,
+- zachowana logika 0.8.12: snapshot dnia, osobne zlecenia, napiwki/przestój i szczegóły.
 
 ## 0.8.11
 
