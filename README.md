@@ -1,12 +1,12 @@
-# FUJARA 0.8.14
+# FUJARA 0.8.15
 
 Android app for local courier-offer profitability analysis.
 
 ## Google Play readiness
 - applicationId / namespace: `pl.fujara.app`
 - targetSdk / compileSdk: 36
-- versionCode: 31
-- versionName: 0.8.14
+- versionCode: 32
+- versionName: 0.8.15
 - signed AAB workflow: `.github/workflows/build-play-aab.yml`
 - debug APK workflow: `.github/workflows/test-apk.yml`
 - privacy page: `docs/privacy.html`
@@ -16,6 +16,17 @@ Android app for local courier-offer profitability analysis.
 
 Start with `PLAY-CONSOLE-START-HERE.md`.
 
+
+## 0.8.15
+
+- Start odpowiada na pytanie „Jak mi dziś idzie?”: bieżący wynik, cel netto, ETA celu i prognoza końca zmiany.
+- Czytelne wykresy z wartościami; przebieg dnia jest godzinowy i klikalny.
+- Spójny język haptics dla SUPER / NA STYK / FUJARA oraz osobny haptic rekordu.
+- Podsumowanie tygodnia z porównaniem do poprzedniego tygodnia, czasem, km, PLN/h i najlepszym/najsłabszym dniem.
+- Automatyczny lokalny backup raz dziennie (do 14 kopii), cofnięcie do ostatniej kopii oraz pełny eksport/import JSON.
+- Sekcja prywatności z informacją o lokalnych danych i usuwaniem całej historii.
+- Usunięty zbędny szary odstęp nad dolną nawigacją; tryb jasny/ciemny/system pozostaje dostępny.
+- Prawdziwe SDK reklamowe nie jest jeszcze dodane; projekt nadal nie ma permission `INTERNET`.
 
 ## 0.8.14
 

@@ -52,8 +52,9 @@
   <section class="card">
     <h2>4. Dane zapisywane na urządzeniu</h2>
     <p>Aplikacja zapisuje lokalnie ustawienia potrzebne do działania, np. język, motyw, koszt przejazdu, zapas czasu, progi opłacalności, opcjonalny procent ZUS, wygląd nakładki oraz wpisane przez użytkownika listy restauracji i odbiorców do lokalnych ostrzeżeń.</p>
-    <p>Po ręcznym naciśnięciu „ZAPISZ DANE” na ekranie historii Pyszne aplikacja może zapisać lokalnie: datę zlecenia, nazwę restauracji/punktu odbioru, kwotę, dystans i czas aktywności. Do wykrywania duplikatów przechowywany jest techniczny hash identyfikatora zlecenia albo fingerprint z podstawowych parametrów. Surowy numer zlecenia, pełny tekst OCR, screenshot i adres klienta nie są zapisywane w historii FUJARA.</p>
-    <p>Historia Pyszne oraz wartości kontrolne podsumowania dnia pozostają w pamięci aplikacji. Automatyczny backup aplikacji Android jest wyłączony dla tego buildu. Użytkownik może usunąć zapisy wybranego dnia w aplikacji.</p>
+    <p>Po ręcznym naciśnięciu „ZAPISZ DANE” na ekranie historii Pyszne aplikacja może zapisać lokalnie: datę zlecenia, numer zlecenia (jeśli jest widoczny), nazwę restauracji/punktu odbioru, kwotę, dystans i czas aktywności. Do wykrywania duplikatów przechowywany jest również techniczny hash/fingerprint. Pełny tekst OCR, screenshot i adres klienta nie są zapisywane w historii FUJARA.</p>
+    <p>Historia Pyszne, wartości kontrolne i zatwierdzone wyniki dni pozostają w pamięci aplikacji. FUJARA tworzy dodatkowo jedną lokalną kopię ustawień i danych przy pierwszym uruchomieniu danego dnia i przechowuje maksymalnie 14 takich kopii. Kopie te nie są automatycznie wysyłane do internetu.</p>
+    <p>Użytkownik może wyeksportować pełny backup do pliku JSON w miejscu wybranym w systemowym oknie Android, zaimportować taki plik, przywrócić ostatnią lokalną kopię albo usunąć historię wraz z lokalnymi kopiami. Systemowy backup Android pozostaje wyłączony dla tego buildu.</p>
   </section>
 
   <section class="card">
@@ -64,7 +65,7 @@
       <li>aktualna wersja nie zawiera kont użytkowników, reklam ani własnej analityki zachowania użytkownika;</li>
       <li>obliczenia opłacalności wykonywane są na urządzeniu;</li>
       <li>funkcja „Udostępnij wynik” działa przez systemowy arkusz udostępniania Android i uruchamia się wyłącznie po działaniu użytkownika;</li>
-      <li>wersja 0.8.4 nie zawiera wspólnego internetowego scoreboardu ani automatycznej wysyłki logów.</li>
+      <li>aktualna wersja nie zawiera wspólnego internetowego scoreboardu ani automatycznej wysyłki logów.</li>
     </ul>
   </section>
 

@@ -48,6 +48,8 @@ class OverlayController(
     private var userCollapsed = false
     private var overlayLanguage = ""
     private var fujaraGauge: FujaraGaugeView? = null
+    private var lastHapticSignature: String? = null
+    private var lastHapticAtMillis: Long = 0L
 
     private val green = Color.rgb(83, 205, 115)
     private val red = Color.rgb(245, 92, 92)
@@ -79,6 +81,24 @@ class OverlayController(
             ProfitabilityStatus.NO_TIME -> amber
         }
         val accent = if (blacklistHits.hasAny) red else profitabilityAccent
+
+        val hapticSignature = listOf(
+            applicationName,
+            result.status.name,
+            String.format(Locale.ROOT, "%.2f", result.grossPln),
+            String.format(Locale.ROOT, "%.2f", result.distanceKm),
+            result.durationMinutes?.toString().orEmpty()
+        ).joinToString("|")
+        val nowMillis = System.currentTimeMillis()
+        if (
+            result.status != ProfitabilityStatus.NO_TIME &&
+            (hapticSignature != lastHapticSignature || nowMillis - lastHapticAtMillis >= 30_000L) &&
+            nowMillis - lastHapticAtMillis >= 2_000L
+        ) {
+            HapticLanguage.offer(service, result.status)
+            lastHapticSignature = hapticSignature
+            lastHapticAtMillis = nowMillis
+        }
 
         appName?.text = applicationName
 

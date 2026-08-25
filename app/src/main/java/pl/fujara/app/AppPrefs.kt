@@ -47,6 +47,21 @@ class AppPrefs(private val context: Context) {
         get() = AppThemeMode.fromKey(prefs.getString("theme_mode", AppThemeMode.SYSTEM.key))
         set(value) = prefs.edit().putString("theme_mode", value.key).apply()
 
+    /** Delikatne, rozne wzorce wibracji dla SUPER / STYK / FUJARA. */
+    var hapticsEnabled: Boolean
+        get() = prefs.getBoolean("haptics_enabled", true)
+        set(value) = prefs.edit().putBoolean("haptics_enabled", value).apply()
+
+    /** Cel widoczny na ekranie "Jak mi dzis idzie?". */
+    var dailyGoalNetPln: Double
+        get() = getDouble("daily_goal_net_pln", 300.0).coerceIn(0.0, 5000.0)
+        set(value) = putDouble("daily_goal_net_pln", value.coerceIn(0.0, 5000.0))
+
+    /** Planowany koniec zmiany w minutach od polnocy, domyslnie 20:30. */
+    var plannedShiftEndMinuteOfDay: Int
+        get() = getInt("planned_shift_end_minute", 20 * 60 + 30).coerceIn(0, 23 * 60 + 59)
+        set(value) = prefs.edit().putInt("planned_shift_end_minute", value.coerceIn(0, 23 * 60 + 59)).apply()
+
     var decisionBasis: DecisionBasis
         get() = DecisionBasis.fromKey(prefs.getString("decision_basis", DecisionBasis.MIXED.key))
         set(value) = prefs.edit().putString("decision_basis", value.key).apply()

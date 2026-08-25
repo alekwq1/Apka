@@ -499,9 +499,12 @@ object PyszneDayReferenceParser {
 }
 
 class PyszneLogStore(context: Context) {
-    private val prefs = context.getSharedPreferences("pyszne_delivery_history", Context.MODE_PRIVATE)
+    private val appContext = context.applicationContext
+    private val prefs = appContext.getSharedPreferences("pyszne_delivery_history", Context.MODE_PRIVATE)
 
     init {
+        // Snapshot przed jakakolwiek migracja lub zapisem wykonywanym przez usluge w tle.
+        runCatching { AppBackupManager(appContext).ensureDailyBackup() }
         // Po aktualizacji napraw od razu wpisy zapisane przez starsza wersje pod
         // data kalendarzowa po polnocy, jezeli mamy juz zapamietana liste ID dnia.
         runCatching { reconcileEntryDatesToReferences(allDayReferences()) }
@@ -509,6 +512,9 @@ class PyszneLogStore(context: Context) {
 
     @Synchronized
     fun save(entry: PyszneDeliveryLog): PyszneSaveResult {
+        // Jesli Accessibility zapisze pierwsze zlecenie dnia zanim uzytkownik otworzy UI,
+        // zrob snapshot jeszcze przed ta pierwsza modyfikacja.
+        runCatching { AppBackupManager(appContext).ensureDailyBackup() }
         val references = allDayReferences()
         val referenceDate = PyszneWorkDayResolver.resolveDate(entry, references.values)
         val normalizedEntry = referenceDate?.let { entry.copy(date = it) } ?: entry
@@ -631,6 +637,8 @@ class PyszneLogStore(context: Context) {
 
     @Synchronized
     fun saveDayReference(reference: PyszneDayReference) {
+        // Referencja dnia moze byc pierwsza zmiana zapisana przez usluge w tle.
+        runCatching { AppBackupManager(appContext).ensureDailyBackup() }
         val refs = allDayReferences().toMutableMap()
         val previous = refs[reference.date]
 
