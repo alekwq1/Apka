@@ -225,7 +225,7 @@ object ProfitabilityCalculator {
 
     private const val MINUTES_PER_DAY = 24 * 60
     private const val MAX_REASONABLE_DURATION_MINUTES = 360
-    private const val MAX_EXTRA_TIME_MINUTES = 120
+    private const val MAX_EXTRA_TIME_MINUTES = 20
     private const val MAX_TOTAL_DURATION_MINUTES = 480
     private const val DEFAULT_VEHICLE_COST = 0.35
     private const val DEFAULT_MIN_PER_KM = 2.50

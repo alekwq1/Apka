@@ -59,4 +59,18 @@ class BlacklistMatcherTest {
         assertEquals("Sushi Swietokrzyska", hits.restaurant)
         assertEquals("Mirosław Borowiecki", hits.customer)
     }
+
+    @Test
+    fun matchesKnownTipperWithoutTurningItIntoBlacklistHit() {
+        val hits = BlacklistMatcher.findHits(
+            screenText = "Dostawa: Lena Kowalska\nGdańsk Wrzeszcz",
+            restaurantsRaw = "",
+            customersRaw = "",
+            tippersRaw = "Lena Kowalska"
+        )
+
+        assertEquals("Lena Kowalska", hits.tipper)
+        assertEquals(false, hits.hasAny)
+        assertEquals(true, hits.hasTipper)
+    }
 }

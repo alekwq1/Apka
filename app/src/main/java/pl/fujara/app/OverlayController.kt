@@ -108,16 +108,22 @@ class OverlayController(
         amountRow?.rightValue?.text = earningMoney(result.netPln, language)
 
         blacklistText?.apply {
-            val warnings = buildList {
+            val notices = buildList {
                 blacklistHits.restaurant?.let {
                     add(tr(language, "Restauracja: $it", "Restaurant: $it", "Ресторан: $it", "Ресторан: $it"))
                 }
                 blacklistHits.customer?.let {
                     add(tr(language, "Odbiorca: $it", "Customer: $it", "Клієнт: $it", "Получатель: $it"))
                 }
+                blacklistHits.tipper?.let {
+                    add(tr(language, "⭐ Zuch z napiwkiem: $it", "⭐ Known tipper: $it", "⭐ Часто дає чайові: $it", "⭐ Часто даёт чаевые: $it"))
+                }
             }
-            text = warnings.joinToString("  •  ")
-            visibility = if (warnings.isNotEmpty()) View.VISIBLE else View.GONE
+            val noticeColor = if (blacklistHits.hasAny) red else green
+            text = notices.joinToString("  •  ")
+            setTextColor(noticeColor)
+            background = pillBackground(noticeColor)
+            visibility = if (notices.isNotEmpty()) View.VISIBLE else View.GONE
         }
 
         zusText?.apply {

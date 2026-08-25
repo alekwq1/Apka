@@ -106,6 +106,11 @@ class AppPrefs(private val context: Context) {
         get() = prefs.getString("blacklist_customers", "") ?: ""
         set(value) = prefs.edit().putString("blacklist_customers", value).apply()
 
+    /** Pozytywna lista odbiorcow, ktorzy czesto daja napiwki. */
+    var tipperCustomersText: String
+        get() = prefs.getString("tipper_customers", "") ?: ""
+        set(value) = prefs.edit().putString("tipper_customers", value).apply()
+
     var vehicleCostPerKm: Double
         get() = getDouble("vehicle_cost_km", 0.35)
         set(value) = putDouble("vehicle_cost_km", value)
@@ -129,8 +134,8 @@ class AppPrefs(private val context: Context) {
         set(value) = putDouble("tolerance_net_hour", value)
 
     var extraTimeMinutes: Int
-        get() = getInt("extra_time_minutes", 0).coerceIn(0, 120)
-        set(value) = prefs.edit().putInt("extra_time_minutes", value.coerceIn(0, 120)).apply()
+        get() = getInt("extra_time_minutes", 0).coerceIn(0, 20)
+        set(value) = prefs.edit().putInt("extra_time_minutes", value.coerceIn(0, 20)).apply()
 
     fun globalRules(): ProfitabilityCalculator.Rules = ProfitabilityCalculator.Rules(
         vehicleCostPerKm = vehicleCostPerKm,
@@ -155,7 +160,7 @@ class AppPrefs(private val context: Context) {
             toleranceNetPerKm = getDouble(prefix + "km_tolerance", global.toleranceNetPerKm),
             minimumNetPerHour = getDouble(prefix + "hour", global.minimumNetPerHour),
             toleranceNetPerHour = getDouble(prefix + "hour_tolerance", global.toleranceNetPerHour),
-            extraTimeMinutes = getInt(prefix + "extra_minutes", global.extraTimeMinutes).coerceIn(0, 120)
+            extraTimeMinutes = getInt(prefix + "extra_minutes", global.extraTimeMinutes).coerceIn(0, 20)
         )
     }
 
@@ -189,7 +194,7 @@ class AppPrefs(private val context: Context) {
             .putString(prefix + "km_tolerance", rules.toleranceNetPerKm.toString())
             .putString(prefix + "hour", rules.minimumNetPerHour.toString())
             .putString(prefix + "hour_tolerance", rules.toleranceNetPerHour.toString())
-            .putInt(prefix + "extra_minutes", rules.extraTimeMinutes.coerceIn(0, 120))
+            .putInt(prefix + "extra_minutes", rules.extraTimeMinutes.coerceIn(0, 20))
             .apply()
     }
 
@@ -202,7 +207,8 @@ class AppPrefs(private val context: Context) {
         BlacklistMatcher.findHits(
             screenText = screenText,
             restaurantsRaw = restaurantBlacklistText,
-            customersRaw = customerBlacklistText
+            customersRaw = customerBlacklistText,
+            tippersRaw = tipperCustomersText
         )
 
     /**

@@ -356,4 +356,79 @@ class PyszneDaySummaryCalculatorTest {
         assertTrue(summary.netPerHour!! > 40.0)
         assertTrue(summary.netPerHour!! < 50.0)
     }
+
+    @Test
+    fun keepsTwoOrdersFromSameRestaurantAsSeparateRows() {
+        val date = LocalDate.of(2026, 8, 24)
+        val entries = listOf(
+            PyszneDeliveryLog(
+                key = "first",
+                fingerprint = "fp-first",
+                orderId = "ABC123",
+                date = date,
+                acceptedMinuteOfDay = 12 * 60,
+                restaurant = "Lena Grill Kebab",
+                amountPln = 20.0,
+                distanceKm = 4.0,
+                durationSeconds = 20 * 60
+            ),
+            PyszneDeliveryLog(
+                key = "second",
+                fingerprint = "fp-second",
+                orderId = "DEF456",
+                date = date,
+                acceptedMinuteOfDay = 13 * 60,
+                restaurant = "Lena Grill Kebab",
+                amountPln = 15.0,
+                distanceKm = 7.0,
+                durationSeconds = 35 * 60
+            )
+        )
+
+        val summary = PyszneDaySummaryCalculator.calculate(
+            date = date,
+            entries = entries,
+            rules = ProfitabilityCalculator.Rules(vehicleCostPerKm = 0.35),
+            decisionBasis = DecisionBasis.MIXED,
+            zusPercent = 0.0
+        )
+
+        assertEquals(2, summary.orderCount)
+        assertEquals(2, summary.restaurants.size)
+        assertEquals(setOf("ABC123", "DEF456"), summary.restaurants.mapNotNull { it.orderId }.toSet())
+        assertTrue(summary.restaurants.all { it.orderCount == 1 })
+    }
+
+    @Test
+    fun cashTipsAndExtraPauseAffectOnlyDayTotals() {
+        val date = LocalDate.of(2026, 8, 24)
+        val entry = PyszneDeliveryLog(
+            key = "one",
+            fingerprint = "fp-one",
+            orderId = "ABC123",
+            date = date,
+            acceptedMinuteOfDay = 12 * 60,
+            restaurant = "Test",
+            amountPln = 20.0,
+            distanceKm = 4.0,
+            durationSeconds = 20 * 60
+        )
+
+        val summary = PyszneDaySummaryCalculator.calculate(
+            date = date,
+            entries = listOf(entry),
+            rules = ProfitabilityCalculator.Rules(vehicleCostPerKm = 0.35),
+            decisionBasis = DecisionBasis.MIXED,
+            zusPercent = 0.0,
+            cashTipsPln = 5.0,
+            extraPauseMinutes = 10
+        )
+
+        assertEquals(25.0, summary.grossPln, 0.001)
+        assertEquals(30 * 60, summary.durationSeconds)
+        assertEquals(5.0, summary.cashTipsPln, 0.001)
+        assertEquals(10, summary.extraPauseMinutes)
+        assertEquals(20.0, summary.restaurants.single().grossPln, 0.001)
+        assertEquals(20 * 60, summary.restaurants.single().durationSeconds)
+    }
 }

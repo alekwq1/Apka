@@ -47,8 +47,13 @@ data class Profitability(
 
 data class BlacklistHits(
     val restaurant: String? = null,
-    val customer: String? = null
+    val customer: String? = null,
+    /** Pozytywna lista odbiorcow znanych z napiwkow. Nie zmienia oceny oplacalnosci. */
+    val tipper: String? = null
 ) {
     val hasAny: Boolean
         get() = restaurant != null || customer != null
+
+    val hasTipper: Boolean
+        get() = tipper != null
 }

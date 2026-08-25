@@ -8,7 +8,6 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -16,6 +15,8 @@ import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -23,6 +24,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,6 +42,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -47,6 +51,9 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RangeSlider
@@ -63,6 +70,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.geometry.CornerRadius
@@ -77,26 +85,29 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.core.view.WindowCompat
+import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.temporal.TemporalAdjusters
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var prefs: AppPrefs
 
     private var serviceEnabled by mutableStateOf(false)
-    private var batteryUnrestricted by mutableStateOf(false)
     private var analysisEnabled by mutableStateOf(true)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -166,80 +177,111 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    when (screen) {
-                        AppScreen.PRIVACY -> PrivacyScreen(
-                            language = language,
-                            onLanguageChanged = { selected ->
-                                prefs.languageCode = selected.code
-                                languageCode = selected.code
-                            },
-                            onCancel = { finish() },
-                            onAccept = {
-                                prefs.privacyAccepted = true
-                                screen = AppScreen.SETUP
+                    val isMainScreen = screen == AppScreen.HOME ||
+                        screen == AppScreen.PYSZNE_SUMMARY ||
+                        screen == AppScreen.ANALYSIS ||
+                        screen == AppScreen.SETTINGS
+
+                    if (isMainScreen) {
+                        Scaffold(
+                            containerColor = MaterialTheme.colorScheme.background,
+                            bottomBar = {
+                                AppBottomNavigation(
+                                    current = screen,
+                                    language = language,
+                                    onNavigate = { destination -> screen = destination }
+                                )
                             }
-                        )
+                        ) { innerPadding ->
+                            Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
+                                when (screen) {
+                                    AppScreen.HOME -> HomeScreen(
+                                        language = language,
+                                        serviceEnabled = serviceEnabled,
+                                        analysisEnabled = analysisEnabled,
+                                        onToggle = {
+                                            if (!serviceEnabled) {
+                                                screen = AppScreen.SETUP
+                                            } else {
+                                                val newValue = !analysisEnabled
+                                                prefs.analysisEnabled = newValue
+                                                analysisEnabled = newValue
+                                            }
+                                        },
+                                        onSettings = { screen = AppScreen.SETTINGS },
+                                        onSetup = { screen = AppScreen.SETUP },
+                                        onPyszneSummary = { screen = AppScreen.PYSZNE_SUMMARY }
+                                    )
 
-                        AppScreen.SETUP -> SetupScreen(
-                            language = language,
-                            serviceEnabled = serviceEnabled,
-                            batteryUnrestricted = batteryUnrestricted,
-                            isSamsung = Build.MANUFACTURER.contains("samsung", ignoreCase = true),
-                            onAccessibility = { openAccessibilitySettings() },
-                            onAppInfo = { openAppInfo() },
-                            onBatterySettings = { openBatterySettings() },
-                            onContinue = {
-                                if (serviceEnabled) {
-                                    prefs.onboardingCompleted = true
-                                    prefs.analysisEnabled = true
-                                    analysisEnabled = true
-                                    requestNotificationPermissionIfNeeded()
-                                    screen = AppScreen.HOME
+                                    AppScreen.PYSZNE_SUMMARY -> PyszneSummaryScreen(
+                                        prefs = prefs,
+                                        language = language,
+                                        onBack = { screen = AppScreen.HOME }
+                                    )
+
+                                    AppScreen.ANALYSIS -> WeeklyAnalysisScreen(
+                                        language = language
+                                    )
+
+                                    AppScreen.SETTINGS -> SettingsScreen(
+                                        prefs = prefs,
+                                        language = language,
+                                        onLanguageChanged = { languageCode = it.code },
+                                        onThemeChanged = { selected ->
+                                            prefs.themeMode = selected
+                                            themeMode = selected
+                                        },
+                                        onBack = { screen = AppScreen.HOME }
+                                    )
+
+                                    else -> Unit
                                 }
-                            },
-                            onBack = if (prefs.onboardingCompleted) {
-                                { screen = AppScreen.HOME }
-                            } else {
-                                null
                             }
-                        )
-
-                        AppScreen.HOME -> HomeScreen(
-                            language = language,
-                            serviceEnabled = serviceEnabled,
-                            analysisEnabled = analysisEnabled,
-                            onToggle = {
-                                if (!serviceEnabled) {
-                                    screen = AppScreen.SETUP
-                                } else {
-                                    val newValue = !analysisEnabled
-                                    prefs.analysisEnabled = newValue
-                                    analysisEnabled = newValue
+                        }
+                    } else {
+                        when (screen) {
+                            AppScreen.PRIVACY -> PrivacyScreen(
+                                language = language,
+                                onLanguageChanged = { selected ->
+                                    prefs.languageCode = selected.code
+                                    languageCode = selected.code
+                                },
+                                serviceEnabled = serviceEnabled,
+                                onAccessibility = { openAccessibilitySettings() },
+                                onCancel = { finish() },
+                                onAcceptPrivacy = {
+                                    prefs.privacyAccepted = true
+                                },
+                                onFinish = {
+                                    if (serviceEnabled) {
+                                        prefs.privacyAccepted = true
+                                        prefs.onboardingCompleted = true
+                                        prefs.analysisEnabled = true
+                                        analysisEnabled = true
+                                        requestNotificationPermissionIfNeeded()
+                                        screen = AppScreen.HOME
+                                    }
                                 }
-                            },
-                            onSettings = { screen = AppScreen.SETTINGS },
-                            onSetup = { screen = AppScreen.SETUP },
-                            onPyszneSummary = { screen = AppScreen.PYSZNE_SUMMARY }
-                        )
+                            )
 
-                        AppScreen.PYSZNE_SUMMARY -> PyszneSummaryScreen(
-                            prefs = prefs,
-                            language = language,
-                            onBack = { screen = AppScreen.HOME }
-                        )
+                            AppScreen.SETUP -> SetupScreen(
+                                language = language,
+                                serviceEnabled = serviceEnabled,
+                                onAccessibility = { openAccessibilitySettings() },
+                                onContinue = {
+                                    if (serviceEnabled) {
+                                        prefs.onboardingCompleted = true
+                                        prefs.analysisEnabled = true
+                                        analysisEnabled = true
+                                        requestNotificationPermissionIfNeeded()
+                                        screen = AppScreen.HOME
+                                    }
+                                },
+                                onBack = if (prefs.onboardingCompleted) { { screen = AppScreen.HOME } } else null
+                            )
 
-                        AppScreen.SETTINGS -> SettingsScreen(
-                            prefs = prefs,
-                            language = language,
-                            onLanguageChanged = {
-                                languageCode = it.code
-                            },
-                            onThemeChanged = { selected ->
-                                prefs.themeMode = selected
-                                themeMode = selected
-                            },
-                            onBack = { screen = AppScreen.HOME }
-                        )
+                            else -> Unit
+                        }
                     }
                 }
             }
@@ -268,7 +310,6 @@ class MainActivity : ComponentActivity() {
     private fun refreshSystemState() {
         serviceEnabled = isAccessibilityServiceEnabled(this)
         analysisEnabled = prefs.analysisEnabled
-        batteryUnrestricted = isBatteryUnrestricted(this)
     }
 
     private fun openAccessibilitySettings() {
@@ -296,11 +337,6 @@ class MainActivity : ComponentActivity() {
         startActivity(intent)
     }
 
-    private fun openBatterySettings() {
-        val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-        runCatching { startActivity(intent) }
-            .onFailure { openAppInfo() }
-    }
 }
 
 private enum class AppScreen {
@@ -308,6 +344,7 @@ private enum class AppScreen {
     SETUP,
     HOME,
     PYSZNE_SUMMARY,
+    ANALYSIS,
     SETTINGS
 }
 
@@ -329,82 +366,140 @@ private enum class AppLanguage(
 private fun PrivacyScreen(
     language: AppLanguage,
     onLanguageChanged: (AppLanguage) -> Unit,
+    serviceEnabled: Boolean,
+    onAccessibility: () -> Unit,
     onCancel: () -> Unit,
-    onAccept: () -> Unit
+    onAcceptPrivacy: () -> Unit,
+    onFinish: () -> Unit
 ) {
     val uriHandler = LocalUriHandler.current
+    val pagerState = rememberPagerState(pageCount = { 2 })
+    val scope = rememberCoroutineScope()
+    var policyAccepted by remember { mutableStateOf(false) }
 
-    ScreenContainer(scrollable = true) {
-        Row(
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            AppLanguage.values().forEach { item ->
-                FilterChip(
-                    selected = item == language,
-                    onClick = { onLanguageChanged(item) },
-                    label = { Text(item.label) }
-                )
-            }
-        }
-
+    ScreenContainer(scrollable = false) {
+        BrandEyebrow(tx(language, "PIERWSZY START", "FIRST RUN", "ПЕРШИЙ ЗАПУСК", "ПЕРВЫЙ ЗАПУСК"))
         Text(
-            text = tx(language, "FUJARA potrzebuje dostępu do ekranu", "FUJARA needs screen access", "FUJARA потребує доступу до екрана", "FUJARA нужен доступ к экрану"),
+            tx(language, "Dwa kroki i gotowe", "Two steps and done", "Два кроки — і готово", "Два шага — и готово"),
             style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold
+            fontWeight = FontWeight.Black
         )
+        SetupProgress(currentPage = pagerState.currentPage, serviceEnabled = serviceEnabled && policyAccepted)
 
-        Text(
-            text = tx(language, "Zanim włączysz usługę dostępności, sprawdź dokładnie do czego będzie używana.", "Before enabling Accessibility, please review exactly what it is used for.", "Перед увімкненням служби спеціальних можливостей перевірте, для чого вона використовується.", "Перед включением службы специальных возможностей проверьте, для чего она используется."),
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxWidth().weight(1f)
+        ) { page ->
+            Column(
+                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                if (page == 0) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        AppLanguage.values().forEach { item ->
+                            FilterChip(
+                                selected = item == language,
+                                onClick = { onLanguageChanged(item) },
+                                label = { Text(item.label) }
+                            )
+                        }
+                    }
 
-        InfoCard(
-            title = tx(language, "Dlaczego FUJARA używa AccessibilityService", "Why FUJARA uses AccessibilityService", "Навіщо FUJARA використовує AccessibilityService", "Зачем FUJARA использует AccessibilityService"),
-            body = tx(
-                language,
-                "FUJARA używa systemowej usługi dostępności Android (AccessibilityService), aby rozpoznać widoczną kartę oferty z obsługiwanej aplikacji kurierskiej i wyświetlić nad nią obliczenie opłacalności. Odczytuje z oferty kwotę, dystans, czas oraz planowaną godzinę odbioru/dostawy, jeśli jest dostępna. Gdy oferta jest pływającą kartą nad innym ekranem, zrzut może obejmować także tło, ale dane spoza rozpoznanej oferty nie są dodawane do historii.\n\nNa ekranie historii Pyszne użytkownik może sam nacisnąć „ZAPISZ DANE”. Wtedy FUJARA zapisuje lokalnie tylko datę, nazwę restauracji/punktu odbioru, kwotę, dystans, czas aktywności i techniczny hash do blokowania duplikatów. Nie zapisuje pełnego OCR, screenshotu ani adresu klienta. Gdy otworzysz w Pyszne „Podsumowanie dnia”, FUJARA może lokalnie zapamiętać datę, liczbę zleceń i łączną kwotę wyłącznie do kontroli kompletności logu. Log można usunąć w aplikacji.\n\nWszystkie obliczenia są wykonywane lokalnie na telefonie. FUJARA nie klika, nie przyjmuje ani nie odrzuca zleceń za Ciebie.",
-                "FUJARA uses Android's AccessibilityService to recognize a visible offer card from a supported courier app and show a profitability calculation above it. It reads the amount, distance, duration and planned pickup/delivery time when available. If the offer is a floating card over another screen, the screenshot can include the background, but content outside the recognized offer is not added to history.\n\nOn a Pyszne order-history screen the user may explicitly tap “SAVE DATA”. FUJARA then stores locally only the date, restaurant/pickup name, amount, distance, active time and a technical hash used to prevent duplicates. It does not store the full OCR text, screenshot or customer address. When you open Pyszne’s daily summary, FUJARA may locally cache the date, order count and total amount only to verify log completeness. The local log can be deleted in the app.\n\nAll calculations are performed locally on the phone. FUJARA does not click, accept or reject jobs for you.",
-                "FUJARA використовує AccessibilityService для локального розпізнавання видимої пропозиції. На екрані історії Pyszne користувач може сам натиснути «ЗБЕРЕГТИ ДАНІ»; тоді локально зберігаються лише дата, ресторан/точка отримання, сума, відстань, активний час і технічний hash для блокування дублікатів. Повний OCR, screenshot та адреса клієнта не зберігаються. На екрані підсумку дня Pyszne локально може зберігатися лише дата, кількість замовлень і загальна сума для перевірки повноти. FUJARA не натискає кнопки та не приймає чи відхиляє замовлення за вас.",
-                "FUJARA использует AccessibilityService для локального распознавания видимого предложения. На экране истории Pyszne пользователь может сам нажать «СОХРАНИТЬ ДАННЫЕ»; тогда локально сохраняются только дата, ресторан/точка получения, сумма, расстояние, активное время и технический hash для блокировки дублей. Полный OCR, screenshot и адрес клиента не сохраняются. На экране итогов дня Pyszne локально могут сохраняться только дата, количество заказов и общая сумма для проверки полноты. FUJARA не нажимает кнопки и не принимает или отклоняет заказы за вас."
-            )
-        )
+                    Text(
+                        text = tx(language, "01 · Prywatność i dane", "01 · Privacy & data", "01 · Конфіденційність", "01 · Конфиденциальность"),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Black
+                    )
+                    Text(
+                        text = tx(language, "FUJARA potrzebuje dostępu do ekranu wyłącznie do rozpoznania widocznej oferty i lokalnych obliczeń.", "FUJARA needs screen access only to recognize the visible offer and calculate locally.", "FUJARA потрібен доступ до екрана лише для розпізнавання видимої пропозиції.", "FUJARA нужен доступ к экрану только для распознавания видимого предложения."),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
 
-        InfoCard(
-            title = tx(language, "Czego aplikacja nie robi", "What the app does not do", "Чого застосунок не робить", "Чего приложение не делает"),
-            body = tx(
-                language,
-                "• nie klika i nie przyjmuje zleceń za Ciebie\n• nie wysyła odczytanych ofert na serwer\n• nie używa danych do reklam ani profilowania\n• obliczenia wykonywane są lokalnie na telefonie",
-                "• it does not click or accept jobs for you\n• it does not send read offers to a server\n• it does not use data for advertising or profiling\n• calculations are performed locally on the phone",
-                "• не натискає кнопки й не приймає замовлення за вас\n• не надсилає прочитані пропозиції на сервер\n• не використовує дані для реклами чи профілювання\n• обчислення виконуються локально на телефоні",
-                "• не нажимает кнопки и не принимает заказы за вас\n• не отправляет прочитанные предложения на сервер\n• не использует данные для рекламы или профилирования\n• вычисления выполняются локально на телефоне"
-            )
-        )
+                    InfoCard(
+                        title = tx(language, "Jak używamy AccessibilityService", "How AccessibilityService is used", "Як використовується AccessibilityService", "Как используется AccessibilityService"),
+                        body = tx(
+                            language,
+                            "FUJARA odczytuje z widocznej karty oferty kwotę, dystans, czas i planowaną godzinę odbioru/dostawy, jeśli jest dostępna. Na ekranie historii Pyszne zapis danych następuje dopiero po działaniu użytkownika; lokalnie trafiają tylko dane potrzebne do podsumowań (m.in. data, restauracja, kwota, dystans, czas i techniczny identyfikator przeciw duplikatom). Pełny OCR, screenshot i adres klienta nie są zapisywane. Obliczenia pozostają na telefonie, a aplikacja nie klika, nie przyjmuje ani nie odrzuca zleceń za Ciebie.",
+                            "FUJARA reads the amount, distance, duration and planned pickup/delivery time from the visible offer when available. Pyszne history data is saved only after a user action and only the fields needed for summaries are stored locally. Full OCR, screenshots and customer addresses are not stored. Calculations stay on the phone and the app does not click, accept or reject jobs for you.",
+                            "FUJARA локально читає видиму пропозицію та зберігає лише дані, потрібні для підсумків після дії користувача. Повний OCR, screenshot та адреса клієнта не зберігаються.",
+                            "FUJARA локально читает видимое предложение и сохраняет только данные, нужные для итогов после действия пользователя. Полный OCR, screenshot и адрес клиента не сохраняются."
+                        )
+                    )
 
-        TextButton(
-            onClick = { uriHandler.openUri("https://alekwq1.github.io/Apka/privacy.html") },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(tx(language, "Polityka prywatności", "Privacy policy", "Політика конфіденційності", "Политика конфиденциальности"))
+                    TextButton(
+                        onClick = { uriHandler.openUri("https://alekwq1.github.io/Apka/privacy.html") },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(tx(language, "Otwórz pełną politykę prywatności", "Open full privacy policy", "Відкрити політику конфіденційності", "Открыть политику конфиденциальности"))
+                    }
+
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) {
+                            Text(tx(language, "Anuluj", "Cancel", "Скасувати", "Отмена"))
+                        }
+                        Button(
+                            onClick = {
+                                policyAccepted = true
+                                onAcceptPrivacy()
+                                scope.launch { pagerState.animateScrollToPage(1) }
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(tx(language, "Rozumiem · dalej", "I understand · next", "Розумію · далі", "Понимаю · далее"))
+                        }
+                    }
+                } else {
+                    Text(
+                        text = tx(language, "02 · Włącz odczyt oferty", "02 · Enable offer reading", "02 · Увімкніть читання пропозиції", "02 · Включите чтение предложения"),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Black
+                    )
+
+                    if (!policyAccepted) {
+                        InfoCard(
+                            title = tx(language, "Najpierw zaakceptuj krok 01", "Accept step 01 first", "Спочатку прийміть крок 01", "Сначала примите шаг 01"),
+                            body = tx(language, "Przesuń w prawo i potwierdź informację o prywatności.", "Swipe right and confirm the privacy information.", "Проведіть праворуч і підтвердьте інформацію.", "Проведите вправо и подтвердите информацию.")
+                        )
+                    }
+
+                    SetupStepCard(
+                        step = "02",
+                        ok = serviceEnabled,
+                        title = tx(language, "Dostępność FUJARY", "FUJARA Accessibility", "Доступність FUJARA", "Доступность FUJARA"),
+                        body = if (serviceEnabled) {
+                            tx(language, "Gotowe. Panel analizy może już pojawiać się razem z ofertą.", "Done. The analysis panel can now appear with an offer.", "Готово. Панель аналізу вже може з’являтися разом із пропозицією.", "Готово. Панель анализа уже может появляться вместе с предложением.")
+                        } else {
+                            tx(language, "Otwórz Ustawienia → Dostępność → Zainstalowane aplikacje i włącz FUJARA.", "Open Settings → Accessibility → Installed apps and enable FUJARA.", "Відкрийте Налаштування → Спеціальні можливості → Встановлені застосунки та увімкніть FUJARA.", "Откройте Настройки → Специальные возможности → Установленные приложения и включите FUJARA.")
+                        },
+                        button = if (serviceEnabled || !policyAccepted) null else tx(language, "Otwórz dostępność", "Open Accessibility", "Відкрити доступність", "Открыть доступность"),
+                        onClick = onAccessibility
+                    )
+
+                    Button(
+                        onClick = onFinish,
+                        enabled = policyAccepted && serviceEnabled,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(18.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 15.dp)
+                    ) {
+                        Text(tx(language, "Gotowe — przejdź do FUJARY", "Done — open FUJARA", "Готово — перейти до FUJARA", "Готово — перейти в FUJARA"), fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
         }
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            OutlinedButton(
-                onClick = onCancel,
-                modifier = Modifier.weight(1f)
-            ) {
-                Text(tx(language, "Anuluj", "Cancel", "Скасувати", "Отмена"))
-            }
-
-            Button(
-                onClick = onAccept,
-                modifier = Modifier.weight(1f)
-            ) {
-                Text(tx(language, "Rozumiem", "I understand", "Розумію", "Понимаю"))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+            repeat(2) { index ->
+                Box(
+                    modifier = Modifier
+                        .padding(horizontal = 4.dp)
+                        .size(if (pagerState.currentPage == index) 10.dp else 7.dp)
+                        .clip(RoundedCornerShape(99.dp))
+                        .background(if (pagerState.currentPage == index) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline)
+                )
             }
         }
     }
@@ -414,20 +509,25 @@ private fun PrivacyScreen(
 private fun SetupScreen(
     language: AppLanguage,
     serviceEnabled: Boolean,
-    batteryUnrestricted: Boolean,
-    isSamsung: Boolean,
     onAccessibility: () -> Unit,
-    onAppInfo: () -> Unit,
-    onBatterySettings: () -> Unit,
     onContinue: () -> Unit,
     onBack: (() -> Unit)?
 ) {
-    ScreenContainer(scrollable = true) {
+    val pagerState = rememberPagerState(pageCount = { 2 })
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(serviceEnabled) {
+        if (serviceEnabled && pagerState.currentPage == 0) {
+            pagerState.animateScrollToPage(1)
+        }
+    }
+
+    ScreenContainer(scrollable = false) {
         TopBar(title = "FUJARA", onBack = onBack)
 
         BrandEyebrow(tx(language, "KONFIGURACJA", "SETUP", "НАЛАШТУВАННЯ", "НАСТРОЙКА"))
         Text(
-            text = tx(language, "3 kroki i możesz jechać", "3 steps and you are ready", "3 кроки — і можна їхати", "3 шага — и можно ехать"),
+            text = tx(language, "2 krótkie kroki i możesz jechać", "2 quick steps and you are ready", "2 короткі кроки — і можна їхати", "2 коротких шага — и можно ехать"),
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Black
         )
@@ -437,75 +537,92 @@ private fun SetupScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
-        SetupProgress(serviceEnabled = serviceEnabled, batteryUnrestricted = batteryUnrestricted)
+        SetupProgress(currentPage = pagerState.currentPage, serviceEnabled = serviceEnabled)
 
-        SetupStepCard(
-            step = "01",
-            ok = serviceEnabled,
-            title = tx(language, "Włącz odczyt oferty", "Enable offer reading", "Увімкніть читання пропозиції", "Включите чтение предложения"),
-            body = tx(language, "Otwórz Ustawienia → Dostępność → Zainstalowane aplikacje i włącz FUJARA.", "Open Settings → Accessibility → Installed apps and enable FUJARA.", "Відкрийте Налаштування → Спеціальні можливості → Встановлені застосунки та увімкніть FUJARA.", "Откройте Настройки → Специальные возможности → Установленные приложения и включите FUJARA."),
-            button = if (serviceEnabled) null else tx(language, "Otwórz dostępność", "Open Accessibility", "Відкрити доступність", "Открыть доступность"),
-            onClick = onAccessibility
-        )
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxWidth().weight(1f)
+        ) { page ->
+            Column(
+                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                if (page == 0) {
+                    SetupStepCard(
+                        step = "01",
+                        ok = serviceEnabled,
+                        title = tx(language, "Włącz odczyt oferty", "Enable offer reading", "Увімкніть читання пропозиції", "Включите чтение предложения"),
+                        body = tx(language, "Otwórz Ustawienia → Dostępność → Zainstalowane aplikacje i włącz FUJARA. Po powrocie przejdziemy automatycznie dalej.", "Open Settings → Accessibility → Installed apps and enable FUJARA. After you return, we will continue automatically.", "Відкрийте Налаштування → Спеціальні можливості → Встановлені застосунки та увімкніть FUJARA.", "Откройте Настройки → Специальные возможности → Установленные приложения и включите FUJARA."),
+                        button = if (serviceEnabled) null else tx(language, "Otwórz dostępność", "Open Accessibility", "Відкрити доступність", "Открыть доступность"),
+                        onClick = onAccessibility
+                    )
+                    Text(
+                        tx(language, "Przesuń w lewo, aby zobaczyć następny krok.", "Swipe left for the next step.", "Проведіть ліворуч до наступного кроку.", "Проведите влево к следующему шагу."),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                } else {
+                    SetupStepCard(
+                        step = "02",
+                        ok = serviceEnabled,
+                        title = tx(language, "Gotowe do jazdy", "Ready to deliver", "Готово до роботи", "Готово к работе"),
+                        body = if (serviceEnabled) {
+                            tx(language, "Panel FUJARY pojawi się razem z ofertą, pokaże opłacalność i zniknie po zamknięciu oferty. Ustawienia możesz później zmienić z dolnego paska.", "The FUJARA panel appears with the offer, shows profitability and disappears with the offer. You can change settings later from the bottom bar.", "Панель FUJARA з’являється разом із пропозицією та показує вигідність.", "Панель FUJARA появляется вместе с предложением и показывает выгодность.")
+                        } else {
+                            tx(language, "Wróć do kroku 01 i włącz dostępność FUJARY.", "Return to step 01 and enable FUJARA accessibility.", "Поверніться до кроку 01 та увімкніть доступність FUJARA.", "Вернитесь к шагу 01 и включите доступность FUJARA.")
+                        },
+                        button = null,
+                        onClick = {}
+                    )
 
-        SetupStepCard(
-            step = "02",
-            ok = serviceEnabled,
-            title = tx(language, "Nakładka jest gotowa", "Overlay is ready", "Накладка готова", "Накладка готова"),
-            body = if (serviceEnabled) {
-                tx(language, "Panel FUJARY pokaże się w prawym górnym rogu razem z ofertą i zniknie razem z nią. Nie przechwytuje dotyku.", "The FUJARA panel appears in the top-right with the offer and disappears with it. It does not intercept touches.", "Панель FUJARA з’являється праворуч угорі разом із пропозицією та зникає разом із нею.", "Панель FUJARA появляется справа вверху вместе с предложением и исчезает вместе с ним.")
-            } else {
-                tx(language, "Ten krok aktywuje się automatycznie po włączeniu dostępu do ekranu.", "This step activates automatically after screen access is enabled.", "Цей крок активується автоматично після надання доступу до екрана.", "Этот шаг активируется автоматически после включения доступа к экрану.")
-            },
-            button = null,
-            onClick = {}
-        )
-
-        SetupStepCard(
-            step = "03",
-            ok = batteryUnrestricted,
-            warning = !batteryUnrestricted,
-            title = tx(language, "Pozwól działać w tle", "Allow background activity", "Дозвольте роботу у фоні", "Разрешите работу в фоне"),
-            body = if (batteryUnrestricted) {
-                tx(language, "Gotowe. System nie powinien agresywnie usypiać FUJARY.", "Done. The system should not aggressively put FUJARA to sleep.", "Готово. Система не повинна агресивно присипляти FUJARA.", "Готово. Система не должна агрессивно усыплять FUJARA.")
-            } else {
-                tx(language, "Zalecane: Informacje o aplikacji → Bateria → Bez ograniczeń. To ogranicza znikanie usługi podczas jazdy.", "Recommended: App info → Battery → Unrestricted. This reduces the chance of the service stopping while you deliver.", "Рекомендовано: Інформація про застосунок → Батарея → Без обмежень.", "Рекомендуется: Сведения о приложении → Батарея → Без ограничений.")
-            },
-            button = tx(language, "Ustaw baterię", "Battery settings", "Налаштувати батарею", "Настроить батарею"),
-            onClick = onAppInfo
-        )
-
-        if (isSamsung) {
-            InfoCard(
-                title = tx(language, "Samsung może usypiać aplikację", "Samsung may put the app to sleep", "Samsung може присипляти застосунок", "Samsung может усыплять приложение"),
-                body = tx(language, "Sprawdź też: Bateria → Limity użycia w tle. Usuń FUJARA z aplikacji uśpionych i głęboko uśpionych.", "Also check Battery → Background usage limits and remove FUJARA from sleeping/deep sleeping apps.", "Також перевірте Батарея → Обмеження фонового використання.", "Также проверьте Батарея → Ограничения фонового использования."),
-                actionLabel = tx(language, "Otwórz ustawienia baterii", "Open battery settings", "Відкрити батарею", "Открыть батарею"),
-                onAction = onBatterySettings
-            )
+                    Button(
+                        onClick = onContinue,
+                        enabled = serviceEnabled,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(18.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 15.dp)
+                    ) {
+                        Text(tx(language, "Gotowe — przejdź do FUJARY", "Done — open FUJARA", "Готово — перейти до FUJARA", "Готово — перейти в FUJARA"), fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
         }
 
-        Button(
-            onClick = onContinue,
-            enabled = serviceEnabled,
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(18.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 15.dp)
-        ) {
-            Text(tx(language, "Gotowe — przejdź do FUJARY", "Done — open FUJARA", "Готово — перейти до FUJARA", "Готово — перейти в FUJARA"), fontWeight = FontWeight.Bold)
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (pagerState.currentPage > 0) {
+                OutlinedButton(
+                    onClick = { scope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) } },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(tx(language, "Wstecz", "Back", "Назад", "Назад"))
+                }
+            }
+            if (pagerState.currentPage < 1) {
+                Button(
+                    onClick = { scope.launch { pagerState.animateScrollToPage(1) } },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(tx(language, "Dalej", "Next", "Далі", "Далее"))
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun SetupProgress(serviceEnabled: Boolean, batteryUnrestricted: Boolean) {
-    val done = if (!serviceEnabled) 0 else if (batteryUnrestricted) 3 else 2
+private fun SetupProgress(currentPage: Int, serviceEnabled: Boolean) {
+    val done = when {
+        serviceEnabled && currentPage >= 1 -> 2
+        serviceEnabled -> 1
+        else -> currentPage.coerceIn(0, 1)
+    }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("$done / 3", fontWeight = FontWeight.Bold)
+            Text("$done / 2", fontWeight = FontWeight.Bold)
             Text("konfiguracja", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
         }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            repeat(3) { index ->
+            repeat(2) { index ->
                 Box(
                     modifier = Modifier
                         .weight(1f)
@@ -529,8 +646,6 @@ private fun HomeScreen(
     onPyszneSummary: () -> Unit
 ) {
     val active = serviceEnabled && analysisEnabled
-    var showDemo by remember { mutableStateOf(false) }
-
     ScreenContainer(scrollable = true) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -601,18 +716,132 @@ private fun HomeScreen(
             }
         }
 
-        SectionCard(
-            step = "LIVE",
-            title = tx(language, "Tak wygląda analiza", "This is the analysis", "Так виглядає аналіз", "Так выглядит анализ")
-        ) {
-            Text(
-                tx(language, "Podgląd pokazuje wybrane wskaźniki w takim samym układzie jak podczas jazdy.", "The preview shows your selected metrics in the same layout used while delivering.", "Попередній перегляд показує вибрані показники в тому самому макеті.", "Предпросмотр показывает выбранные показатели в том же макете."),
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+    }
+}
+
+@Composable
+private fun AppBottomNavigation(
+    current: AppScreen,
+    language: AppLanguage,
+    onNavigate: (AppScreen) -> Unit
+) {
+    val items = listOf(
+        Triple(AppScreen.HOME, "⌂", tx(language, "Start", "Home", "Головна", "Главная")),
+        Triple(AppScreen.PYSZNE_SUMMARY, "▣", tx(language, "Dzień", "Day", "День", "День")),
+        Triple(AppScreen.ANALYSIS, "↗", tx(language, "Analiza", "Analysis", "Аналіз", "Анализ")),
+        Triple(AppScreen.SETTINGS, "⚙", tx(language, "Ustawienia", "Settings", "Налаштування", "Настройки"))
+    )
+    NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+        items.forEach { (screen, icon, label) ->
+            NavigationBarItem(
+                selected = current == screen,
+                onClick = { onNavigate(screen) },
+                icon = { Text(icon, fontWeight = FontWeight.Black) },
+                label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             )
-            OutlinedButton(onClick = { showDemo = !showDemo }, modifier = Modifier.fillMaxWidth()) {
-                Text(if (showDemo) tx(language, "Ukryj podgląd", "Hide preview", "Сховати", "Скрыть") else tx(language, "Pokaż podgląd nakładki", "Preview overlay", "Показати накладку", "Показать накладку"))
+        }
+    }
+}
+
+@Composable
+private fun WeeklyAnalysisScreen(language: AppLanguage) {
+    val context = LocalContext.current
+    val resultStore = remember { PyszneResultStore(context) }
+    val results = remember { resultStore.all() }
+    val latestDate = results.maxByOrNull { it.date }?.date ?: LocalDate.now()
+    var weekStart by remember {
+        mutableStateOf(latestDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)))
+    }
+    val weekEnd = weekStart.plusDays(6)
+    val week = results.filter { !it.date.isBefore(weekStart) && !it.date.isAfter(weekEnd) }
+    val orders = week.sumOf { it.orderCount }
+    val gross = week.sumOf { it.grossPln }
+    val distance = week.sumOf { it.distanceKm }
+    val duration = week.sumOf { it.durationSeconds }
+    val net = week.sumOf { it.netPln }
+    val perHour = duration.takeIf { it > 0 }?.let { net / (it / 3600.0) }
+    val perKm = distance.takeIf { it > 0.0 }?.let { net / it }
+    val bestDay = week.maxByOrNull { it.netPerHour ?: Double.NEGATIVE_INFINITY }
+
+    ScreenContainer(scrollable = true) {
+        BrandEyebrow(tx(language, "ANALIZA", "ANALYSIS", "АНАЛІЗ", "АНАЛИЗ"))
+        Text(
+            tx(language, "Tydzień pracy", "Work week", "Робочий тиждень", "Рабочая неделя"),
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Black
+        )
+
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = { weekStart = weekStart.minusWeeks(1) }) { Text("‹") }
+            Text(
+                "${weekStart.format(DateTimeFormatter.ofPattern("dd.MM"))} – ${weekEnd.format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))}",
+                modifier = Modifier.weight(1f),
+                textAlign = TextAlign.Center,
+                fontWeight = FontWeight.Bold
+            )
+            OutlinedButton(
+                onClick = { weekStart = weekStart.plusWeeks(1) },
+                enabled = weekStart.plusWeeks(1) <= LocalDate.now().with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+            ) { Text("›") }
+        }
+
+        if (week.isEmpty()) {
+            InfoCard(
+                title = tx(language, "Brak zatwierdzonych dni", "No confirmed days", "Немає підтверджених днів", "Нет подтверждённых дней"),
+                body = tx(language, "Po użyciu „Potwierdź i policz” wynik dnia zapisze się tutaj automatycznie.", "After using Confirm and calculate, the day result will be saved here automatically.", "Після підтвердження результат збережеться тут.", "После подтверждения результат сохранится здесь.")
+            )
+        } else {
+            SectionCard(step = "TYDZIEŃ", title = tx(language, "Wynik łączny", "Weekly total", "Підсумок тижня", "Итог недели")) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SummarySmallMetric(Modifier.weight(1f), tx(language, "PRZYCHÓD", "REVENUE", "ДОХІД", "ДОХОД"), String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", gross))
+                    SummarySmallMetric(Modifier.weight(1f), tx(language, "ZLECENIA", "ORDERS", "ЗАМОВЛЕННЯ", "ЗАКАЗЫ"), orders.toString())
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SummarySmallMetric(Modifier.weight(1f), "PLN/h", perHour?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł", it) } ?: "—")
+                    SummarySmallMetric(Modifier.weight(1f), "PLN/km", perKm?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", it) } ?: "—")
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SummarySmallMetric(Modifier.weight(1f), tx(language, "DYSTANS", "DISTANCE", "ВІДСТАНЬ", "РАССТОЯНИЕ"), String.format(Locale.forLanguageTag("pl-PL"), "%.1f km", distance))
+                    SummarySmallMetric(Modifier.weight(1f), tx(language, "CZAS", "TIME", "ЧАС", "ВРЕМЯ"), formatDuration(duration))
+                }
+                if (orders > 0) {
+                    Text(
+                        tx(language, "Średnio na zlecenie: ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", gross / orders)}", "Average per order: ${String.format(Locale.US, "%.2f PLN", gross / orders)}", "Середнє на замовлення", "Среднее на заказ"),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                bestDay?.let {
+                    Text(
+                        tx(language, "Najmocniejszy dzień wg PLN/h: ${it.date.format(DateTimeFormatter.ofPattern("dd.MM"))} · ${String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł/h", it.netPerHour ?: 0.0)}", "Best day by PLN/h: ${it.date} · ${String.format(Locale.US, "%.0f PLN/h", it.netPerHour ?: 0.0)}", "Найкращий день за PLN/h: ${it.date}", "Лучший день по PLN/h: ${it.date}"),
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
-            if (showDemo) DemoAnalysisCard(language)
+
+            SectionCard(step = "DNI", title = tx(language, "Zatwierdzone wyniki", "Confirmed results", "Підтверджені результати", "Подтверждённые результаты")) {
+                week.sortedByDescending { it.date }.forEach { item ->
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(item.date.format(DateTimeFormatter.ofPattern("EEEE, dd.MM", Locale.forLanguageTag("pl-PL"))), fontWeight = FontWeight.Bold)
+                                Text("${item.orderCount} · ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", item.grossPln)}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(item.netPerHour?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł/h", it) } ?: "—", fontWeight = FontWeight.Black)
+                                Text(item.netPerKm?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł/km", it) } ?: "—", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -660,16 +889,44 @@ private fun PyszneSummaryScreen(
     }
 
     val dayReference = remember(refreshToken, selectedDate) { store.dayReference(selectedDate) }
+    val resultStore = remember { PyszneResultStore(context) }
+    val storedResult = remember(refreshToken, selectedDate) { resultStore.get(selectedDate) }
     val rules = prefs.rulesForPlatform(CourierPlatform.PYSZNE)
+    val zusForSummary = if (prefs.zusEnabled) prefs.zusPercent else 0.0
+
+    var cashTipsText by remember(selectedDate, storedResult?.confirmedAtMillis) {
+        mutableStateOf(
+            storedResult?.cashTipsPln
+                ?.takeIf { it > 0.0 }
+                ?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.2f", it) }
+                ?: ""
+        )
+    }
+    var extraPauseText by remember(selectedDate, storedResult?.confirmedAtMillis) {
+        mutableStateOf(storedResult?.extraPauseMinutes?.takeIf { it > 0 }?.toString() ?: "")
+    }
+    val cashTips = cashTipsText.replace(',', '.').toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
+    val extraPauseMinutes = extraPauseText.toIntOrNull()?.coerceIn(0, 240) ?: 0
+    val selectedDayEntries = entries.filter { it.date == selectedDate }
+    val platformGrossPln = selectedDayEntries.sumOf { it.amountPln }
     val summary = PyszneDaySummaryCalculator.calculate(
         date = selectedDate,
         entries = entries,
         rules = rules,
         decisionBasis = prefs.decisionBasis,
-        zusPercent = if (prefs.zusEnabled) prefs.zusPercent else 0.0
+        zusPercent = zusForSummary,
+        cashTipsPln = cashTips,
+        extraPauseMinutes = extraPauseMinutes
     )
+    val sourceSignature = PyszneResultSignature.source(selectedDayEntries, dayReference)
+    val settingsSignature = PyszneResultSignature.settings(rules, prefs.decisionBasis, zusForSummary)
+    val snapshotMatches = storedResult != null &&
+        storedResult.sourceSignature == sourceSignature &&
+        storedResult.settingsSignature == settingsSignature &&
+        abs(storedResult.cashTipsPln - cashTips) < 0.01 &&
+        storedResult.extraPauseMinutes == extraPauseMinutes
 
-    var showResult by remember { mutableStateOf(false) }
+    var showResult by remember(selectedDate, storedResult?.confirmedAtMillis) { mutableStateOf(snapshotMatches) }
     var validationMessage by remember { mutableStateOf("") }
     var nickname by remember { mutableStateOf("") }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -677,23 +934,36 @@ private fun PyszneSummaryScreen(
     var calculationRequest by remember { mutableStateOf(0) }
     var showCelebration by remember { mutableStateOf(false) }
     var showAllRestaurants by remember { mutableStateOf(false) }
+    var selectedOrder by remember { mutableStateOf<PyszneRestaurantSummary?>(null) }
 
-    LaunchedEffect(selectedDate, entries.size, dayReference) {
-        showResult = false
+    LaunchedEffect(selectedDate, sourceSignature, settingsSignature, cashTips, extraPauseMinutes, storedResult?.confirmedAtMillis) {
+        showResult = snapshotMatches
         isCalculating = false
-        validationMessage = ""
+        validationMessage = if (storedResult != null && !snapshotMatches) {
+            tx(
+                language,
+                "Dane lub ustawienia zmieniły się od ostatniego zatwierdzenia. Przelicz dzień ponownie.",
+                "Orders or settings changed since the last confirmation. Recalculate the day.",
+                "Дані або налаштування змінилися. Перерахуйте день.",
+                "Данные или настройки изменились. Пересчитайте день."
+            )
+        } else {
+            ""
+        }
         confirmDelete = false
         showCelebration = false
         showAllRestaurants = false
+        selectedOrder = null
     }
 
     LaunchedEffect(calculationRequest, selectedDate) {
         if (calculationRequest <= 0 || !isCalculating) return@LaunchedEffect
-        delay(1750)
+        delay(650)
         if (isCalculating) {
+            resultStore.save(summary.toSnapshot(sourceSignature, settingsSignature))
             showResult = true
-            showCelebration = true
             isCalculating = false
+            refreshToken += 1
         }
     }
 
@@ -759,7 +1029,7 @@ private fun PyszneSummaryScreen(
                 SummarySmallMetric(
                     modifier = Modifier.weight(1f),
                     label = tx(language, "KWOTA", "AMOUNT", "СУМА", "СУММА"),
-                    value = String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", summary.grossPln)
+                    value = String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", platformGrossPln)
                 )
             }
 
@@ -776,7 +1046,7 @@ private fun PyszneSummaryScreen(
                 val savedCount = summary.orderCount.coerceAtMost(expected)
                 val missingSlots = (expected - savedCount).coerceAtLeast(0)
                 val allIdsScanned = knownOrderIds.size >= expected
-                val amountMatches = abs(summary.grossPln - dayReference.amountPln) < 0.02
+                val amountMatches = abs(platformGrossPln - dayReference.amountPln) < 0.02
                 val dayComplete = savedCount == expected && amountMatches
                 val completeness = (savedCount.toFloat() / expected.toFloat()).coerceIn(0f, 1f)
                 val explicitSavedIdCount = savedDayEntries.count { !it.orderId.isNullOrBlank() }
@@ -999,12 +1269,51 @@ private fun PyszneSummaryScreen(
                 )
             }
 
+            HorizontalDivider()
+            Text(
+                tx(language, "Dodatki do dnia", "Day adjustments", "Коригування дня", "Корректировки дня"),
+                fontWeight = FontWeight.Black
+            )
+            Text(
+                tx(language, "Napiwek gotówkowy zwiększa przychód. Przestój zwiększa czas dnia przed wyliczeniem PLN/h.", "Cash tips increase revenue. Extra downtime increases the day duration before PLN/h is calculated.", "Готівкові чайові збільшують дохід, простій — час.", "Наличные чаевые увеличивают доход, простой — время."),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = cashTipsText,
+                    onValueChange = { value ->
+                        cashTipsText = value.filter { it.isDigit() || it == ',' || it == '.' }.take(8)
+                    },
+                    modifier = Modifier.weight(1f),
+                    label = { Text(tx(language, "Napiwek gotówkowy", "Cash tips", "Чайові", "Чаевые")) },
+                    suffix = { Text("zł") },
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = extraPauseText,
+                    onValueChange = { value -> extraPauseText = value.filter(Char::isDigit).take(3) },
+                    modifier = Modifier.weight(1f),
+                    label = { Text(tx(language, "Przestój", "Downtime", "Простій", "Простой")) },
+                    suffix = { Text("min") },
+                    singleLine = true
+                )
+            }
+            if (snapshotMatches) {
+                Text(
+                    tx(language, "✓ Ten wynik jest zapisany. Ponowne liczenie pojawi się dopiero po zmianie zleceń, kwoty kontrolnej, dodatków lub ustawień.", "✓ This result is saved. Recalculation is only needed after orders, control amount, adjustments or settings change.", "✓ Результат збережено.", "✓ Результат сохранён."),
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+
             Button(
                 onClick = {
                     val reference = dayReference
                     val sameDate = reference?.date == selectedDate
                     val countOk = sameDate && reference?.orderCount == summary.orderCount
-                    val amountOk = sameDate && reference != null && abs(reference.amountPln - summary.grossPln) < 0.02
+                    val amountOk = sameDate && reference != null && abs(reference.amountPln - platformGrossPln) < 0.02
 
                     validationMessage = when {
                         reference == null -> tx(language, "Najpierw otwórz Podsumowanie dnia w Pyszne.", "Open Pyszne daily summary first.", "Спочатку відкрийте підсумок Pyszne.", "Сначала откройте итоги Pyszne.")
@@ -1012,7 +1321,7 @@ private fun PyszneSummaryScreen(
                         countOk && amountOk -> tx(language, "✓ Dane zgodne. FUJARA liczy dzień…", "✓ Data matches. FUJARA is calculating…", "✓ Дані збігаються. Рахую…", "✓ Данные совпадают. Считаю…")
                         else -> {
                             val missing = reference.orderCount - summary.orderCount
-                            val amountDiff = reference.amountPln - summary.grossPln
+                            val amountDiff = reference.amountPln - platformGrossPln
                             tx(
                                 language,
                                 "⚠ Różnica: zlecenia ${if (missing >= 0) "+$missing" else missing}, kwota ${String.format(Locale.forLanguageTag("pl-PL"), "%+.2f zł", amountDiff)}. Sprawdź brakujące/podwójne zapisy.",
@@ -1025,6 +1334,7 @@ private fun PyszneSummaryScreen(
 
                     if (countOk && amountOk) {
                         showResult = false
+                        showCelebration = true
                         isCalculating = true
                         calculationRequest += 1
                     } else {
@@ -1033,13 +1343,13 @@ private fun PyszneSummaryScreen(
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = dayReference != null && summary.orderCount > 0 && !isCalculating
+                enabled = dayReference != null && summary.orderCount > 0 && !isCalculating && !snapshotMatches
             ) {
                 Text(
-                    if (isCalculating) {
-                        tx(language, "FUJARA liczy…", "FUJARA is calculating…", "FUJARA рахує…", "FUJARA считает…")
-                    } else {
-                        tx(language, "Potwierdź i policz", "Confirm and calculate", "Підтвердити й порахувати", "Подтвердить и посчитать")
+                    when {
+                        snapshotMatches -> tx(language, "Wynik zapisany ✓", "Result saved ✓", "Результат збережено ✓", "Результат сохранён ✓")
+                        isCalculating -> tx(language, "FUJARA liczy…", "FUJARA is calculating…", "FUJARA рахує…", "FUJARA считает…")
+                        else -> tx(language, "Potwierdź i policz", "Confirm and calculate", "Підтвердити й порахувати", "Подтвердить и посчитать")
                     }
                 )
             }
@@ -1165,13 +1475,13 @@ private fun PyszneSummaryScreen(
             }
 
             SectionCard(
-                step = "RESTAURACJE",
-                title = tx(language, "Restauracje — skrót", "Restaurants — summary", "Ресторани — коротко", "Рестораны — кратко")
+                step = "ZLECENIA",
+                title = tx(language, "Zlecenia dnia", "Day orders", "Замовлення дня", "Заказы дня")
             ) {
-                val namedRestaurants = summary.restaurants
+                val namedOrders = summary.restaurants
                     .filterNot { it.name.equals("Nieznana restauracja", ignoreCase = true) }
-                val best = namedRestaurants.firstOrNull()
-                val worst = namedRestaurants.lastOrNull()
+                val best = namedOrders.maxByOrNull { it.netPerHour ?: Double.NEGATIVE_INFINITY }
+                val worst = namedOrders.minByOrNull { it.netPerHour ?: Double.POSITIVE_INFINITY }
 
                 if (best != null || worst != null) {
                     Surface(
@@ -1179,80 +1489,52 @@ private fun PyszneSummaryScreen(
                         shape = RoundedCornerShape(14.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
                     ) {
-                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            best?.let {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            best?.let { item ->
                                 Text(
-                                    tx(language, "🏆 Najlepiej: ${it.name}", "🏆 Best: ${it.name}", "🏆 Найкраще: ${it.name}", "🏆 Лучшее: ${it.name}"),
+                                    tx(
+                                        language,
+                                        "Najlepsze: ${item.name} · ${String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł/h", item.netPerHour ?: 0.0)} · ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł/km", item.netPerKm ?: 0.0)}",
+                                        "Best: ${item.name} · ${String.format(Locale.US, "%.0f PLN/h", item.netPerHour ?: 0.0)} · ${String.format(Locale.US, "%.2f PLN/km", item.netPerKm ?: 0.0)}",
+                                        "Найкраще: ${item.name}",
+                                        "Лучшее: ${item.name}"
+                                    ),
                                     fontWeight = FontWeight.Black,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
+                                    color = MaterialTheme.colorScheme.primary
                                 )
                             }
-                            if (worst != null && worst.name != best?.name) {
+                            if (worst != null && worst.orderKey != best?.orderKey) {
                                 Text(
-                                    tx(language, "🪈 Najsłabiej: ${worst.name}", "🪈 Weakest: ${worst.name}", "🪈 Найслабше: ${worst.name}", "🪈 Самое слабое: ${worst.name}"),
+                                    tx(
+                                        language,
+                                        "Najsłabsze: ${worst.name} · ${String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł/h", worst.netPerHour ?: 0.0)} · ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł/km", worst.netPerKm ?: 0.0)}",
+                                        "Weakest: ${worst.name} · ${String.format(Locale.US, "%.0f PLN/h", worst.netPerHour ?: 0.0)} · ${String.format(Locale.US, "%.2f PLN/km", worst.netPerKm ?: 0.0)}",
+                                        "Найслабше: ${worst.name}",
+                                        "Самое слабое: ${worst.name}"
+                                    ),
                                     fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.tertiary,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
+                                    color = MaterialTheme.colorScheme.tertiary
                                 )
                             }
                         }
                     }
                 }
 
-                val topRestaurants = namedRestaurants.take(3)
-                val bottomRestaurants = namedRestaurants
-                    .takeLast(3)
-                    .reversed()
-                    .filterNot { low -> topRestaurants.any { it.name == low.name } }
+                Text(
+                    tx(language, "Każda dostawa jest osobno, także gdy kilka było z tej samej restauracji. Kliknij zlecenie, aby zobaczyć szczegóły.", "Every delivery is separate, even when several came from the same restaurant. Tap an order for details.", "Кожна доставка показується окремо.", "Каждая доставка показывается отдельно."),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
 
-                if (topRestaurants.isNotEmpty()) {
-                    BrandEyebrow(tx(language, "TOP", "TOP", "ТОП", "ТОП"), MaterialTheme.colorScheme.primary)
-                    topRestaurants.forEach { restaurant ->
-                        CompactRestaurantRow(restaurant = restaurant, language = language)
-                    }
-                }
-
-                if (bottomRestaurants.isNotEmpty()) {
-                    BrandEyebrow(tx(language, "DO POPRAWY", "NEEDS WORK", "ДО ПОКРАЩЕННЯ", "НАДО УЛУЧШИТЬ"), MaterialTheme.colorScheme.tertiary)
-                    bottomRestaurants.forEach { restaurant ->
-                        CompactRestaurantRow(restaurant = restaurant, language = language)
-                    }
-                }
-
-                if (summary.restaurants.size > 6) {
-                    OutlinedButton(
-                        onClick = { showAllRestaurants = !showAllRestaurants },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            if (showAllRestaurants) {
-                                tx(language, "Zwiń pełną listę", "Collapse full list", "Згорнути список", "Свернуть список")
-                            } else {
-                                tx(
-                                    language,
-                                    "Pokaż wszystkie (${summary.restaurants.size})",
-                                    "Show all (${summary.restaurants.size})",
-                                    "Показати всі (${summary.restaurants.size})",
-                                    "Показать все (${summary.restaurants.size})"
-                                )
-                            }
+                summary.restaurants
+                    .sortedWith(compareBy<PyszneRestaurantSummary> { it.acceptedMinuteOfDay ?: Int.MAX_VALUE }.thenBy { it.orderId ?: it.orderKey })
+                    .forEach { order ->
+                        CompactRestaurantRow(
+                            restaurant = order,
+                            language = language,
+                            onClick = { selectedOrder = order }
                         )
                     }
-                }
-
-                if (showAllRestaurants) {
-                    HorizontalDivider()
-                    Text(
-                        tx(language, "Pełna lista", "Full list", "Повний список", "Полный список"),
-                        fontWeight = FontWeight.Black
-                    )
-                    summary.restaurants.forEach { restaurant ->
-                        CompactRestaurantRow(restaurant = restaurant, language = language)
-                    }
-                }
             }
 
             SectionCard(
@@ -1302,6 +1584,7 @@ private fun PyszneSummaryScreen(
                 onClick = {
                     if (confirmDelete) {
                         store.deleteDate(selectedDate)
+                        resultStore.delete(selectedDate)
                         refreshToken += 1
                         confirmDelete = false
                     } else {
@@ -1323,11 +1606,115 @@ private fun PyszneSummaryScreen(
     }
 
     if (showCelebration && summary.orderCount > 0) {
-        DayCelebrationDialog(
+        ProfessionalDayResultDialog(
             summary = summary,
             language = language,
             onDismiss = { showCelebration = false }
         )
+    }
+
+    selectedOrder?.let { order ->
+        PyszneOrderDetailsDialog(
+            order = order,
+            language = language,
+            onDismiss = { selectedOrder = null }
+        )
+    }
+}
+
+@Composable
+private fun ProfessionalDayResultDialog(
+    summary: PyszneDaySummary,
+    language: AppLanguage,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val accent = summaryStatusColor(summary.status)
+    LaunchedEffect(summary.date, summary.orderCount, summary.grossPln) {
+        vibrateCelebrationStage(context, summary.status, 1)
+    }
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surface
+        ) {
+            Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                BrandEyebrow(tx(language, "PODSUMOWANIE DNIA", "DAY SUMMARY", "ПІДСУМОК ДНЯ", "ИТОГ ДНЯ"), accent)
+                Text(formatSummaryDate(summary.date, language), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SummarySmallMetric(Modifier.weight(1f), "PLN/h", summary.netPerHour?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł", it) } ?: "—")
+                    SummarySmallMetric(Modifier.weight(1f), "PLN/km", summary.netPerKm?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", it) } ?: "—")
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SummarySmallMetric(Modifier.weight(1f), tx(language, "PRZYCHÓD", "REVENUE", "ДОХІД", "ДОХОД"), String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", summary.grossPln))
+                    SummarySmallMetric(Modifier.weight(1f), tx(language, "ZLECENIA", "ORDERS", "ЗАМОВЛЕННЯ", "ЗАКАЗЫ"), summary.orderCount.toString())
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SummarySmallMetric(Modifier.weight(1f), tx(language, "DYSTANS", "DISTANCE", "ВІДСТАНЬ", "РАССТОЯНИЕ"), String.format(Locale.forLanguageTag("pl-PL"), "%.1f km", summary.distanceKm))
+                    SummarySmallMetric(Modifier.weight(1f), tx(language, "CZAS", "TIME", "ЧАС", "ВРЕМЯ"), formatDuration(summary.durationSeconds))
+                }
+                Text(
+                    "🟢 ${summary.goodOrders}   🟡 ${summary.borderlineOrders}   🔴 ${summary.poorOrders}",
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (summary.cashTipsPln > 0.0 || summary.extraPauseMinutes > 0) {
+                    Text(
+                        buildString {
+                            if (summary.cashTipsPln > 0.0) append("+ ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", summary.cashTipsPln)} napiwków")
+                            if (summary.cashTipsPln > 0.0 && summary.extraPauseMinutes > 0) append(" · ")
+                            if (summary.extraPauseMinutes > 0) append("+ ${summary.extraPauseMinutes} min przestoju")
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
+                    Text(tx(language, "Pokaż pełne podsumowanie", "Show full summary", "Показати повний підсумок", "Показать полный итог"))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PyszneOrderDetailsDialog(
+    order: PyszneRestaurantSummary,
+    language: AppLanguage,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(22.dp),
+            color = MaterialTheme.colorScheme.surface
+        ) {
+            Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                BrandEyebrow(tx(language, "SZCZEGÓŁY ZLECENIA", "ORDER DETAILS", "ДЕТАЛІ ЗАМОВЛЕННЯ", "ДЕТАЛИ ЗАКАЗА"))
+                Text(order.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
+                order.orderId?.let { Text("#$it", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                order.acceptedMinuteOfDay?.let { minute ->
+                    Text(String.format(Locale.ROOT, "%02d:%02d", minute / 60, minute % 60), fontWeight = FontWeight.Bold)
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SummarySmallMetric(Modifier.weight(1f), "PLN/h", order.netPerHour?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł", it) } ?: "—")
+                    SummarySmallMetric(Modifier.weight(1f), "PLN/km", order.netPerKm?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", it) } ?: "—")
+                }
+                SummarySmallMetric(Modifier.fillMaxWidth(), tx(language, "PRZYCHÓD", "REVENUE", "ДОХІД", "ДОХОД"), String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", order.grossPln))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SummarySmallMetric(Modifier.weight(1f), tx(language, "DYSTANS", "DISTANCE", "ВІДСТАНЬ", "РАССТОЯНИЕ"), String.format(Locale.forLanguageTag("pl-PL"), "%.1f km", order.distanceKm))
+                    SummarySmallMetric(Modifier.weight(1f), tx(language, "CZAS", "TIME", "ЧАС", "ВРЕМЯ"), formatDuration(order.durationSeconds))
+                }
+                if (order.cancelledOrders > 0) {
+                    Text(tx(language, "Zlecenie anulowane", "Cancelled order", "Замовлення скасовано", "Заказ отменён"), color = MaterialTheme.colorScheme.tertiary, fontWeight = FontWeight.Bold)
+                }
+                OutlinedButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
+                    Text(tx(language, "Zamknij", "Close", "Закрити", "Закрыть"))
+                }
+            }
+        }
     }
 }
 
@@ -1793,10 +2180,11 @@ private fun SummarySmallMetric(
 @Composable
 private fun CompactRestaurantRow(
     restaurant: PyszneRestaurantSummary,
-    language: AppLanguage
+    language: AppLanguage,
+    onClick: (() -> Unit)? = null
 ) {
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().let { modifier -> if (onClick != null) modifier.clickable(onClick = onClick) else modifier },
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f)
     ) {
@@ -1815,7 +2203,10 @@ private fun CompactRestaurantRow(
                 )
                 Text(
                     buildString {
-                        append("${restaurant.orderCount} zlec. · ")
+                        restaurant.orderId?.let { append("#$it · ") }
+                        restaurant.acceptedMinuteOfDay?.let { minute ->
+                            append(String.format(Locale.ROOT, "%02d:%02d · ", minute / 60, minute % 60))
+                        }
                         append(String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł/h", restaurant.netPerHour ?: 0.0))
                         append(" · ")
                         append(String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł/km", restaurant.netPerKm ?: 0.0))
@@ -2107,6 +2498,92 @@ private fun DemoMetric(
     }
 }
 
+private fun editableNumberText(value: Double, decimals: Int): String =
+    if (decimals <= 0) value.roundToInt().toString()
+    else String.format(Locale.ROOT, "%.${decimals}f", value)
+
+@Composable
+private fun EditableNumberValue(
+    modifier: Modifier = Modifier,
+    label: String? = null,
+    value: Double,
+    decimals: Int,
+    prefix: String = "",
+    suffix: String = "",
+    enabled: Boolean = true,
+    min: Double,
+    max: Double,
+    onSaved: (Double) -> Unit
+) {
+    var editing by remember { mutableStateOf(false) }
+    var text by remember(value, editing) { mutableStateOf(editableNumberText(value, decimals)) }
+    val display = buildString {
+        if (prefix.isNotBlank()) append(prefix).append(' ')
+        append(editableNumberText(value, decimals).replace('.', ','))
+        if (suffix.isNotBlank()) append(' ').append(suffix)
+    }
+
+    val clickableModifier = if (enabled) {
+        modifier.clickable {
+            text = editableNumberText(value, decimals)
+            editing = true
+        }
+    } else {
+        modifier
+    }
+
+    Surface(
+        modifier = clickableModifier,
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (enabled) 1f else 0.55f)
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp)) {
+            label?.let {
+                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text(display, fontWeight = FontWeight.Black, color = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+
+    if (editing) {
+        Dialog(onDismissRequest = { editing = false }) {
+            Surface(shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surface) {
+                Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(label ?: suffix.ifBlank { "Wartość" }, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black)
+                    OutlinedTextField(
+                        value = text,
+                        onValueChange = { input ->
+                            text = input.filter { it.isDigit() || it == ',' || it == '.' || it == '-' }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        suffix = if (suffix.isBlank()) null else ({ Text(suffix) })
+                    )
+                    Text(
+                        "${editableNumberText(min, decimals).replace('.', ',')} – ${editableNumberText(max, decimals).replace('.', ',')}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        TextButton(onClick = { editing = false }, modifier = Modifier.weight(1f)) { Text("Anuluj") }
+                        Button(
+                            onClick = {
+                                val parsed = text.replace(',', '.').toDoubleOrNull()
+                                if (parsed != null) {
+                                    onSaved(parsed.coerceIn(min, max))
+                                    editing = false
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("OK") }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun SettingsScreen(
     prefs: AppPrefs,
@@ -2152,10 +2629,46 @@ private fun SettingsScreen(
     var customerBlacklist by remember {
         mutableStateOf(BlacklistEntryCodec.parse(prefs.customerBlacklistText))
     }
+    var tipperCustomers by remember {
+        mutableStateOf(BlacklistEntryCodec.parse(prefs.tipperCustomersText))
+    }
     var selectedLanguage by remember { mutableStateOf(AppLanguage.fromCode(prefs.languageCode)) }
     var selectedTheme by remember { mutableStateOf(prefs.themeMode) }
     var decisionBasis by remember { mutableStateOf(prefs.decisionBasis) }
     val context = LocalContext.current
+
+    val exportRestaurantsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { writer ->
+                    writer.write(BlacklistEntryCodec.serialize(restaurantBlacklist))
+                } ?: error("Nie udało się otworzyć pliku")
+            }.onSuccess {
+                Toast.makeText(context, tx(language, "Wyeksportowano restauracje", "Restaurants exported", "Ресторани експортовано", "Рестораны экспортированы"), Toast.LENGTH_SHORT).show()
+            }.onFailure {
+                Toast.makeText(context, tx(language, "Nie udało się zapisać pliku", "Could not save the file", "Не вдалося зберегти файл", "Не удалось сохранить файл"), Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+    val importRestaurantsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                val raw = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { reader -> reader.readText() }
+                    ?: error("Nie udało się otworzyć pliku")
+                BlacklistEntryCodec.parse(raw)
+            }.onSuccess { imported ->
+                restaurantBlacklist = imported
+                prefs.restaurantBlacklistText = BlacklistEntryCodec.serialize(imported)
+                Toast.makeText(context, tx(language, "Zaimportowano ${imported.size} pozycji", "Imported ${imported.size} entries", "Імпортовано: ${imported.size}", "Импортировано: ${imported.size}"), Toast.LENGTH_SHORT).show()
+            }.onFailure {
+                Toast.makeText(context, tx(language, "Nie udało się odczytać pliku", "Could not read the file", "Не вдалося прочитати файл", "Не удалось прочитать файл"), Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     fun saved() {
         val message = tx(
@@ -2344,7 +2857,15 @@ private fun SettingsScreen(
             )
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(tx(language, "Paliwo, serwis, opony, amortyzacja", "Fuel, service, tyres, depreciation", "Пальне, сервіс, шини, амортизація", "Топливо, сервис, шины, амортизация"), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                Text("${String.format(Locale.ROOT, "%.2f", vehicleCost)} zł/km", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Black)
+                EditableNumberValue(
+                    value = vehicleCost.toDouble(),
+                    decimals = 2,
+                    suffix = "zł/km",
+                    enabled = ruleControlsEnabled,
+                    min = 0.0,
+                    max = 5.0,
+                    onSaved = { vehicleCost = it.toFloat(); persistRules() }
+                )
             }
             Slider(
                 value = vehicleCost,
@@ -2364,14 +2885,23 @@ private fun SettingsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Text("+${extraTime.roundToInt()} min", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Black)
+                EditableNumberValue(
+                    value = extraTime.toDouble(),
+                    decimals = 0,
+                    prefix = "+",
+                    suffix = "min",
+                    enabled = ruleControlsEnabled,
+                    min = 0.0,
+                    max = 20.0,
+                    onSaved = { extraTime = it.toFloat(); persistRules() }
+                )
             }
             Slider(
                 value = extraTime,
                 onValueChange = { extraTime = it },
                 onValueChangeFinished = { persistRules() },
-                valueRange = 0f..120f,
-                steps = 119,
+                valueRange = 0f..20f,
+                steps = 19,
                 enabled = ruleControlsEnabled
             )
             Text(
@@ -2398,6 +2928,28 @@ private fun SettingsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                EditableNumberValue(
+                    modifier = Modifier.weight(1f),
+                    label = tx(language, "Żółty od", "Yellow from", "Жовтий від", "Жёлтый от"),
+                    value = kmYellowRange.start.toDouble(), decimals = 2, suffix = "zł/km",
+                    enabled = ruleControlsEnabled, min = 0.0, max = 10.0,
+                    onSaved = { newValue ->
+                        kmYellowRange = newValue.toFloat().coerceAtMost(kmYellowRange.endInclusive)..kmYellowRange.endInclusive
+                        persistRules()
+                    }
+                )
+                EditableNumberValue(
+                    modifier = Modifier.weight(1f),
+                    label = tx(language, "Zielony od", "Green from", "Зелений від", "Зелёный от"),
+                    value = kmYellowRange.endInclusive.toDouble(), decimals = 2, suffix = "zł/km",
+                    enabled = ruleControlsEnabled, min = 0.0, max = 10.0,
+                    onSaved = { newValue ->
+                        kmYellowRange = kmYellowRange.start.coerceAtMost(newValue.toFloat())..newValue.toFloat()
+                        persistRules()
+                    }
+                )
+            }
             RangeSlider(
                 value = kmYellowRange,
                 onValueChange = { kmYellowRange = it },
@@ -2417,6 +2969,28 @@ private fun SettingsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                EditableNumberValue(
+                    modifier = Modifier.weight(1f),
+                    label = tx(language, "Żółty od", "Yellow from", "Жовтий від", "Жёлтый от"),
+                    value = hourYellowRange.start.toDouble(), decimals = 0, suffix = "zł/h",
+                    enabled = ruleControlsEnabled, min = 0.0, max = 100.0,
+                    onSaved = { newValue ->
+                        hourYellowRange = newValue.toFloat().coerceAtMost(hourYellowRange.endInclusive)..hourYellowRange.endInclusive
+                        persistRules()
+                    }
+                )
+                EditableNumberValue(
+                    modifier = Modifier.weight(1f),
+                    label = tx(language, "Zielony od", "Green from", "Зелений від", "Зелёный от"),
+                    value = hourYellowRange.endInclusive.toDouble(), decimals = 0, suffix = "zł/h",
+                    enabled = ruleControlsEnabled, min = 0.0, max = 100.0,
+                    onSaved = { newValue ->
+                        hourYellowRange = hourYellowRange.start.coerceAtMost(newValue.toFloat())..newValue.toFloat()
+                        persistRules()
+                    }
+                )
+            }
             RangeSlider(
                 value = hourYellowRange,
                 onValueChange = { hourYellowRange = it },
@@ -2438,7 +3012,10 @@ private fun SettingsScreen(
             )
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(tx(language, "Potrącenie", "Deduction", "Відрахування", "Удержание"), fontWeight = FontWeight.Bold)
-                Text("${String.format(Locale.ROOT, "%.1f", zusPercent)}%", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Black)
+                EditableNumberValue(
+                    value = zusPercent.toDouble(), decimals = 1, suffix = "%", enabled = zusEnabled, min = 0.0, max = 100.0,
+                    onSaved = { value -> zusPercent = value.toFloat(); prefs.zusPercent = value; saved() }
+                )
             }
             Slider(
                 value = zusPercent,
@@ -2481,6 +3058,21 @@ private fun SettingsScreen(
                 }
             )
 
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(
+                    onClick = { exportRestaurantsLauncher.launch("fujarne-restauracje.txt") },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(tx(language, "Eksport", "Export", "Експорт", "Экспорт"))
+                }
+                OutlinedButton(
+                    onClick = { importRestaurantsLauncher.launch(arrayOf("text/plain", "text/*")) },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(tx(language, "Import", "Import", "Імпорт", "Импорт"))
+                }
+            }
+
             BlacklistEditor(
                 language = language,
                 title = tx(language, "Fujarni odbiorcy", "Blocked customers", "Небажані клієнти", "Нежелательные получатели"),
@@ -2490,6 +3082,23 @@ private fun SettingsScreen(
                     customerBlacklist = entries
                     prefs.customerBlacklistText = BlacklistEntryCodec.serialize(entries)
                 }
+            )
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f))
+            BlacklistEditor(
+                language = language,
+                title = tx(language, "Zuchy z napiwkami ⭐", "Known tippers ⭐", "Клієнти з чайовими ⭐", "Клиенты с чаевыми ⭐"),
+                nameLabel = tx(language, "Nazwa / imię odbiorcy", "Customer name", "Ім'я клієнта", "Имя получателя"),
+                entries = tipperCustomers,
+                onEntriesChanged = { entries ->
+                    tipperCustomers = entries
+                    prefs.tipperCustomersText = BlacklistEntryCodec.serialize(entries)
+                }
+            )
+            Text(
+                tx(language, "Gdy odbiorca z tej listy pojawi się w ofercie, panel pokaże pozytywną informację o możliwym napiwku. Nie zmienia to automatycznie oceny opłacalności.", "When a customer from this list appears, the overlay shows a positive tipper notice. It does not automatically change profitability.", "Для клієнта з цього списку панель покаже позитивну позначку про чайові.", "Для клиента из этого списка панель покажет положительную отметку о чаевых."),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             Text(
@@ -2939,13 +3548,6 @@ private fun isAccessibilityServiceEnabled(context: Context): Boolean {
         ComponentName.unflattenFromString(entry) == expected
     }
 }
-
-private fun isBatteryUnrestricted(context: Context): Boolean {
-    val powerManager = context.getSystemService(PowerManager::class.java)
-    return runCatching { powerManager.isIgnoringBatteryOptimizations(context.packageName) }
-        .getOrDefault(false)
-}
-
 
 private fun tx(
     language: AppLanguage,

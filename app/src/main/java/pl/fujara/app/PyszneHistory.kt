@@ -633,6 +633,27 @@ class PyszneLogStore(context: Context) {
     fun saveDayReference(reference: PyszneDayReference) {
         val refs = allDayReferences().toMutableMap()
         val previous = refs[reference.date]
+
+        // Nie pozwalamy przejsciowemu/staremu ekranowi cofnac poprawnego podsumowania
+        // dnia. Pyszne moze w ciagu dnia zwiekszyc liczbe zlecen i kwote - taki
+        // odczyt przyjmujemy. Odczyt z mniejsza liczba zlecen jest ignorowany.
+        if (previous != null) {
+            val regressedCount = reference.orderCount < previous.orderCount
+            val suspiciousAmountDrop = reference.amountPln + 0.02 < previous.amountPln
+            if (regressedCount || suspiciousAmountDrop) {
+                val mergedIds = mergeOrderIds(previous.orderIds, reference.orderIds)
+                if (mergedIds != previous.orderIds) {
+                    refs[reference.date] = previous.copy(
+                        orderIds = mergedIds,
+                        capturedAtMillis = System.currentTimeMillis()
+                    )
+                    persistDayReferences(refs)
+                    reconcileEntryDatesToReferences(refs)
+                }
+                return
+            }
+        }
+
         refs[reference.date] = reference.copy(
             orderIds = mergeOrderIds(previous?.orderIds.orEmpty(), reference.orderIds),
             capturedAtMillis = System.currentTimeMillis()
@@ -811,14 +832,20 @@ data class PyszneRestaurantSummary(
     val goodOrders: Int,
     val borderlineOrders: Int,
     val poorOrders: Int,
-    val cancelledOrders: Int
+    val cancelledOrders: Int,
+    /** Dane konkretnego zlecenia - wpisy z tej samej restauracji nie sa juz laczone. */
+    val orderKey: String = "",
+    val orderId: String? = null,
+    val acceptedMinuteOfDay: Int? = null
 )
 
 data class PyszneDaySummary(
     val date: LocalDate,
     val orderCount: Int,
+    /** Przychod z Pyszne + recznie dodane napiwki gotowkowe. */
     val grossPln: Double,
     val distanceKm: Double,
+    /** Czas aktywnosci + recznie dodany postoj/przestoj. */
     val durationSeconds: Int,
     val netPln: Double,
     val netPerHour: Double?,
@@ -828,7 +855,9 @@ data class PyszneDaySummary(
     val borderlineOrders: Int,
     val poorOrders: Int,
     val cancelledOrders: Int,
-    val restaurants: List<PyszneRestaurantSummary>
+    val restaurants: List<PyszneRestaurantSummary>,
+    val cashTipsPln: Double = 0.0,
+    val extraPauseMinutes: Int = 0
 )
 
 object PyszneDaySummaryCalculator {
@@ -837,48 +866,58 @@ object PyszneDaySummaryCalculator {
         entries: List<PyszneDeliveryLog>,
         rules: ProfitabilityCalculator.Rules,
         decisionBasis: DecisionBasis,
-        zusPercent: Double
+        zusPercent: Double,
+        cashTipsPln: Double = 0.0,
+        extraPauseMinutes: Int = 0
     ): PyszneDaySummary {
         val daily = entries.filter { it.date == date }
-        val totalResult = profitabilityFor(daily, rules, decisionBasis, zusPercent)
+        val safeTips = cashTipsPln.takeIf { it.isFinite() }?.coerceAtLeast(0.0) ?: 0.0
+        val safePause = extraPauseMinutes.coerceIn(0, 240)
+        val totalResult = profitabilityFor(
+            daily,
+            rules,
+            decisionBasis,
+            zusPercent,
+            extraGrossPln = safeTips,
+            extraDurationSeconds = safePause * 60
+        )
         val orderStatuses = daily.map { entry ->
             profitabilityFor(listOf(entry), rules, decisionBasis, zusPercent).status
         }
 
-        val restaurants = daily
-            .groupBy { PyszneHistoryParser.normalizeRestaurant(it.restaurant).ifBlank { "nieznana restauracja" } }
-            .map { (_, group) ->
-                val result = profitabilityFor(group, rules, decisionBasis, zusPercent)
-                val statuses = group.map { entry ->
-                    profitabilityFor(listOf(entry), rules, decisionBasis, zusPercent).status
-                }
-                PyszneRestaurantSummary(
-                    name = group.first().restaurant.substringBefore(" (").trim().ifBlank { "Nieznana restauracja" },
-                    orderCount = group.size,
-                    grossPln = group.sumOf { it.amountPln },
-                    distanceKm = group.sumOf { it.distanceKm },
-                    durationSeconds = group.sumOf { it.durationSeconds },
-                    netPln = result.netPln,
-                    netPerHour = result.netPerHour,
-                    netPerKm = result.netPerKm,
-                    status = result.status,
-                    goodOrders = statuses.count { it == ProfitabilityStatus.PROFITABLE },
-                    borderlineOrders = statuses.count { it == ProfitabilityStatus.ALMOST_PROFITABLE },
-                    poorOrders = statuses.count { it == ProfitabilityStatus.UNPROFITABLE },
-                    cancelledOrders = group.count { it.cancelled }
-                )
-            }
-            .sortedWith(
-                compareByDescending<PyszneRestaurantSummary> { it.netPerHour ?: Double.NEGATIVE_INFINITY }
-                    .thenByDescending { it.orderCount }
+        // Kazde zlecenie pozostaje osobnym wierszem. Dwie dostawy z tej samej
+        // restauracji nie zlewaja sie juz w jedna statystyke.
+        val restaurants = daily.map { entry ->
+            val result = profitabilityFor(listOf(entry), rules, decisionBasis, zusPercent)
+            PyszneRestaurantSummary(
+                name = entry.restaurant.substringBefore(" (").trim().ifBlank { "Nieznana restauracja" },
+                orderCount = 1,
+                grossPln = entry.amountPln,
+                distanceKm = entry.distanceKm,
+                durationSeconds = entry.durationSeconds,
+                netPln = result.netPln,
+                netPerHour = result.netPerHour,
+                netPerKm = result.netPerKm,
+                status = result.status,
+                goodOrders = if (result.status == ProfitabilityStatus.PROFITABLE) 1 else 0,
+                borderlineOrders = if (result.status == ProfitabilityStatus.ALMOST_PROFITABLE) 1 else 0,
+                poorOrders = if (result.status == ProfitabilityStatus.UNPROFITABLE) 1 else 0,
+                cancelledOrders = if (entry.cancelled) 1 else 0,
+                orderKey = entry.key,
+                orderId = entry.orderId,
+                acceptedMinuteOfDay = entry.acceptedMinuteOfDay
             )
+        }.sortedWith(
+            compareByDescending<PyszneRestaurantSummary> { it.netPerHour ?: Double.NEGATIVE_INFINITY }
+                .thenByDescending { it.netPerKm ?: Double.NEGATIVE_INFINITY }
+        )
 
         return PyszneDaySummary(
             date = date,
             orderCount = daily.size,
-            grossPln = daily.sumOf { it.amountPln },
+            grossPln = daily.sumOf { it.amountPln } + safeTips,
             distanceKm = daily.sumOf { it.distanceKm },
-            durationSeconds = daily.sumOf { it.durationSeconds },
+            durationSeconds = daily.sumOf { it.durationSeconds } + safePause * 60,
             netPln = totalResult.netPln,
             netPerHour = totalResult.netPerHour,
             netPerKm = totalResult.netPerKm,
@@ -887,7 +926,9 @@ object PyszneDaySummaryCalculator {
             borderlineOrders = orderStatuses.count { it == ProfitabilityStatus.ALMOST_PROFITABLE },
             poorOrders = orderStatuses.count { it == ProfitabilityStatus.UNPROFITABLE },
             cancelledOrders = daily.count { it.cancelled },
-            restaurants = restaurants
+            restaurants = restaurants,
+            cashTipsPln = safeTips,
+            extraPauseMinutes = safePause
         )
     }
 
@@ -900,11 +941,13 @@ object PyszneDaySummaryCalculator {
         entries: List<PyszneDeliveryLog>,
         rules: ProfitabilityCalculator.Rules,
         decisionBasis: DecisionBasis,
-        zusPercent: Double
+        zusPercent: Double,
+        extraGrossPln: Double = 0.0,
+        extraDurationSeconds: Int = 0
     ): Profitability {
-        val gross = entries.sumOf { it.amountPln }
+        val gross = entries.sumOf { it.amountPln } + extraGrossPln
         val distance = entries.sumOf { it.distanceKm }
-        val durationSeconds = entries.sumOf { it.durationSeconds }.coerceAtLeast(0)
+        val durationSeconds = (entries.sumOf { it.durationSeconds } + extraDurationSeconds).coerceAtLeast(0)
 
         val vehicleCostPerKm = rules.vehicleCostPerKm.takeIf { it.isFinite() && it >= 0.0 } ?: 0.35
         val minimumPerKm = rules.minimumNetPerKm.takeIf { it.isFinite() && it >= 0.0 } ?: 2.50
@@ -1015,6 +1058,8 @@ fun PyszneDaySummary.shareText(nickname: String = ""): String {
         appendLine("📦 Zlecenia: $orderCount${if (cancelledOrders > 0) "  •  anulowane: $cancelledOrders" else ""}")
         appendLine("🚗 Dystans: ${String.format(locale, "%.1f", distanceKm)} km")
         appendLine("⏱ Czas: ${hours}h ${minutes}min")
+        if (cashTipsPln > 0.0) appendLine("💵 Napiwki gotówkowe: ${String.format(locale, "%.2f", cashTipsPln)} zł")
+        if (extraPauseMinutes > 0) appendLine("⏸ Dodatkowy przestój: ${extraPauseMinutes} min")
         appendLine()
         appendLine("⚡ PO KOSZTACH")
         appendLine("💵 ${String.format(locale, "%.0f", netPerHour ?: 0.0)} zł/h")
@@ -1026,7 +1071,7 @@ fun PyszneDaySummary.shareText(nickname: String = ""): String {
         if (best != null || worst != null) {
             appendLine()
             best?.let { appendLine("🏆 Najlepiej: ${it.name}") }
-            if (worst != null && worst.name != best?.name) appendLine("🪈 Najsłabiej: ${worst.name}")
+            if (worst != null && worst.orderKey != best?.orderKey) appendLine("🪈 Najsłabiej: ${worst.name}")
         }
         append("\n#FUJARA")
     }

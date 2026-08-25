@@ -45,7 +45,8 @@ object BlacklistMatcher {
     fun findHits(
         screenText: String,
         restaurantsRaw: String,
-        customersRaw: String
+        customersRaw: String,
+        tippersRaw: String = ""
     ): BlacklistHits {
         val lines = screenText
             .lines()
@@ -55,7 +56,8 @@ object BlacklistMatcher {
 
         return BlacklistHits(
             restaurant = findFirst(lines, BlacklistEntryCodec.parse(restaurantsRaw)),
-            customer = findFirst(lines, BlacklistEntryCodec.parse(customersRaw))
+            customer = findFirst(lines, BlacklistEntryCodec.parse(customersRaw)),
+            tipper = findFirst(lines, BlacklistEntryCodec.parse(tippersRaw))
         )
     }
 
