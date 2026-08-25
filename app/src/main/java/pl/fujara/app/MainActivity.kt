@@ -1697,8 +1697,8 @@ private fun PyszneSummaryScreen(
             ) {
                 val namedOrders = summary.restaurants
                     .filterNot { it.name.equals("Nieznana restauracja", ignoreCase = true) }
-                val best = namedOrders.maxByOrNull { it.netPerHour ?: Double.NEGATIVE_INFINITY }
-                val worst = namedOrders.minByOrNull { it.netPerHour ?: Double.POSITIVE_INFINITY }
+                val best = bestPyszneOrderForDay(namedOrders)
+                val worst = worstPyszneOrderForDay(namedOrders)
 
                 if (best != null || worst != null) {
                     Surface(
@@ -1711,8 +1711,8 @@ private fun PyszneSummaryScreen(
                                 Text(
                                     tx(
                                         language,
-                                        "Najlepsze: ${item.name} · ${String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł/h", item.netPerHour ?: 0.0)} · ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł/km", item.netPerKm ?: 0.0)}",
-                                        "Best: ${item.name} · ${String.format(Locale.US, "%.0f PLN/h", item.netPerHour ?: 0.0)} · ${String.format(Locale.US, "%.2f PLN/km", item.netPerKm ?: 0.0)}",
+                                        "Najlepsze: ${item.name} · ${String.format(Locale.forLanguageTag("pl-PL"), "%.1f zł/h", item.netPerHour ?: 0.0)} · ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł/km", item.netPerKm ?: 0.0)}",
+                                        "Best: ${item.name} · ${String.format(Locale.US, "%.1f PLN/h", item.netPerHour ?: 0.0)} · ${String.format(Locale.US, "%.2f PLN/km", item.netPerKm ?: 0.0)}",
                                         "Найкраще: ${item.name}",
                                         "Лучшее: ${item.name}"
                                     ),
@@ -1724,8 +1724,8 @@ private fun PyszneSummaryScreen(
                                 Text(
                                     tx(
                                         language,
-                                        "Najsłabsze: ${worst.name} · ${String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł/h", worst.netPerHour ?: 0.0)} · ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł/km", worst.netPerKm ?: 0.0)}",
-                                        "Weakest: ${worst.name} · ${String.format(Locale.US, "%.0f PLN/h", worst.netPerHour ?: 0.0)} · ${String.format(Locale.US, "%.2f PLN/km", worst.netPerKm ?: 0.0)}",
+                                        "Najsłabsze: ${worst.name} · ${String.format(Locale.forLanguageTag("pl-PL"), "%.1f zł/h", worst.netPerHour ?: 0.0)} · ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł/km", worst.netPerKm ?: 0.0)}",
+                                        "Weakest: ${worst.name} · ${String.format(Locale.US, "%.1f PLN/h", worst.netPerHour ?: 0.0)} · ${String.format(Locale.US, "%.2f PLN/km", worst.netPerKm ?: 0.0)}",
                                         "Найслабше: ${worst.name}",
                                         "Самое слабое: ${worst.name}"
                                     ),
@@ -3239,7 +3239,7 @@ private fun CompactRestaurantRow(
                         restaurant.acceptedMinuteOfDay?.let { minute ->
                             append(String.format(Locale.ROOT, "%02d:%02d · ", minute / 60, minute % 60))
                         }
-                        append(String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł/h", restaurant.netPerHour ?: 0.0))
+                        append(String.format(Locale.forLanguageTag("pl-PL"), "%.1f zł/h", restaurant.netPerHour ?: 0.0))
                         append(" · ")
                         append(String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł/km", restaurant.netPerKm ?: 0.0))
                         if (restaurant.cancelledOrders > 0) append(" · ${restaurant.cancelledOrders} anul.")
@@ -3315,7 +3315,7 @@ private fun AnimatedRestaurantSummaryCard(
                 RestaurantMiniMetric(
                     modifier = Modifier.weight(1f),
                     label = "PLN/H",
-                    value = String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł/h", restaurant.netPerHour ?: 0.0)
+                    value = String.format(Locale.forLanguageTag("pl-PL"), "%.1f zł/h", restaurant.netPerHour ?: 0.0)
                 )
                 RestaurantMiniMetric(
                     modifier = Modifier.weight(1f),

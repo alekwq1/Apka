@@ -7,6 +7,7 @@ import java.security.MessageDigest
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.math.roundToInt
 
 /**
  * Minimalny zapis historii Pyszne potrzebny do podsumowan.
@@ -846,6 +847,28 @@ data class PyszneRestaurantSummary(
     val orderId: String? = null,
     val acceptedMinuteOfDay: Int? = null
 )
+
+/**
+ * Ranking na ekranie dnia korzysta z tej samej precyzji, ktora widzi uzytkownik.
+ * Gdy dwa zlecenia maja takie samo PLN/h po zaokragleniu do 0,1, rozstrzyga PLN/km.
+ */
+private fun displayedHourlyTenths(value: Double): Int = (value * 10.0).roundToInt()
+
+internal fun bestPyszneOrderForDay(orders: List<PyszneRestaurantSummary>): PyszneRestaurantSummary? =
+    orders
+        .filter { it.netPerHour != null }
+        .maxWithOrNull(
+            compareBy<PyszneRestaurantSummary> { displayedHourlyTenths(it.netPerHour!!) }
+                .thenBy { it.netPerKm ?: Double.NEGATIVE_INFINITY }
+        )
+
+internal fun worstPyszneOrderForDay(orders: List<PyszneRestaurantSummary>): PyszneRestaurantSummary? =
+    orders
+        .filter { it.netPerHour != null }
+        .minWithOrNull(
+            compareBy<PyszneRestaurantSummary> { displayedHourlyTenths(it.netPerHour!!) }
+                .thenBy { it.netPerKm ?: Double.POSITIVE_INFINITY }
+        )
 
 data class PyszneDaySummary(
     val date: LocalDate,

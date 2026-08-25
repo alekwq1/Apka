@@ -432,3 +432,45 @@ class PyszneDaySummaryCalculatorTest {
         assertEquals(20 * 60, summary.restaurants.single().durationSeconds)
     }
 }
+
+
+class PyszneDayOrderRankingTest {
+    private fun order(
+        name: String,
+        netPerHour: Double,
+        netPerKm: Double,
+        orderKey: String = name
+    ) = PyszneRestaurantSummary(
+        name = name,
+        orderCount = 1,
+        grossPln = 20.0,
+        distanceKm = 5.0,
+        durationSeconds = 20 * 60,
+        netPln = 18.0,
+        netPerHour = netPerHour,
+        netPerKm = netPerKm,
+        status = ProfitabilityStatus.ALMOST_PROFITABLE,
+        goodOrders = 0,
+        borderlineOrders = 1,
+        poorOrders = 0,
+        cancelledOrders = 0,
+        orderKey = orderKey
+    )
+
+    @Test
+    fun weakestUsesPerKmWhenDisplayedHourlyRateIsTheSame() {
+        val bursztyn = order("Bar Bursztyn", netPerHour = 41.04, netPerKm = 3.57)
+        val friends = order("Friends Kebab", netPerHour = 41.03, netPerKm = 3.01)
+
+        assertEquals("Friends Kebab", worstPyszneOrderForDay(listOf(bursztyn, friends))?.name)
+    }
+
+    @Test
+    fun hourlyRateStillHasPriorityWhenDisplayedTenthsDiffer() {
+        val bursztyn = order("Bar Bursztyn", netPerHour = 40.94, netPerKm = 3.57)
+        val friends = order("Friends Kebab", netPerHour = 41.04, netPerKm = 3.01)
+
+        assertEquals("Bar Bursztyn", worstPyszneOrderForDay(listOf(bursztyn, friends))?.name)
+        assertEquals("Friends Kebab", bestPyszneOrderForDay(listOf(bursztyn, friends))?.name)
+    }
+}
