@@ -41,8 +41,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -87,6 +90,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -94,6 +98,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -795,15 +800,6 @@ private fun HomeScreen(
             onOpenDay = onPyszneSummary
         )
 
-        CashTipDuringShiftCard(
-            currentTips = liveCashTips,
-            language = language,
-            onAdd = { amount ->
-                adjustmentsStore.addCashTip(today, amount)
-                refreshToken += 1
-            }
-        )
-
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             BankMetricCard(
                 modifier = Modifier.weight(1f),
@@ -830,6 +826,15 @@ private fun HomeScreen(
                 language = language
             )
         }
+
+        CashTipDuringShiftCard(
+            currentTips = liveCashTips,
+            language = language,
+            onAdd = { amount ->
+                adjustmentsStore.addCashTip(today, amount)
+                refreshToken += 1
+            }
+        )
 
         SectionHeader(
             title = tx(language, "Tryb pracy", "Work mode", "Режим роботи", "Режим работы"),
@@ -891,7 +896,19 @@ private fun CashTipDuringShiftCard(
     onAdd: (Double) -> Unit
 ) {
     var customTip by remember { mutableStateOf("") }
+    var pendingTip by remember { mutableStateOf<Double?>(null) }
     val parsedCustom = customTip.replace(',', '.').toDoubleOrNull()?.takeIf { it > 0.0 }
+    val focusManager = LocalFocusManager.current
+    val imeVisible = WindowInsets.isImeVisible
+    var keyboardWasVisible by remember { mutableStateOf(false) }
+
+    LaunchedEffect(imeVisible) {
+        if (keyboardWasVisible && !imeVisible) {
+            focusManager.clearFocus(force = true)
+            if (pendingTip == null) customTip = ""
+        }
+        keyboardWasVisible = imeVisible
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -906,7 +923,7 @@ private fun CashTipDuringShiftCard(
                         fontWeight = FontWeight.Black
                     )
                     Text(
-                        tx(language, "Zapisuje się od razu w trakcie zmiany", "Saved immediately during the shift", "Зберігається одразу під час зміни", "Сохраняется сразу во время смены"),
+                        tx(language, "Dodaj po sprawdzeniu kwoty — przed zapisem poproszę o potwierdzenie.", "Add it after checking the amount — FUJARA asks for confirmation before saving.", "Перед збереженням буде підтвердження.", "Перед сохранением будет подтверждение."),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -920,7 +937,10 @@ private fun CashTipDuringShiftCard(
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(5.0, 10.0, 20.0).forEach { amount ->
                     OutlinedButton(
-                        onClick = { onAdd(amount) },
+                        onClick = {
+                            pendingTip = amount
+                            focusManager.clearFocus(force = true)
+                        },
                         modifier = Modifier.weight(1f)
                     ) {
                         Text("+${amount.toInt()} zł", fontWeight = FontWeight.Bold)
@@ -935,16 +955,67 @@ private fun CashTipDuringShiftCard(
                     label = { Text(tx(language, "Inna kwota", "Other amount", "Інша сума", "Другая сумма")) },
                     suffix = { Text("zł") },
                     singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = {
+                        parsedCustom?.let { pendingTip = it }
+                        focusManager.clearFocus(force = true)
+                    })
                 )
                 Button(
                     onClick = {
-                        parsedCustom?.let(onAdd)
-                        customTip = ""
+                        pendingTip = parsedCustom
+                        focusManager.clearFocus(force = true)
                     },
                     enabled = parsedCustom != null
                 ) {
                     Text(tx(language, "Dodaj", "Add", "Додати", "Добавить"))
+                }
+            }
+        }
+    }
+
+    pendingTip?.let { amount ->
+        Dialog(onDismissRequest = { pendingTip = null }) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface
+            ) {
+                Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    BrandEyebrow(tx(language, "POTWIERDŹ NAPIWEK", "CONFIRM TIP", "ПІДТВЕРДІТЬ ЧАЙОВІ", "ПОДТВЕРДИТЕ ЧАЕВЫЕ"))
+                    Text(
+                        tx(language, "Dodać ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", amount)}?", "Add ${String.format(Locale.US, "%.2f PLN", amount)}?", "Додати чайові?", "Добавить чаевые?"),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Black
+                    )
+                    Text(
+                        tx(
+                            language,
+                            "Po zatwierdzeniu napiwki dnia wyniosą ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", currentTips + amount)}.",
+                            "After confirmation, today's cash tips will total ${String.format(Locale.US, "%.2f PLN", currentTips + amount)}.",
+                            "Після підтвердження сума чайових оновиться.",
+                            "После подтверждения сумма чаевых обновится."
+                        ),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedButton(
+                            onClick = { pendingTip = null },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(tx(language, "Anuluj", "Cancel", "Скасувати", "Отмена"))
+                        }
+                        Button(
+                            onClick = {
+                                onAdd(amount)
+                                customTip = ""
+                                pendingTip = null
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(tx(language, "Potwierdź", "Confirm", "Підтвердити", "Подтвердить"))
+                        }
+                    }
                 }
             }
         }
@@ -1335,6 +1406,13 @@ private fun PyszneSummaryScreen(
     onAnalysis: () -> Unit
 ) {
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
+    val imeVisible = WindowInsets.isImeVisible
+    var keyboardWasVisible by remember { mutableStateOf(false) }
+    LaunchedEffect(imeVisible) {
+        if (keyboardWasVisible && !imeVisible) focusManager.clearFocus(force = true)
+        keyboardWasVisible = imeVisible
+    }
     val store = remember { PyszneLogStore(context) }
     var refreshToken by remember { mutableStateOf(0) }
     val entries = remember(refreshToken) { store.all() }
@@ -1434,6 +1512,7 @@ private fun PyszneSummaryScreen(
     var confirmDelete by remember { mutableStateOf(false) }
     var isCalculating by remember { mutableStateOf(false) }
     var calculationRequest by remember { mutableStateOf(0) }
+    var calculationStage by remember { mutableStateOf(0) }
     var showCelebration by remember { mutableStateOf(false) }
     var showAllRestaurants by remember { mutableStateOf(false) }
     var selectedOrder by remember { mutableStateOf<PyszneRestaurantSummary?>(null) }
@@ -1442,6 +1521,7 @@ private fun PyszneSummaryScreen(
     LaunchedEffect(selectedDate, sourceSignature, settingsSignature, cashTips, extraPauseMinutes, storedResult?.confirmedAtMillis) {
         showResult = snapshotMatches
         isCalculating = false
+        calculationStage = 0
         validationMessage = if (storedResult != null && !snapshotMatches) {
             tx(
                 language,
@@ -1468,19 +1548,37 @@ private fun PyszneSummaryScreen(
 
     LaunchedEffect(calculationRequest, selectedDate) {
         if (calculationRequest <= 0 || !isCalculating) return@LaunchedEffect
-        delay(650)
+        calculationStage = 1
+        delay(320)
+        if (!isCalculating) return@LaunchedEffect
+        calculationStage = 2
+        delay(360)
+        if (!isCalculating) return@LaunchedEffect
+        calculationStage = 3
+        delay(360)
+        if (!isCalculating) return@LaunchedEffect
+        calculationStage = 4
+        delay(320)
         if (isCalculating) {
             resultStore.save(summary.toSnapshot(sourceSignature, settingsSignature))
             showResult = true
             showCelebration = true
+            delay(140)
             isCalculating = false
+            calculationStage = 0
             refreshToken += 1
         }
     }
 
     val calculationProgress by animateFloatAsState(
-        targetValue = if (isCalculating) 1f else 0f,
-        animationSpec = tween(durationMillis = 1650),
+        targetValue = when (calculationStage) {
+            1 -> 0.24f
+            2 -> 0.52f
+            3 -> 0.80f
+            4 -> 1f
+            else -> 0f
+        },
+        animationSpec = tween(durationMillis = 280),
         label = "pyszne_calculation_progress"
     )
 
@@ -1522,6 +1620,59 @@ private fun PyszneSummaryScreen(
             style = MaterialTheme.typography.bodyLarge
         )
 
+        val currentDateIndex = availableDates.indexOf(selectedDate)
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(18.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+        ) {
+            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            focusManager.clearFocus(force = true)
+                            val older = availableDates.getOrNull(currentDateIndex + 1)
+                            if (older != null) selectedDate = older
+                        },
+                        enabled = currentDateIndex in 0 until (availableDates.size - 1)
+                    ) { Text("‹") }
+
+                    Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            formatSummaryDate(selectedDate, language),
+                            textAlign = TextAlign.Center,
+                            fontWeight = FontWeight.Black
+                        )
+                        Text(
+                            tx(
+                                language,
+                                "Dzień ${(currentDateIndex + 1).coerceAtLeast(1)} z ${availableDates.size.coerceAtLeast(1)} · możesz też przesunąć ekran ← →",
+                                "Day ${(currentDateIndex + 1).coerceAtLeast(1)} of ${availableDates.size.coerceAtLeast(1)} · you can also swipe ← →",
+                                "День ${(currentDateIndex + 1).coerceAtLeast(1)} з ${availableDates.size.coerceAtLeast(1)} · можна гортати ← →",
+                                "День ${(currentDateIndex + 1).coerceAtLeast(1)} из ${availableDates.size.coerceAtLeast(1)} · можно листать ← →"
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            focusManager.clearFocus(force = true)
+                            val newer = availableDates.getOrNull(currentDateIndex - 1)
+                            if (newer != null) selectedDate = newer
+                        },
+                        enabled = currentDateIndex > 0
+                    ) { Text("›") }
+                }
+            }
+        }
+
         Surface(
             modifier = Modifier.fillMaxWidth().clickable { verificationExpanded = !verificationExpanded },
             shape = RoundedCornerShape(18.dp),
@@ -1555,37 +1706,6 @@ private fun PyszneSummaryScreen(
             step = "1 / ZAPISY",
             title = tx(language, "Zebrane dostawy", "Saved deliveries", "Збережені доставки", "Сохранённые доставки")
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedButton(
-                    onClick = {
-                        val currentIndex = availableDates.indexOf(selectedDate)
-                        val older = availableDates.getOrNull(currentIndex + 1)
-                        if (older != null) selectedDate = older
-                    },
-                    enabled = availableDates.indexOf(selectedDate) in 0 until (availableDates.size - 1)
-                ) { Text("‹") }
-
-                Text(
-                    text = formatSummaryDate(selectedDate, language),
-                    modifier = Modifier.weight(1f),
-                    textAlign = TextAlign.Center,
-                    fontWeight = FontWeight.Bold
-                )
-
-                OutlinedButton(
-                    onClick = {
-                        val currentIndex = availableDates.indexOf(selectedDate)
-                        val newer = availableDates.getOrNull(currentIndex - 1)
-                        if (newer != null) selectedDate = newer
-                    },
-                    enabled = availableDates.indexOf(selectedDate) > 0
-                ) { Text("›") }
-            }
-
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 SummarySmallMetric(
                     modifier = Modifier.weight(1f),
@@ -1856,7 +1976,9 @@ private fun PyszneSummaryScreen(
                     modifier = Modifier.weight(1f),
                     label = { Text(tx(language, "Napiwek gotówkowy", "Cash tips", "Чайові", "Чаевые")) },
                     suffix = { Text("zł") },
-                    singleLine = true
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus(force = true) })
                 )
                 OutlinedTextField(
                     value = extraPauseText,
@@ -1864,7 +1986,9 @@ private fun PyszneSummaryScreen(
                     modifier = Modifier.weight(1f),
                     label = { Text(tx(language, "Przestój", "Downtime", "Простій", "Простой")) },
                     suffix = { Text("min") },
-                    singleLine = true
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus(force = true) })
                 )
             }
             if (snapshotMatches) {
@@ -1916,11 +2040,13 @@ private fun PyszneSummaryScreen(
                         }
                         showResult = false
                         showCelebration = false
+                        calculationStage = 1
                         isCalculating = true
                         calculationRequest += 1
                     } else {
                         showResult = false
                         isCalculating = false
+                        calculationStage = 0
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),
@@ -1958,10 +2084,11 @@ private fun PyszneSummaryScreen(
                         )
                         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                             Text(
-                                when {
-                                    calculationProgress < 0.34f -> tx(language, "Sumuję kilometry i czas…", "Adding distance and time…", "Підсумовую відстань і час…", "Считаю километры и время…")
-                                    calculationProgress < 0.70f -> tx(language, "Liczę zł/h i zł/km…", "Calculating hourly and per-km rates…", "Рахую ставки…", "Считаю ставки…")
-                                    else -> tx(language, "Porównuję restauracje…", "Comparing restaurants…", "Порівнюю ресторани…", "Сравниваю рестораны…")
+                                when (calculationStage) {
+                                    1 -> tx(language, "Sprawdzam kompletność dnia…", "Checking day completeness…", "Перевіряю повноту дня…", "Проверяю полноту дня…")
+                                    2 -> tx(language, "Przeliczam koszty, czas i kilometry…", "Calculating costs, time and distance…", "Рахую витрати, час і відстань…", "Считаю расходы, время и расстояние…")
+                                    3 -> tx(language, "Wyliczam PLN/h i PLN/km…", "Calculating PLN/h and PLN/km…", "Рахую PLN/h і PLN/km…", "Считаю PLN/h и PLN/km…")
+                                    else -> tx(language, "Porównuję zlecenia i składam podsumowanie…", "Comparing orders and preparing the summary…", "Порівнюю замовлення й готую підсумок…", "Сравниваю заказы и готовлю итог…")
                                 },
                                 fontWeight = FontWeight.Bold
                             )
@@ -2023,38 +2150,24 @@ private fun PyszneSummaryScreen(
                 val worst = worstPyszneOrderForDay(namedOrders)
 
                 if (best != null || worst != null) {
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(14.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            best?.let { item ->
-                                Text(
-                                    tx(
-                                        language,
-                                        "Najlepsze: ${item.name} · ${String.format(Locale.forLanguageTag("pl-PL"), "%.1f zł/h", item.netPerHour ?: 0.0)} · ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł/km", item.netPerKm ?: 0.0)}",
-                                        "Best: ${item.name} · ${String.format(Locale.US, "%.1f PLN/h", item.netPerHour ?: 0.0)} · ${String.format(Locale.US, "%.2f PLN/km", item.netPerKm ?: 0.0)}",
-                                        "Найкраще: ${item.name}",
-                                        "Лучшее: ${item.name}"
-                                    ),
-                                    fontWeight = FontWeight.Black,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                            if (worst != null && worst.orderKey != best?.orderKey) {
-                                Text(
-                                    tx(
-                                        language,
-                                        "Najsłabsze: ${worst.name} · ${String.format(Locale.forLanguageTag("pl-PL"), "%.1f zł/h", worst.netPerHour ?: 0.0)} · ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł/km", worst.netPerKm ?: 0.0)}",
-                                        "Weakest: ${worst.name} · ${String.format(Locale.US, "%.1f PLN/h", worst.netPerHour ?: 0.0)} · ${String.format(Locale.US, "%.2f PLN/km", worst.netPerKm ?: 0.0)}",
-                                        "Найслабше: ${worst.name}",
-                                        "Самое слабое: ${worst.name}"
-                                    ),
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.tertiary
-                                )
-                            }
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        best?.let { item ->
+                            FeaturedDayOrderRow(
+                                label = tx(language, "Najlepsze zlecenie", "Best order", "Найкраще замовлення", "Лучший заказ"),
+                                order = item,
+                                language = language,
+                                accent = MaterialTheme.colorScheme.primary,
+                                onClick = { selectedOrder = item }
+                            )
+                        }
+                        if (worst != null && worst.orderKey != best?.orderKey) {
+                            FeaturedDayOrderRow(
+                                label = tx(language, "Najsłabsze zlecenie", "Weakest order", "Найслабше замовлення", "Самый слабый заказ"),
+                                order = worst,
+                                language = language,
+                                accent = MaterialTheme.colorScheme.tertiary,
+                                onClick = { selectedOrder = worst }
+                            )
                         }
                     }
                 }
@@ -2077,7 +2190,7 @@ private fun PyszneSummaryScreen(
             }
 
             SectionCard(
-                step = "SHARE",
+                step = tx(language, "UDOSTĘPNIJ", "SHARE", "ПОДІЛИТИСЯ", "ПОДЕЛИТЬСЯ"),
                 title = tx(language, "Podziel się wynikiem", "Share your result", "Поділитися результатом", "Поделиться результатом")
             ) {
                 OutlinedTextField(
@@ -2085,7 +2198,9 @@ private fun PyszneSummaryScreen(
                     onValueChange = { nickname = it.take(32) },
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text(tx(language, "Nick do wyniku (opcjonalnie)", "Nickname (optional)", "Нік (необов'язково)", "Ник (необязательно)")) },
-                    singleLine = true
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus(force = true) })
                 )
                 Button(
                     onClick = {
@@ -2107,10 +2222,10 @@ private fun PyszneSummaryScreen(
                 Text(
                     tx(
                         language,
-                        "Ta wersja udostępnia gotowy wynik przez system Android. Wspólny ranking online wymaga osobnego backendu i zgody użytkownika na wysyłanie danych.",
-                        "This version shares a ready result through Android. A shared online leaderboard needs a backend and explicit user consent for uploading data.",
-                        "Ця версія ділиться готовим результатом через Android. Спільний онлайн-рейтинг потребує backend та згоди користувача.",
-                        "Эта версия делится готовым результатом через Android. Общий онлайн-рейтинг требует backend и согласия пользователя."
+                        "Udostępniany raport zawiera wynik po kosztach, tempo, dystans, czas, ocenę zleceń oraz najlepsze i najsłabsze zlecenie.",
+                        "The shared report includes profit after costs, pace, distance, time, order ratings, and the best and weakest order.",
+                        "Звіт містить результат після витрат, темп, відстань, час і оцінку замовлень.",
+                        "Отчёт содержит результат после расходов, темп, расстояние, время и оценку заказов."
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -2172,12 +2287,26 @@ private fun ProfessionalDayResultDialog(
 ) {
     val context = LocalContext.current
     val accent = summaryStatusColor(summary.status)
+    var revealed by remember(summary.date, summary.orderCount, summary.grossPln) { mutableStateOf(false) }
     LaunchedEffect(summary.date, summary.orderCount, summary.grossPln) {
+        revealed = false
+        delay(90)
+        revealed = true
         vibrateCelebrationStage(context, summary.status, 1)
     }
+    val reveal by animateFloatAsState(
+        targetValue = if (revealed) 1f else 0f,
+        animationSpec = tween(durationMillis = 520),
+        label = "professional_day_result_reveal"
+    )
     Dialog(onDismissRequest = onDismiss) {
         Surface(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().graphicsLayer {
+                alpha = reveal
+                scaleX = 0.92f + reveal * 0.08f
+                scaleY = 0.92f + reveal * 0.08f
+                translationY = (1f - reveal) * 18f
+            },
             shape = RoundedCornerShape(24.dp),
             color = MaterialTheme.colorScheme.surface
         ) {
@@ -2264,6 +2393,22 @@ private fun PyszneOrderDetailsDialog(
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     SummarySmallMetric(Modifier.weight(1f), tx(language, "DYSTANS", "DISTANCE", "ВІДСТАНЬ", "РАССТОЯНИЕ"), String.format(Locale.forLanguageTag("pl-PL"), "%.1f km", order.distanceKm))
                     SummarySmallMetric(Modifier.weight(1f), tx(language, "CZAS", "TIME", "ЧАС", "ВРЕМЯ"), formatDuration(order.durationSeconds))
+                }
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    color = summaryStatusColor(order.status).copy(alpha = 0.10f)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(tx(language, "Wynik po kosztach", "Result after costs", "Результат після витрат", "Результат после расходов"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(String.format(Locale.forLanguageTag("pl-PL"), "%+.2f zł", order.netPln), fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleMedium)
+                        }
+                        StatusPill(summaryStatusLabel(order.status, language), summaryStatusColor(order.status))
+                    }
                 }
                 if (order.cancelledOrders > 0) {
                     Text(tx(language, "Zlecenie anulowane", "Cancelled order", "Замовлення скасовано", "Заказ отменён"), color = MaterialTheme.colorScheme.tertiary, fontWeight = FontWeight.Bold)
@@ -3377,8 +3522,31 @@ private fun DayResultHeroCard(
     showResult: Boolean
 ) {
     val accent = summaryStatusColor(summary.status)
+    var revealed by remember(summary.date, summary.orderCount, summary.netPln) { mutableStateOf(false) }
+    LaunchedEffect(showResult, summary.date, summary.netPln) {
+        if (showResult) {
+            revealed = false
+            delay(70)
+            revealed = true
+        } else {
+            revealed = false
+        }
+    }
+    val reveal by animateFloatAsState(
+        targetValue = if (revealed) 1f else 0f,
+        animationSpec = tween(durationMillis = 560),
+        label = "day_result_reveal"
+    )
+
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                alpha = reveal
+                translationY = (1f - reveal) * 22f
+                scaleX = 0.95f + reveal * 0.05f
+                scaleY = 0.95f + reveal * 0.05f
+            },
         shape = RoundedCornerShape(28.dp),
         colors = CardDefaults.cardColors(containerColor = bankInk())
     ) {
@@ -3405,8 +3573,13 @@ private fun DayResultHeroCard(
 
             AnimatedMoneyValue(
                 value = summary.netPln,
-                visible = showResult,
+                visible = revealed,
                 color = Color.White
+            )
+            Text(
+                tx(language, "zysk po uwzględnieniu kosztów", "profit after costs", "прибуток після витрат", "прибыль после расходов"),
+                color = Color(0xFF9EA3AD),
+                style = MaterialTheme.typography.bodySmall
             )
 
             HorizontalDivider(color = Color(0xFF34373E))
@@ -3433,7 +3606,13 @@ private fun DayResultHeroCard(
                 Text(formatDuration(summary.durationSeconds), color = Color(0xFF9EA3AD), style = MaterialTheme.typography.bodySmall)
             }
             Text(
-                "● ${summary.goodOrders}   ● ${summary.borderlineOrders}   ● ${summary.poorOrders}",
+                tx(
+                    language,
+                    "Opłacalne ${summary.goodOrders} · Na granicy ${summary.borderlineOrders} · Nieopłacalne ${summary.poorOrders}",
+                    "Profitable ${summary.goodOrders} · Borderline ${summary.borderlineOrders} · Unprofitable ${summary.poorOrders}",
+                    "Вигідні ${summary.goodOrders} · На межі ${summary.borderlineOrders} · Невигідні ${summary.poorOrders}",
+                    "Выгодные ${summary.goodOrders} · На грани ${summary.borderlineOrders} · Невыгодные ${summary.poorOrders}"
+                ),
                 color = Color(0xFFB7BAC2),
                 fontWeight = FontWeight.Bold,
                 style = MaterialTheme.typography.bodySmall
@@ -3485,7 +3664,7 @@ private fun HourlyPerformanceChart(
                 orders = hourOrders.sortedBy { it.acceptedMinuteOfDay }
             )
         }
-    var selectedHour by remember(points) { mutableStateOf(points.lastOrNull()?.hour) }
+    var selectedHour by remember(points) { mutableStateOf<Int?>(null) }
     val maxValue = points.mapNotNull { it.netPerHour }.maxOfOrNull { abs(it) }?.coerceAtLeast(1.0) ?: 1.0
 
     if (points.isEmpty()) {
@@ -3524,7 +3703,7 @@ private fun HourlyPerformanceChart(
                 else -> MaterialTheme.colorScheme.tertiary
             }
             Surface(
-                modifier = Modifier.fillMaxWidth().clickable { selectedHour = point.hour },
+                modifier = Modifier.fillMaxWidth().clickable { selectedHour = if (selectedHour == point.hour) null else point.hour },
                 shape = RoundedCornerShape(16.dp),
                 color = if (selected) accent.copy(alpha = 0.10f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)
             ) {
@@ -3539,6 +3718,11 @@ private fun HourlyPerformanceChart(
                             String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł/h", value),
                             fontWeight = FontWeight.Black,
                             color = accent
+                        )
+                        Text(
+                            if (selected) "  ⌃" else "  ⌄",
+                            fontWeight = FontWeight.Black,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     androidx.compose.material3.LinearProgressIndicator(
@@ -3569,7 +3753,7 @@ private fun HourlyPerformanceChart(
         }
 
         Text(
-            tx(language, "Każdy wiersz to jedna godzina pracy. Kolor i pasek pokazują tempo PLN/h, a po dotknięciu widać zlecenia z tej godziny.", "Each row is one work hour. The bar shows PLN/h pace; tap it to see the orders from that hour.", "Кожен рядок — одна година роботи; натисніть, щоб побачити замовлення.", "Каждая строка — один час работы; нажмите, чтобы увидеть заказы."),
+            tx(language, "Każdy wiersz to jedna godzina pracy. Dotknij godziny, aby rozwinąć zlecenia; dotknij jej ponownie, aby zwinąć.", "Each row is one work hour. Tap an hour to expand its orders; tap it again to collapse.", "Натисніть годину, щоб розгорнути замовлення, і ще раз — щоб згорнути.", "Нажмите час, чтобы развернуть заказы, и ещё раз — чтобы свернуть."),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -3636,6 +3820,38 @@ private fun CompactRestaurantRow(
                 )
             }
             StatusPill(summaryStatusLabel(restaurant.status, language), summaryStatusColor(restaurant.status))
+        }
+    }
+}
+
+@Composable
+private fun FeaturedDayOrderRow(
+    label: String,
+    order: PyszneRestaurantSummary,
+    language: AppLanguage,
+    accent: Color,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = RoundedCornerShape(16.dp),
+        color = accent.copy(alpha = 0.09f)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(label, style = MaterialTheme.typography.labelSmall, color = accent, fontWeight = FontWeight.Black)
+                Text(order.name, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    "${String.format(Locale.forLanguageTag("pl-PL"), "%.1f zł/h", order.netPerHour ?: 0.0)} · ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł/km", order.netPerKm ?: 0.0)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Text(tx(language, "Szczegóły ›", "Details ›", "Деталі ›", "Детали ›"), color = accent, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
         }
     }
 }
@@ -4863,7 +5079,7 @@ private fun SettingsScreen(
         TextButton(onClick = { uriHandler.openUri("https://alekwq1.github.io/Apka/privacy.html") }, modifier = Modifier.fillMaxWidth()) {
             Text(tx(language, "Polityka prywatności", "Privacy policy", "Політика конфіденційності", "Политика конфиденциальности"))
         }
-        Text("FUJARA 0.8.17", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+        Text("FUJARA 0.8.18", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
     }
 }
 
