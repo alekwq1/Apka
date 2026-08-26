@@ -15,7 +15,8 @@ class AppBackupManager(private val context: Context) {
     private val preferenceNames = listOf(
         "delivery_assistant",
         "pyszne_delivery_history",
-        "pyszne_confirmed_results"
+        "pyszne_confirmed_results",
+        PyszneDayAdjustmentsStore.PREFS_NAME
     )
 
     private val backupDir: File

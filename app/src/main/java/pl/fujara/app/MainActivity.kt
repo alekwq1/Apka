@@ -24,6 +24,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.Arrangement
@@ -86,6 +87,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.graphics.Color
@@ -127,6 +129,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             var languageCode by remember { mutableStateOf(prefs.languageCode) }
             var themeMode by remember { mutableStateOf(prefs.themeMode) }
+            var requestedDayDate by remember { mutableStateOf<LocalDate?>(null) }
             var screen by remember {
                 mutableStateOf(
                     when {
@@ -191,18 +194,44 @@ class MainActivity : ComponentActivity() {
                         screen == AppScreen.SETTINGS
 
                     if (isMainScreen) {
+                        val mainScreens = listOf(
+                            AppScreen.HOME,
+                            AppScreen.PYSZNE_SUMMARY,
+                            AppScreen.ANALYSIS,
+                            AppScreen.SETTINGS
+                        )
+                        val initialMainPage = mainScreens.indexOf(screen).coerceAtLeast(0)
+                        val mainPagerState = rememberPagerState(
+                            initialPage = initialMainPage,
+                            pageCount = { mainScreens.size }
+                        )
+                        val mainScope = rememberCoroutineScope()
+
+                        LaunchedEffect(mainPagerState.currentPage) {
+                            screen = mainScreens[mainPagerState.currentPage]
+                        }
+
                         Scaffold(
                             containerColor = MaterialTheme.colorScheme.background,
                             bottomBar = {
                                 AppBottomNavigation(
-                                    current = screen,
+                                    current = mainScreens[mainPagerState.currentPage],
                                     language = language,
-                                    onNavigate = { destination -> screen = destination }
+                                    onNavigate = { destination ->
+                                        val target = mainScreens.indexOf(destination)
+                                        if (target >= 0) mainScope.launch { mainPagerState.animateScrollToPage(target) }
+                                    }
                                 )
                             }
                         ) { innerPadding ->
-                            Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
-                                when (screen) {
+                            HorizontalPager(
+                                state = mainPagerState,
+                                modifier = Modifier.fillMaxSize().padding(innerPadding),
+                                // W ekranie Dzień poziomy gest służy do zmiany daty. Na krawędzi
+                                // historii ten sam gest przechodzi odpowiednio do Start/Analiza.
+                                userScrollEnabled = mainPagerState.currentPage != 1
+                            ) { page ->
+                                when (mainScreens[page]) {
                                     AppScreen.HOME -> HomeScreen(
                                         prefs = prefs,
                                         language = language,
@@ -217,19 +246,28 @@ class MainActivity : ComponentActivity() {
                                                 analysisEnabled = newValue
                                             }
                                         },
-                                        onSettings = { screen = AppScreen.SETTINGS },
+                                        onSettings = { mainScope.launch { mainPagerState.animateScrollToPage(3) } },
                                         onSetup = { screen = AppScreen.SETUP },
-                                        onPyszneSummary = { screen = AppScreen.PYSZNE_SUMMARY }
+                                        onPyszneSummary = {
+                                            requestedDayDate = LocalDate.now()
+                                            mainScope.launch { mainPagerState.animateScrollToPage(1) }
+                                        }
                                     )
 
                                     AppScreen.PYSZNE_SUMMARY -> PyszneSummaryScreen(
                                         prefs = prefs,
                                         language = language,
-                                        onBack = { screen = AppScreen.HOME }
+                                        requestedDate = requestedDayDate,
+                                        onBack = { mainScope.launch { mainPagerState.animateScrollToPage(0) } },
+                                        onAnalysis = { mainScope.launch { mainPagerState.animateScrollToPage(2) } }
                                     )
 
                                     AppScreen.ANALYSIS -> WeeklyAnalysisScreen(
-                                        language = language
+                                        language = language,
+                                        onOpenDay = { date ->
+                                            requestedDayDate = date
+                                            mainScope.launch { mainPagerState.animateScrollToPage(1) }
+                                        }
                                     )
 
                                     AppScreen.SETTINGS -> SettingsScreen(
@@ -240,7 +278,7 @@ class MainActivity : ComponentActivity() {
                                             prefs.themeMode = selected
                                             themeMode = selected
                                         },
-                                        onBack = { screen = AppScreen.HOME }
+                                        onBack = { mainScope.launch { mainPagerState.animateScrollToPage(0) } }
                                     )
 
                                     else -> Unit
@@ -667,9 +705,18 @@ private fun HomeScreen(
     val today = LocalDate.now()
     val now = java.time.LocalTime.now()
     val resultStore = remember { PyszneResultStore(context) }
+    val adjustmentsStore = remember { PyszneDayAdjustmentsStore(context) }
     val logStore = remember { PyszneLogStore(context) }
     val storedToday = remember(refreshToken) { resultStore.get(today) }
     val todayEntries = remember(refreshToken) { logStore.forDate(today) }
+    val liveCashTips = remember(refreshToken) {
+        val saved = adjustmentsStore.cashTips(today)
+        if (!adjustmentsStore.hasCashTips(today) && (storedToday?.cashTipsPln ?: 0.0) > 0.0) {
+            val migrated = storedToday?.cashTipsPln ?: 0.0
+            adjustmentsStore.setCashTips(today, migrated)
+            migrated
+        } else saved
+    }
     val rules = prefs.rulesForPlatform(CourierPlatform.PYSZNE)
     val todaySummary = PyszneDaySummaryCalculator.calculate(
         date = today,
@@ -677,7 +724,7 @@ private fun HomeScreen(
         rules = rules,
         decisionBasis = prefs.decisionBasis,
         zusPercent = if (prefs.zusEnabled) prefs.zusPercent else 0.0,
-        cashTipsPln = storedToday?.cashTipsPln ?: 0.0,
+        cashTipsPln = liveCashTips,
         extraPauseMinutes = storedToday?.extraPauseMinutes ?: 0
     )
     val active = serviceEnabled && analysisEnabled
@@ -693,6 +740,17 @@ private fun HomeScreen(
     val shiftEndMinute = prefs.plannedShiftEndMinuteOfDay
     val remainingShiftHours = ((shiftEndMinute - nowMinute).coerceAtLeast(0)) / 60.0
     val forecast = hourly?.let { todaySummary.netPln + it * remainingShiftHours }
+    val goalReached = goal > 0.0 && todaySummary.netPln >= goal
+    var goalWasReached by remember(today) { mutableStateOf(goalReached) }
+    var showGoalReachedCelebration by remember(today) { mutableStateOf(false) }
+
+    LaunchedEffect(goalReached) {
+        if (goalReached && !goalWasReached) {
+            showGoalReachedCelebration = true
+            HapticLanguage.record(context)
+        }
+        goalWasReached = goalReached
+    }
 
     ScreenContainer(scrollable = true, includeNavigationPadding = false) {
         Row(
@@ -737,6 +795,15 @@ private fun HomeScreen(
             onOpenDay = onPyszneSummary
         )
 
+        CashTipDuringShiftCard(
+            currentTips = liveCashTips,
+            language = language,
+            onAdd = { amount ->
+                adjustmentsStore.addCashTip(today, amount)
+                refreshToken += 1
+            }
+        )
+
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             BankMetricCard(
                 modifier = Modifier.weight(1f),
@@ -759,7 +826,7 @@ private fun HomeScreen(
             HomePaceCard(
                 perHour = todaySummary.netPerHour,
                 remaining = remaining,
-                goalReached = goal > 0.0 && todaySummary.netPln >= goal,
+                goalReached = goalReached,
                 language = language
             )
         }
@@ -786,6 +853,158 @@ private fun HomeScreen(
                 else tx(language, "Włącz analizę", "Start analysis", "Увімкнути аналіз", "Включить анализ"),
                 fontWeight = FontWeight.Bold
             )
+        }
+
+        if (todaySummary.orderCount > 0) {
+            OutlinedButton(
+                onClick = onPyszneSummary,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(18.dp)
+            ) {
+                Text(
+                    tx(language, "Podsumuj / zakończ dzień", "Review / finish day", "Підсумувати день", "Подвести итог дня"),
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Text(
+                tx(language, "Zostaniesz w podsumowaniu. Dopiero gdy kwoty się nie zgadzają, FUJARA pokaże dokładnie co sprawdzić w Pyszne.", "You stay in the summary. Only a mismatch will show what to check in Pyszne.", "Ви залишитеся в підсумку; лише при розбіжності FUJARA підкаже, що перевірити.", "Вы останетесь в итогах; только при расхождении FUJARA подскажет, что проверить."),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+
+    if (showGoalReachedCelebration) {
+        GoalReachedDialog(
+            netPln = todaySummary.netPln,
+            goalPln = goal,
+            language = language,
+            onDismiss = { showGoalReachedCelebration = false }
+        )
+    }
+}
+
+@Composable
+private fun CashTipDuringShiftCard(
+    currentTips: Double,
+    language: AppLanguage,
+    onAdd: (Double) -> Unit
+) {
+    var customTip by remember { mutableStateOf("") }
+    val parsedCustom = customTip.replace(',', '.').toDoubleOrNull()?.takeIf { it > 0.0 }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        tx(language, "Napiwek gotówkowy", "Cash tip", "Готівкові чайові", "Наличные чаевые"),
+                        fontWeight = FontWeight.Black
+                    )
+                    Text(
+                        tx(language, "Zapisuje się od razu w trakcie zmiany", "Saved immediately during the shift", "Зберігається одразу під час зміни", "Сохраняется сразу во время смены"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Text(
+                    String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", currentTips),
+                    fontWeight = FontWeight.Black,
+                    style = MaterialTheme.typography.titleMedium
+                )
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(5.0, 10.0, 20.0).forEach { amount ->
+                    OutlinedButton(
+                        onClick = { onAdd(amount) },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("+${amount.toInt()} zł", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = customTip,
+                    onValueChange = { value -> customTip = value.filter { it.isDigit() || it == ',' || it == '.' }.take(7) },
+                    modifier = Modifier.weight(1f),
+                    label = { Text(tx(language, "Inna kwota", "Other amount", "Інша сума", "Другая сумма")) },
+                    suffix = { Text("zł") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                )
+                Button(
+                    onClick = {
+                        parsedCustom?.let(onAdd)
+                        customTip = ""
+                    },
+                    enabled = parsedCustom != null
+                ) {
+                    Text(tx(language, "Dodaj", "Add", "Додати", "Добавить"))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GoalReachedDialog(
+    netPln: Double,
+    goalPln: Double,
+    language: AppLanguage,
+    onDismiss: () -> Unit
+) {
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { visible = true }
+    val scale by animateFloatAsState(
+        targetValue = if (visible) 1f else 0.86f,
+        animationSpec = tween(520),
+        label = "goal_reached_scale"
+    )
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().graphicsLayer { scaleX = scale; scaleY = scale },
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surface
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Text("🎉  ✨  🎉", style = MaterialTheme.typography.headlineMedium)
+                Text(
+                    tx(language, "Cel dnia osiągnięty!", "Daily goal reached!", "Денну ціль досягнуто!", "Цель дня достигнута!"),
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Black,
+                    textAlign = TextAlign.Center
+                )
+                Text(
+                    String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", netPln),
+                    style = MaterialTheme.typography.displaySmall,
+                    fontWeight = FontWeight.Black,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    tx(
+                        language,
+                        "Cel ${String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł", goalPln)} zrobiony. Dobra robota — wynik jest już ponad planem.",
+                        "Goal ${String.format(Locale.US, "%.0f PLN", goalPln)} completed. You are now above plan.",
+                        "Ціль виконана — результат уже вище плану.",
+                        "Цель выполнена — результат уже выше плана."
+                    ),
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
+                    Text(tx(language, "Super!", "Great!", "Супер!", "Супер!"), fontWeight = FontWeight.Bold)
+                }
+            }
         }
     }
 }
@@ -954,18 +1173,37 @@ private enum class AnalysisRange(val days: Long) {
     YEAR(365)
 }
 
+internal fun startOfCalendarWeek(date: LocalDate): LocalDate =
+    date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+
+internal fun endOfCalendarWeek(date: LocalDate): LocalDate =
+    startOfCalendarWeek(date).plusDays(6)
+
 @Composable
-private fun WeeklyAnalysisScreen(language: AppLanguage) {
+private fun WeeklyAnalysisScreen(
+    language: AppLanguage,
+    onOpenDay: (LocalDate) -> Unit
+) {
     val context = LocalContext.current
     val resultStore = remember { PyszneResultStore(context) }
-    val results = remember { resultStore.all() }
+    var refreshToken by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1_500)
+            refreshToken += 1
+        }
+    }
+    val results = remember(refreshToken) { resultStore.all() }
     val latestDate = results.maxByOrNull { it.date }?.date ?: LocalDate.now()
     var range by remember { mutableStateOf(AnalysisRange.WEEK) }
-    var periodEnd by remember { mutableStateOf(latestDate) }
+    var periodEnd by remember { mutableStateOf(endOfCalendarWeek(latestDate)) }
 
-    LaunchedEffect(range) { periodEnd = latestDate }
+    LaunchedEffect(range, latestDate) {
+        periodEnd = if (range == AnalysisRange.WEEK) endOfCalendarWeek(latestDate) else latestDate
+    }
 
-    val periodStart = periodEnd.minusDays(range.days - 1)
+    val latestAllowedEnd = if (range == AnalysisRange.WEEK) endOfCalendarWeek(latestDate) else latestDate
+    val periodStart = if (range == AnalysisRange.WEEK) startOfCalendarWeek(periodEnd) else periodEnd.minusDays(range.days - 1)
     val periodResults = results.filter { !it.date.isBefore(periodStart) && !it.date.isAfter(periodEnd) }
     val orders = periodResults.sumOf { it.orderCount }
     val gross = periodResults.sumOf { it.grossPln }
@@ -982,7 +1220,7 @@ private fun WeeklyAnalysisScreen(language: AppLanguage) {
         .filter { !it.date.isBefore(previousStart) && !it.date.isAfter(previousEnd) }
         .sumOf { it.netPln }
     val comparisonPercent = previousNet.takeIf { abs(it) > 0.01 }?.let { (net - it) / abs(it) * 100.0 }
-    val chartPoints = buildAnalysisChartPoints(periodResults, periodStart, periodEnd, range)
+    val chartPoints = buildAnalysisChartPoints(periodResults, periodStart, periodEnd, range, language)
 
     ScreenContainer(scrollable = true, includeNavigationPadding = false) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1004,8 +1242,8 @@ private fun WeeklyAnalysisScreen(language: AppLanguage) {
             TextButton(onClick = { periodEnd = periodEnd.minusDays(range.days) }) { Text("‹", style = MaterialTheme.typography.headlineSmall) }
             Spacer(Modifier.weight(1f))
             TextButton(
-                onClick = { periodEnd = periodEnd.plusDays(range.days).coerceAtMost(latestDate) },
-                enabled = periodEnd < latestDate
+                onClick = { periodEnd = periodEnd.plusDays(range.days).coerceAtMost(latestAllowedEnd) },
+                enabled = periodEnd < latestAllowedEnd
             ) { Text("›", style = MaterialTheme.typography.headlineSmall) }
         }
 
@@ -1045,7 +1283,7 @@ private fun WeeklyAnalysisScreen(language: AppLanguage) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodyMedium
                     )
-                    AnalysisBarChart(points = chartPoints)
+                    AnalysisBarChart(points = chartPoints, language = language)
                 }
             }
 
@@ -1068,7 +1306,7 @@ private fun WeeklyAnalysisScreen(language: AppLanguage) {
 
             SectionHeader(title = tx(language, "Dni", "Days", "Дні", "Дни"))
             periodResults.sortedByDescending { it.date }.forEach { item ->
-                AnalysisDayRow(item = item, language = language)
+                AnalysisDayRow(item = item, language = language, onClick = { onOpenDay(item.date) })
             }
 
             bestDay?.let { item ->
@@ -1092,7 +1330,9 @@ private fun WeeklyAnalysisScreen(language: AppLanguage) {
 private fun PyszneSummaryScreen(
     prefs: AppPrefs,
     language: AppLanguage,
-    onBack: () -> Unit
+    requestedDate: LocalDate? = null,
+    onBack: () -> Unit,
+    onAnalysis: () -> Unit
 ) {
     val context = LocalContext.current
     val store = remember { PyszneLogStore(context) }
@@ -1105,6 +1345,13 @@ private fun PyszneSummaryScreen(
     val availableDates = (entries.map { it.date } + referenceDates).distinct().sortedDescending()
     var selectedDate by remember {
         mutableStateOf(latestCapturedReference?.date ?: availableDates.firstOrNull() ?: LocalDate.now())
+    }
+
+    LaunchedEffect(requestedDate, availableDates) {
+        val requested = requestedDate
+        if (requested != null && (requested in availableDates || availableDates.isEmpty())) {
+            selectedDate = requested
+        }
     }
 
     // Gdy uzytkownik przechodzi do Pyszne i wraca, usluga Accessibility moze
@@ -1132,14 +1379,25 @@ private fun PyszneSummaryScreen(
 
     val dayReference = remember(refreshToken, selectedDate) { store.dayReference(selectedDate) }
     val resultStore = remember { PyszneResultStore(context) }
+    val adjustmentsStore = remember { PyszneDayAdjustmentsStore(context) }
     val storedResult = remember(refreshToken, selectedDate) { resultStore.get(selectedDate) }
     val rules = prefs.rulesForPlatform(CourierPlatform.PYSZNE)
     val zusForSummary = if (prefs.zusEnabled) prefs.zusPercent else 0.0
 
+    val persistedCashTips = remember(selectedDate, storedResult?.confirmedAtMillis) {
+        val liveTips = adjustmentsStore.cashTips(selectedDate)
+        if (!adjustmentsStore.hasCashTips(selectedDate) && (storedResult?.cashTipsPln ?: 0.0) > 0.0) {
+            val migrated = storedResult?.cashTipsPln ?: 0.0
+            adjustmentsStore.setCashTips(selectedDate, migrated)
+            migrated
+        } else {
+            liveTips
+        }
+    }
     var cashTipsText by remember(selectedDate, storedResult?.confirmedAtMillis) {
         mutableStateOf(
-            storedResult?.cashTipsPln
-                ?.takeIf { it > 0.0 }
+            persistedCashTips
+                .takeIf { it > 0.0 }
                 ?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.2f", it) }
                 ?: ""
         )
@@ -1167,6 +1425,8 @@ private fun PyszneSummaryScreen(
         storedResult.settingsSignature == settingsSignature &&
         abs(storedResult.cashTipsPln - cashTips) < 0.01 &&
         storedResult.extraPauseMinutes == extraPauseMinutes
+
+    var verificationExpanded by remember(selectedDate) { mutableStateOf(!snapshotMatches) }
 
     var showResult by remember(selectedDate, storedResult?.confirmedAtMillis) { mutableStateOf(snapshotMatches) }
     var validationMessage by remember { mutableStateOf("") }
@@ -1196,6 +1456,7 @@ private fun PyszneSummaryScreen(
         confirmDelete = false
         showAllRestaurants = false
         selectedOrder = null
+        verificationExpanded = !snapshotMatches
     }
 
     // Celebracja ma przeżyć zapis snapshotu i automatyczne odświeżenie danych.
@@ -1211,6 +1472,7 @@ private fun PyszneSummaryScreen(
         if (isCalculating) {
             resultStore.save(summary.toSnapshot(sourceSignature, settingsSignature))
             showResult = true
+            showCelebration = true
             isCalculating = false
             refreshToken += 1
         }
@@ -1222,7 +1484,34 @@ private fun PyszneSummaryScreen(
         label = "pyszne_calculation_progress"
     )
 
-    ScreenContainer(scrollable = true, includeNavigationPadding = false) {
+    val daySwipeModifier = Modifier.pointerInput(availableDates, selectedDate) {
+        var totalDrag = 0f
+        detectHorizontalDragGestures(
+            onHorizontalDrag = { _, dragAmount -> totalDrag += dragAmount },
+            onDragCancel = { totalDrag = 0f },
+            onDragEnd = {
+                if (abs(totalDrag) >= 90f) {
+                    val currentIndex = availableDates.indexOf(selectedDate)
+                    if (totalDrag < 0f) {
+                        // W lewo: starszy dzień; na końcu historii przejdź do Analizy.
+                        val older = availableDates.getOrNull(currentIndex + 1)
+                        if (older != null) selectedDate = older else onAnalysis()
+                    } else {
+                        // W prawo: nowszy dzień; z najnowszego dnia wróć do Start.
+                        val newer = availableDates.getOrNull(currentIndex - 1)
+                        if (newer != null) selectedDate = newer else onBack()
+                    }
+                }
+                totalDrag = 0f
+            }
+        )
+    }
+
+    ScreenContainer(
+        scrollable = true,
+        includeNavigationPadding = false,
+        modifier = daySwipeModifier
+    ) {
         TopBar(
             title = tx(language, "Dzień", "Day", "День", "День"),
             onBack = onBack
@@ -1233,6 +1522,35 @@ private fun PyszneSummaryScreen(
             style = MaterialTheme.typography.bodyLarge
         )
 
+        Surface(
+            modifier = Modifier.fillMaxWidth().clickable { verificationExpanded = !verificationExpanded },
+            shape = RoundedCornerShape(18.dp),
+            color = if (snapshotMatches) MaterialTheme.colorScheme.primary.copy(alpha = 0.09f)
+            else MaterialTheme.colorScheme.secondary.copy(alpha = 0.10f)
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        if (snapshotMatches) tx(language, "Zapisy i kontrola gotowe ✓", "Saves and check complete ✓", "Записи й контроль готові ✓", "Записи и контроль готовы ✓")
+                        else tx(language, "Zapisy i kontrola wymagają uwagi", "Saves and check need attention", "Записи й контроль потребують уваги", "Записи и контроль требуют внимания"),
+                        fontWeight = FontWeight.Black
+                    )
+                    Text(
+                        if (snapshotMatches) tx(language, "Wynik jest aktualny. Dotknij, aby rozwinąć szczegóły.", "Result is current. Tap for details.", "Результат актуальний. Натисніть для деталей.", "Результат актуален. Нажмите для деталей.")
+                        else tx(language, "Po zmianie danych ten blok rozwija się automatycznie.", "This block opens automatically when data changes.", "Після зміни даних блок відкривається автоматично.", "После изменения данных блок открывается автоматически."),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Text(if (verificationExpanded) "⌃" else "⌄", fontWeight = FontWeight.Black)
+            }
+        }
+
+        if (verificationExpanded) {
         SectionCard(
             step = "1 / ZAPISY",
             title = tx(language, "Zebrane dostawy", "Saved deliveries", "Збережені доставки", "Сохранённые доставки")
@@ -1481,7 +1799,7 @@ private fun PyszneSummaryScreen(
                         Text(
                             tx(
                                 language,
-                                "Otwórz w Pyszne Podsumowanie dnia dla ${formatSummaryDate(selectedDate, language)}. FUJARA zapisze kontrolę tylko wtedy, gdy na ekranie odczyta jednocześnie datę, liczbę zleceń i kwotę tego dnia.",
+                                "Otwórz w Pyszne: Zarobki → Podsumowanie dnia dla ${formatSummaryDate(selectedDate, language)}. FUJARA zapisze kontrolę tylko wtedy, gdy na ekranie odczyta jednocześnie datę, liczbę zleceń i kwotę tego dnia.",
                                 "Open Pyszne daily summary for ${formatSummaryDate(selectedDate, language)}. FUJARA only accepts a check when date, order count and amount are read together.",
                                 "Відкрийте підсумок дня Pyszne для вибраної дати.",
                                 "Откройте итоги дня Pyszne для выбранной даты."
@@ -1532,6 +1850,8 @@ private fun PyszneSummaryScreen(
                     value = cashTipsText,
                     onValueChange = { value ->
                         cashTipsText = value.filter { it.isDigit() || it == ',' || it == '.' }.take(8)
+                        val parsed = cashTipsText.replace(',', '.').toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
+                        adjustmentsStore.setCashTips(selectedDate, parsed)
                     },
                     modifier = Modifier.weight(1f),
                     label = { Text(tx(language, "Napiwek gotówkowy", "Cash tips", "Чайові", "Чаевые")) },
@@ -1564,7 +1884,7 @@ private fun PyszneSummaryScreen(
                     val amountOk = sameDate && reference != null && abs(reference.amountPln - platformGrossPln) < 0.02
 
                     validationMessage = when {
-                        reference == null -> tx(language, "Najpierw otwórz Podsumowanie dnia w Pyszne.", "Open Pyszne daily summary first.", "Спочатку відкрийте підсумок Pyszne.", "Сначала откройте итоги Pyszne.")
+                        reference == null -> tx(language, "Otwórz w Pyszne: Zarobki → Podsumowanie dnia. FUJARA odczyta kwotę i liczbę zleceń, a potem wróć tutaj.", "Open Pyszne daily summary first.", "Спочатку відкрийте підсумок Pyszne.", "Сначала откройте итоги Pyszne.")
                         !sameDate -> tx(language, "⚠ Odczyt z Pyszne dotyczy innej daty. Otwórz właściwy dzień ponownie.", "⚠ Pyszne data belongs to a different date. Open the correct day again.", "⚠ Дані з іншої дати.", "⚠ Данные относятся к другой дате.")
                         countOk && amountOk -> tx(language, "✓ Dane zgodne. FUJARA liczy dzień…", "✓ Data matches. FUJARA is calculating…", "✓ Дані збігаються. Рахую…", "✓ Данные совпадают. Считаю…")
                         else -> {
@@ -1595,7 +1915,7 @@ private fun PyszneSummaryScreen(
                             else -> null
                         }
                         showResult = false
-                        showCelebration = true
+                        showCelebration = false
                         isCalculating = true
                         calculationRequest += 1
                     } else {
@@ -1664,6 +1984,8 @@ private fun PyszneSummaryScreen(
             }
         }
 
+        }
+
         if (showResult && summary.orderCount > 0) {
             DayResultHeroCard(
                 summary = summary,
@@ -1679,7 +2001,7 @@ private fun PyszneSummaryScreen(
             ) {
                 Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
-                        tx(language, "PLN/h dla kolejnych zleceń", "PLN/h by order", "PLN/h для замовлень", "PLN/h по заказам"),
+                        tx(language, "Tempo dnia godzinami", "Day pace by hour", "Темп дня за годинами", "Темп дня по часам"),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodyMedium
                     )
@@ -1802,6 +2124,7 @@ private fun PyszneSummaryScreen(
                     if (confirmDelete) {
                         store.deleteDate(selectedDate)
                         resultStore.delete(selectedDate)
+                        adjustmentsStore.clear(selectedDate)
                         refreshToken += 1
                         confirmDelete = false
                     } else {
@@ -1823,7 +2146,7 @@ private fun PyszneSummaryScreen(
     }
 
     if (showCelebration && summary.orderCount > 0) {
-        DayCelebrationDialog(
+        ProfessionalDayResultDialog(
             summary = summary,
             language = language,
             recordMessage = recordMessage,
@@ -1844,6 +2167,7 @@ private fun PyszneSummaryScreen(
 private fun ProfessionalDayResultDialog(
     summary: PyszneDaySummary,
     language: AppLanguage,
+    recordMessage: String? = null,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -1860,6 +2184,22 @@ private fun ProfessionalDayResultDialog(
             Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 BrandEyebrow(tx(language, "PODSUMOWANIE DNIA", "DAY SUMMARY", "ПІДСУМОК ДНЯ", "ИТОГ ДНЯ"), accent)
                 Text(formatSummaryDate(summary.date, language), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
+                Text(
+                    String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", summary.netPln),
+                    style = MaterialTheme.typography.displaySmall,
+                    fontWeight = FontWeight.Black,
+                    color = accent
+                )
+                Text(
+                    tx(language, "zysku po kosztach", "profit after costs", "прибутку після витрат", "прибыли после расходов"),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall
+                )
+                recordMessage?.let {
+                    Surface(shape = RoundedCornerShape(14.dp), color = accent.copy(alpha = 0.10f)) {
+                        Text(it, modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp), fontWeight = FontWeight.Black, color = accent)
+                    }
+                }
 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     SummarySmallMetric(Modifier.weight(1f), "PLN/h", summary.netPerHour?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł", it) } ?: "—")
@@ -2619,7 +2959,7 @@ private fun AnalysisRangeSelector(
     onSelected: (AnalysisRange) -> Unit
 ) {
     val items = listOf(
-        AnalysisRange.WEEK to tx(language, "7 dni", "7 days", "7 днів", "7 дней"),
+        AnalysisRange.WEEK to tx(language, "Tydzień", "Week", "Тиждень", "Неделя"),
         AnalysisRange.MONTH to tx(language, "30 dni", "30 days", "30 днів", "30 дней"),
         AnalysisRange.QUARTER to tx(language, "3 mies.", "3 months", "3 міс.", "3 мес."),
         AnalysisRange.YEAR to tx(language, "Rok", "Year", "Рік", "Год")
@@ -2667,7 +3007,7 @@ private fun AnalysisHeroCard(
     ) {
         Column(modifier = Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text(
-                tx(language, "Wynik po kosztach", "After-cost result", "Результат після витрат", "Результат после расходов"),
+                tx(language, "Zysk po kosztach", "Profit after costs", "Прибуток після витрат", "Прибыль после расходов"),
                 color = Color(0xFFB7BAC2),
                 style = MaterialTheme.typography.bodyMedium
             )
@@ -2694,10 +3034,10 @@ private fun AnalysisHeroCard(
             Text(
                 tx(
                     language,
-                    "Przychód ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", gross)} · $orders zleceń",
-                    "Revenue ${String.format(Locale.US, "%.2f PLN", gross)} · $orders orders",
-                    "Дохід ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", gross)} · $orders",
-                    "Доход ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", gross)} · $orders"
+                    "Przychód ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", gross)} · odjęte ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", (gross - net).coerceAtLeast(0.0))} · $orders zleceń",
+                    "Revenue ${String.format(Locale.US, "%.2f PLN", gross)} · deducted ${String.format(Locale.US, "%.2f PLN", (gross - net).coerceAtLeast(0.0))} · $orders orders",
+                    "Дохід ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", gross)} · витрати ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", (gross - net).coerceAtLeast(0.0))}",
+                    "Доход ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", gross)} · расходы ${String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł", (gross - net).coerceAtLeast(0.0))}"
                 ),
                 color = Color(0xFF9EA3AD),
                 style = MaterialTheme.typography.bodySmall
@@ -2832,9 +3172,13 @@ private fun EmptyAnalysisCard(language: AppLanguage) {
 }
 
 @Composable
-private fun AnalysisDayRow(item: PyszneDayResultSnapshot, language: AppLanguage) {
+private fun AnalysisDayRow(
+    item: PyszneDayResultSnapshot,
+    language: AppLanguage,
+    onClick: () -> Unit
+) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
@@ -2881,14 +3225,26 @@ private fun AnalysisDayRow(item: PyszneDayResultSnapshot, language: AppLanguage)
 
 private data class AnalysisChartPoint(
     val label: String,
+    val detail: String,
     val value: Double
 )
+
+private fun shortWeekday(date: LocalDate, language: AppLanguage): String = when (date.dayOfWeek) {
+    DayOfWeek.MONDAY -> tx(language, "Pn", "Mon", "Пн", "Пн")
+    DayOfWeek.TUESDAY -> tx(language, "Wt", "Tue", "Вт", "Вт")
+    DayOfWeek.WEDNESDAY -> tx(language, "Śr", "Wed", "Ср", "Ср")
+    DayOfWeek.THURSDAY -> tx(language, "Cz", "Thu", "Чт", "Чт")
+    DayOfWeek.FRIDAY -> tx(language, "Pt", "Fri", "Пт", "Пт")
+    DayOfWeek.SATURDAY -> tx(language, "Sb", "Sat", "Сб", "Сб")
+    DayOfWeek.SUNDAY -> tx(language, "Nd", "Sun", "Нд", "Вс")
+}
 
 private fun buildAnalysisChartPoints(
     results: List<PyszneDayResultSnapshot>,
     start: LocalDate,
     end: LocalDate,
-    range: AnalysisRange
+    range: AnalysisRange,
+    language: AppLanguage
 ): List<AnalysisChartPoint> {
     val bucketSize = when (range) {
         AnalysisRange.WEEK -> 1L
@@ -2904,7 +3260,10 @@ private fun buildAnalysisChartPoints(
             .filter { !it.date.isBefore(cursor) && !it.date.isAfter(bucketEnd) }
             .sumOf { it.netPln }
         points += AnalysisChartPoint(
-            label = cursor.format(DateTimeFormatter.ofPattern("dd.MM")),
+            label = if (range == AnalysisRange.WEEK) shortWeekday(cursor, language)
+            else cursor.format(DateTimeFormatter.ofPattern("dd.MM")),
+            detail = if (cursor == bucketEnd) formatShortDate(cursor)
+            else "${formatShortDate(cursor)} – ${formatShortDate(bucketEnd)}",
             value = value
         )
         cursor = bucketEnd.plusDays(1)
@@ -2913,26 +3272,49 @@ private fun buildAnalysisChartPoints(
 }
 
 @Composable
-private fun AnalysisBarChart(points: List<AnalysisChartPoint>) {
+private fun AnalysisBarChart(
+    points: List<AnalysisChartPoint>,
+    language: AppLanguage
+) {
     if (points.isEmpty()) return
     val maxValue = points.maxOfOrNull { abs(it.value) }?.coerceAtLeast(1.0) ?: 1.0
     var selectedIndex by remember(points) { mutableStateOf(points.lastIndex) }
+    val compactWeek = points.size <= 7
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         points.getOrNull(selectedIndex)?.let { selected ->
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(selected.label, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(
-                    String.format(Locale.forLanguageTag("pl-PL"), "%+.0f zł", selected.value),
-                    fontWeight = FontWeight.Black,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = if (selected.value >= 0.0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
-                )
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(selected.detail, fontWeight = FontWeight.Black)
+                        Text(
+                            tx(language, "zysk po kosztach", "profit after costs", "прибуток після витрат", "прибыль после расходов"),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Text(
+                        String.format(Locale.forLanguageTag("pl-PL"), "%+.0f zł", selected.value),
+                        fontWeight = FontWeight.Black,
+                        style = MaterialTheme.typography.titleLarge,
+                        color = if (selected.value >= 0.0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
+                    )
+                }
             }
         }
+
         Row(
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            modifier = if (compactWeek) Modifier.fillMaxWidth()
+            else Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(if (compactWeek) 4.dp else 8.dp)
         ) {
             points.forEachIndexed { index, point ->
                 val magnitude = (abs(point.value) / maxValue).toFloat().coerceIn(0f, 1f)
@@ -2942,9 +3324,9 @@ private fun AnalysisBarChart(points: List<AnalysisChartPoint>) {
                     point.value < 0.0 -> MaterialTheme.colorScheme.tertiary
                     else -> MaterialTheme.colorScheme.outline
                 }
+                val itemModifier = if (compactWeek) Modifier.weight(1f) else Modifier.width(62.dp)
                 Column(
-                    modifier = Modifier
-                        .width(62.dp)
+                    modifier = itemModifier
                         .clip(RoundedCornerShape(14.dp))
                         .clickable { selectedIndex = index }
                         .padding(vertical = 6.dp),
@@ -2955,23 +3337,25 @@ private fun AnalysisBarChart(points: List<AnalysisChartPoint>) {
                         String.format(Locale.forLanguageTag("pl-PL"), "%.0f", point.value),
                         fontWeight = if (selected) FontWeight.Black else FontWeight.Bold,
                         style = MaterialTheme.typography.labelMedium,
-                        color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+                        color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1
                     )
                     Box(
-                        modifier = Modifier.height(126.dp).fillMaxWidth(),
+                        modifier = Modifier.height(112.dp).fillMaxWidth(),
                         contentAlignment = Alignment.BottomCenter
                     ) {
                         Surface(
                             modifier = Modifier
-                                .width(if (selected) 30.dp else 24.dp)
-                                .height((8f + magnitude * 112f).dp),
+                                .width(if (selected) 28.dp else 22.dp)
+                                .height((8f + magnitude * 96f).dp),
                             shape = RoundedCornerShape(99.dp),
-                            color = if (selected) accent else accent.copy(alpha = 0.68f)
+                            color = if (selected) accent else accent.copy(alpha = 0.62f)
                         ) {}
                     }
                     Text(
                         point.label,
                         style = MaterialTheme.typography.labelSmall,
+                        fontWeight = if (selected) FontWeight.Black else FontWeight.Normal,
                         color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1
                     )
@@ -2979,9 +3363,9 @@ private fun AnalysisBarChart(points: List<AnalysisChartPoint>) {
             }
         }
         Text(
-            "PLN · ${String.format(Locale.forLanguageTag("pl-PL"), "max %.0f", maxValue)}",
+            tx(language, "Dotknij słupka, aby zobaczyć dokładną datę i kwotę.", "Tap a bar to see the exact date and amount.", "Натисніть стовпчик, щоб побачити дату й суму.", "Нажмите столбик, чтобы увидеть дату и сумму."),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.labelSmall
+            style = MaterialTheme.typography.bodySmall
         )
     }
 }
@@ -3113,81 +3497,82 @@ private fun HourlyPerformanceChart(
         return
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            points.forEach { point ->
-                val value = point.netPerHour ?: 0.0
-                val magnitude = (abs(value) / maxValue).toFloat().coerceIn(0f, 1f)
-                val selected = selectedHour == point.hour
-                val accent = when {
-                    value >= 50.0 -> MaterialTheme.colorScheme.primary
-                    value >= 30.0 -> MaterialTheme.colorScheme.secondary
-                    else -> MaterialTheme.colorScheme.tertiary
-                }
-                Column(
-                    modifier = Modifier
-                        .width(64.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .clickable { selectedHour = point.hour }
-                        .padding(vertical = 6.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    Text(
-                        String.format(Locale.forLanguageTag("pl-PL"), "%.0f", value),
-                        fontWeight = if (selected) FontWeight.Black else FontWeight.Bold,
-                        color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.labelMedium
-                    )
-                    Box(
-                        modifier = Modifier.height(118.dp).fillMaxWidth(),
-                        contentAlignment = Alignment.BottomCenter
-                    ) {
-                        Surface(
-                            modifier = Modifier
-                                .width(if (selected) 30.dp else 24.dp)
-                                .height((10f + magnitude * 100f).dp),
-                            shape = RoundedCornerShape(99.dp),
-                            color = if (selected) accent else accent.copy(alpha = 0.72f)
-                        ) {}
+    val best = points.maxByOrNull { it.netPerHour ?: Double.NEGATIVE_INFINITY }
+    val weakest = points.minByOrNull { it.netPerHour ?: Double.POSITIVE_INFINITY }
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SummarySmallMetric(
+                modifier = Modifier.weight(1f),
+                label = tx(language, "NAJLEPSZA GODZINA", "BEST HOUR", "НАЙКРАЩА ГОДИНА", "ЛУЧШИЙ ЧАС"),
+                value = best?.let { String.format(Locale.ROOT, "%02d:00 · %.0f zł/h", it.hour, it.netPerHour ?: 0.0) } ?: "—"
+            )
+            SummarySmallMetric(
+                modifier = Modifier.weight(1f),
+                label = tx(language, "NAJSŁABSZA", "WEAKEST", "НАЙСЛАБША", "САМАЯ СЛАБАЯ"),
+                value = weakest?.let { String.format(Locale.ROOT, "%02d:00 · %.0f zł/h", it.hour, it.netPerHour ?: 0.0) } ?: "—"
+            )
+        }
+
+        points.forEach { point ->
+            val value = point.netPerHour ?: 0.0
+            val magnitude = (abs(value) / maxValue).toFloat().coerceIn(0f, 1f)
+            val selected = selectedHour == point.hour
+            val accent = when {
+                value >= 50.0 -> MaterialTheme.colorScheme.primary
+                value >= 30.0 -> MaterialTheme.colorScheme.secondary
+                else -> MaterialTheme.colorScheme.tertiary
+            }
+            Surface(
+                modifier = Modifier.fillMaxWidth().clickable { selectedHour = point.hour },
+                shape = RoundedCornerShape(16.dp),
+                color = if (selected) accent.copy(alpha = 0.10f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            String.format(Locale.ROOT, "%02d:00–%02d:00", point.hour, (point.hour + 1) % 24),
+                            modifier = Modifier.weight(1f),
+                            fontWeight = FontWeight.Black
+                        )
+                        Text(
+                            String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł/h", value),
+                            fontWeight = FontWeight.Black,
+                            color = accent
+                        )
                     }
+                    androidx.compose.material3.LinearProgressIndicator(
+                        progress = { magnitude },
+                        modifier = Modifier.fillMaxWidth().height(7.dp)
+                    )
                     Text(
-                        String.format(Locale.ROOT, "%02d:00", point.hour),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = if (selected) FontWeight.Black else FontWeight.Normal,
-                        color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+                        tx(
+                            language,
+                            "${point.orders.size} zleceń · ${String.format(Locale.forLanguageTag("pl-PL"), "%+.2f zł", point.netPln)} po kosztach",
+                            "${point.orders.size} orders · ${String.format(Locale.US, "%+.2f PLN", point.netPln)} after costs",
+                            "${point.orders.size} замовлень · ${String.format(Locale.forLanguageTag("pl-PL"), "%+.2f zł", point.netPln)}",
+                            "${point.orders.size} заказов · ${String.format(Locale.forLanguageTag("pl-PL"), "%+.2f zł", point.netPln)}"
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
-        }
-        Text(
-            tx(language, "Cyfra nad słupkiem = PLN/h. Dotknij godziny, aby zobaczyć zlecenia.", "Number above the bar = PLN/h. Tap an hour to see orders.", "Число над стовпчиком = PLN/h. Натисніть годину.", "Число над столбиком = PLN/h. Нажмите час."),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        points.firstOrNull { it.hour == selectedHour }?.let { selected ->
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(18.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
-            ) {
-                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(String.format(Locale.ROOT, "%02d:00–%02d:00", selected.hour, (selected.hour + 1) % 24), fontWeight = FontWeight.Black)
-                        Text(
-                            selected.netPerHour?.let { String.format(Locale.forLanguageTag("pl-PL"), "%.0f zł/h", it) } ?: "—",
-                            fontWeight = FontWeight.Black
-                        )
-                    }
-                    selected.orders.forEach { order ->
+
+            if (selected) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    point.orders.forEach { order ->
                         CompactRestaurantRow(restaurant = order, language = language, onClick = { onOrderClick(order) })
                     }
                 }
             }
         }
+
+        Text(
+            tx(language, "Każdy wiersz to jedna godzina pracy. Kolor i pasek pokazują tempo PLN/h, a po dotknięciu widać zlecenia z tej godziny.", "Each row is one work hour. The bar shows PLN/h pace; tap it to see the orders from that hour.", "Кожен рядок — одна година роботи; натисніть, щоб побачити замовлення.", "Каждая строка — один час работы; нажмите, чтобы увидеть заказы."),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
@@ -3616,6 +4001,39 @@ private fun EditableNumberValue(
     }
 }
 
+private enum class SettingsCategory {
+    GENERAL,
+    PROFITABILITY,
+    LISTS,
+    DATA
+}
+
+@Composable
+private fun SettingsCategorySelector(
+    selected: SettingsCategory,
+    language: AppLanguage,
+    onSelected: (SettingsCategory) -> Unit
+) {
+    val items = listOf(
+        SettingsCategory.GENERAL to tx(language, "Ogólne", "General", "Загальні", "Общие"),
+        SettingsCategory.PROFITABILITY to tx(language, "Opłacalność", "Profitability", "Вигідність", "Выгодность"),
+        SettingsCategory.LISTS to tx(language, "Listy", "Lists", "Списки", "Списки"),
+        SettingsCategory.DATA to tx(language, "Dane", "Data", "Дані", "Данные")
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items.forEach { (category, label) ->
+            FilterChip(
+                selected = selected == category,
+                onClick = { onSelected(category) },
+                label = { Text(label) }
+            )
+        }
+    }
+}
+
 @Composable
 private fun SettingsScreen(
     prefs: AppPrefs,
@@ -3627,6 +4045,7 @@ private fun SettingsScreen(
     val uriHandler = LocalUriHandler.current
     var selectedPlatform by remember { mutableStateOf(CourierPlatform.GLOBAL) }
     var useCustomRules by remember { mutableStateOf(true) }
+    var settingsCategory by remember { mutableStateOf(SettingsCategory.GENERAL) }
 
     val initialRules = prefs.rulesForPlatform(CourierPlatform.GLOBAL)
     var vehicleCost by remember { mutableStateOf(initialRules.vehicleCostPerKm.toFloat()) }
@@ -3801,6 +4220,13 @@ private fun SettingsScreen(
             )
         )
 
+        SettingsCategorySelector(
+            selected = settingsCategory,
+            language = language,
+            onSelected = { settingsCategory = it }
+        )
+
+        if (settingsCategory == SettingsCategory.GENERAL) {
         SectionCard(step = "UI", title = tx(language, "Wygląd i język", "Appearance & language", "Вигляд і мова", "Вид и язык")) {
             Text(
                 tx(language, "Motyw aplikacji", "App theme", "Тема застосунку", "Тема приложения"),
@@ -3853,7 +4279,7 @@ private fun SettingsScreen(
             }
         }
 
-        SectionCard(step = "DZIŚ", title = tx(language, "Cel, prognoza i haptics", "Goal, forecast & haptics", "Ціль, прогноз і вібрації", "Цель, прогноз и вибрации")) {
+        SectionCard(step = "DZIŚ", title = tx(language, "Cel, prognoza i wibracje", "Goal, forecast & vibration", "Ціль, прогноз і вібрації", "Цель, прогноз и вибрации")) {
             Text(
                 tx(language, "Cel dzienny netto", "Daily net goal", "Денна ціль нетто", "Дневная цель нетто"),
                 fontWeight = FontWeight.Bold
@@ -3909,7 +4335,7 @@ private fun SettingsScreen(
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f))
             SwitchRow(
-                title = tx(language, "Haptics ocen", "Offer haptics", "Вібрації оцінок", "Вибрации оценок"),
+                title = tx(language, "Wibracje przy ocenie zlecenia", "Vibration for offer ratings", "Вібрації для оцінок", "Вибрации при оценке заказа"),
                 checked = hapticsEnabled,
                 onCheckedChange = { enabled ->
                     hapticsEnabled = enabled
@@ -3918,12 +4344,15 @@ private fun SettingsScreen(
                 }
             )
             Text(
-                tx(language, "SUPER ma lekki podwójny impuls, NA STYK pojedynczy, FUJARA mocniejszy podwójny. Ta sama oferta nie wibruje wielokrotnie.", "SUPER uses a light double pulse, BORDERLINE a single pulse and POOR a stronger double pulse. The same offer does not repeat.", "Різні короткі вібрації для оцінок без повторів тієї самої пропозиції.", "Разные короткие вибрации для оценок без повторов одной и той же заявки."),
+                tx(language, "Telefon krótko zawibruje inaczej dla dobrej, granicznej i słabej oferty. Dzięki temu możesz rozpoznać ocenę bez patrzenia na ekran. Ta sama oferta nie wibruje kilka razy.", "The phone uses a different short vibration for good, borderline and poor offers, so you can recognize the rating without looking at the screen. The same offer does not repeat.", "Телефон по-різному коротко вібрує для доброї, граничної та слабкої пропозиції.", "Телефон по-разному коротко вибрирует для хорошего, пограничного и слабого предложения."),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
 
+        }
+
+        if (settingsCategory == SettingsCategory.PROFITABILITY) {
         SectionCard(step = "DECYZJA", title = tx(language, "Na czym oprzeć ocenę?", "How should an offer be rated?", "Як оцінювати пропозицію?", "Как оценивать предложение?")) {
             Text(
                 tx(language, "Wybierz wskaźnik, który ma decydować o kolorze wyniku.", "Choose which metric controls the result color.", "Оберіть показник, що визначає колір результату.", "Выберите показатель, определяющий цвет результата."),
@@ -4177,6 +4606,9 @@ private fun SettingsScreen(
             )
         }
 
+        }
+
+        if (settingsCategory == SettingsCategory.LISTS) {
         SectionCard(step = "LISTY", title = tx(language, "Czarne listy", "Blocklists", "Чорні списки", "Черные списки")) {
             Text(
                 tx(
@@ -4250,6 +4682,9 @@ private fun SettingsScreen(
             )
         }
 
+        }
+
+        if (settingsCategory == SettingsCategory.GENERAL) {
         SectionCard(step = "PANEL", title = tx(language, "Nakładka oferty", "Offer overlay", "Накладка пропозиції", "Накладка предложения")) {
             Text(
                 tx(language, "Domyślnie pokazujemy tylko PLN/h i PLN/km. Przycisk „−” na panelu chowa go do małego przycisku FUJARA, żeby podejrzeć trasę.", "By default only PLN/h and PLN/km are shown. The “−” button collapses the overlay to a small FUJARA button so you can inspect the route.", "Типово показуємо PLN/h і PLN/km. Кнопка «−» згортає панель.", "По умолчанию показываем PLN/h и PLN/km. Кнопка «−» сворачивает панель."),
@@ -4322,6 +4757,9 @@ private fun SettingsScreen(
             )
         }
 
+        }
+
+        if (settingsCategory == SettingsCategory.DATA) {
         SectionCard(step = "DANE", title = tx(language, "Backup i prywatność", "Backup & privacy", "Резервна копія і приватність", "Резервная копия и приватность")) {
             Text(
                 tx(language, "Co FUJARA zapisuje lokalnie", "What FUJARA stores locally", "Що FUJARA зберігає локально", "Что FUJARA хранит локально"),
@@ -4393,6 +4831,7 @@ private fun SettingsScreen(
                     if (confirmClearHistory) {
                         PyszneLogStore(context).clear()
                         PyszneResultStore(context).clear()
+                        PyszneDayAdjustmentsStore(context).clearAll()
                         backupManager.clearAutoBackups()
                         runCatching { backupManager.ensureDailyBackup() }
                         confirmClearHistory = false
@@ -4411,6 +4850,8 @@ private fun SettingsScreen(
             }
         }
 
+        }
+
         Text(
             tx(language, "Zmiany zapisują się automatycznie — nie ma przycisku Zapisz.", "Changes save automatically — there is no Save button.", "Зміни зберігаються автоматично — кнопка Зберегти не потрібна.", "Изменения сохраняются автоматически — кнопка Сохранить не нужна."),
             style = MaterialTheme.typography.bodySmall,
@@ -4422,7 +4863,7 @@ private fun SettingsScreen(
         TextButton(onClick = { uriHandler.openUri("https://alekwq1.github.io/Apka/privacy.html") }, modifier = Modifier.fillMaxWidth()) {
             Text(tx(language, "Polityka prywatności", "Privacy policy", "Політика конфіденційності", "Политика конфиденциальности"))
         }
-        Text("FUJARA 0.8.15", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+        Text("FUJARA 0.8.17", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
     }
 }
 
@@ -4601,10 +5042,12 @@ private fun FujaraBrandMark(
 private fun ScreenContainer(
     scrollable: Boolean = false,
     includeNavigationPadding: Boolean = true,
+    modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    val modifier = Modifier
+    val containerModifier = Modifier
         .fillMaxSize()
+        .then(modifier)
         .statusBarsPadding()
         .let { if (includeNavigationPadding) it.navigationBarsPadding() else it }
         .padding(horizontal = 20.dp, vertical = 16.dp)
@@ -4613,7 +5056,7 @@ private fun ScreenContainer(
         }
 
     Column(
-        modifier = modifier,
+        modifier = containerModifier,
         verticalArrangement = Arrangement.spacedBy(18.dp),
         content = content
     )

@@ -14,8 +14,8 @@ android {
         applicationId = "pl.fujara.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 33
-        versionName = "0.8.16"
+        versionCode = 34
+        versionName = "0.8.17"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
