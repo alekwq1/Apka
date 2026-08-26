@@ -1218,7 +1218,6 @@ private fun AppBottomNavigation(
         Triple(AppScreen.SETTINGS, Icons.Rounded.Settings, tx(language, "Ustawienia", "Settings", "Налаштування", "Настройки"))
     )
     NavigationBar(
-        modifier = Modifier.height(64.dp),
         containerColor = bankInk(),
         tonalElevation = 0.dp
     ) {

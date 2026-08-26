@@ -1083,37 +1083,53 @@ fun PyszneDaySummary.shareText(nickname: String = ""): String {
     fun money(value: Double) = String.format(locale, "%.2f zł", value)
     fun hourly(value: Double?) = value?.let { String.format(locale, "%.1f zł/h", it) } ?: "—"
     fun perKm(value: Double?) = value?.let { String.format(locale, "%.2f zł/km", it) } ?: "—"
+    fun duration() = if (hours > 0) "%d h %02d min".format(hours, minutes) else "$minutes min"
 
     return buildString {
         appendLine("FUJARA | PODSUMOWANIE DNIA")
-        appendLine("Pyszne · ${date.format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))}")
+        appendLine("Pyszne • ${date.format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))}")
         who?.let { appendLine("Kurier: $it") }
-        appendLine("────────────────────")
+
+        appendLine()
         appendLine("WYNIK PO KOSZTACH")
         appendLine("Zysk: ${money(netPln)}")
         appendLine("Tempo: ${hourly(netPerHour)}")
         appendLine("Efektywność: ${perKm(netPerKm)}")
+
         appendLine()
+        appendLine("────────────────────")
         appendLine("PRZEBIEG DNIA")
         appendLine("Przychód: ${money(grossPln)}")
-        appendLine("Zlecenia: $orderCount${if (cancelledOrders > 0) " · anulowane: $cancelledOrders" else ""}")
+        appendLine("Zlecenia: $orderCount")
+        if (cancelledOrders > 0) appendLine("Anulowane: $cancelledOrders")
         appendLine("Dystans: ${String.format(locale, "%.1f km", distanceKm)}")
-        appendLine("Czas: ${hours}h ${minutes}min")
-        if (cashTipsPln > 0.0) appendLine("Napiwki gotówkowe: ${money(cashTipsPln)}")
+        appendLine("Czas: ${duration()}")
+        if (cashTipsPln > 0.0) appendLine("Napiwki gotówkowe: +${money(cashTipsPln)}")
         if (extraPauseMinutes > 0) appendLine("Dodatkowy przestój: ${extraPauseMinutes} min")
+
         appendLine()
+        appendLine("────────────────────")
         appendLine("OCENA ZLECEŃ")
-        appendLine("Opłacalne: $goodOrders · Na granicy: $borderlineOrders · Nieopłacalne: $poorOrders")
+        appendLine("• Opłacalne: $goodOrders")
+        appendLine("• Na granicy: $borderlineOrders")
+        appendLine("• Nieopłacalne: $poorOrders")
+
         best?.let {
             appendLine()
-            appendLine("Najlepsze zlecenie: ${it.name}")
-            appendLine("${hourly(it.netPerHour)} · ${perKm(it.netPerKm)}")
+            appendLine("────────────────────")
+            appendLine("NAJLEPSZE ZLECENIE")
+            appendLine(it.name)
+            appendLine("${hourly(it.netPerHour)} • ${perKm(it.netPerKm)}")
         }
         if (worst != null && worst.orderKey != best?.orderKey) {
-            appendLine("Najsłabsze zlecenie: ${worst.name}")
-            appendLine("${hourly(worst.netPerHour)} · ${perKm(worst.netPerKm)}")
+            appendLine()
+            appendLine("NAJSŁABSZE ZLECENIE")
+            appendLine(worst.name)
+            appendLine("${hourly(worst.netPerHour)} • ${perKm(worst.netPerKm)}")
         }
+
+        appendLine()
         appendLine("────────────────────")
-        append("FUJARA · analiza opłacalności dostaw")
+        append("FUJARA • analiza opłacalności dostaw")
     }
 }

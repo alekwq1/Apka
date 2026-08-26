@@ -47,9 +47,11 @@ class PyszneShareTextTest {
 
         assertTrue(text.contains("FUJARA | PODSUMOWANIE DNIA"))
         assertTrue(text.contains("WYNIK PO KOSZTACH"))
-        assertTrue(text.contains("Opłacalne: 1 · Na granicy: 0 · Nieopłacalne: 1"))
-        assertTrue(text.contains("Najlepsze zlecenie: Restauracja Dobra"))
-        assertTrue(text.contains("Najsłabsze zlecenie: Restauracja Słaba"))
+        assertTrue(text.contains("• Opłacalne: 1"))
+        assertTrue(text.contains("• Na granicy: 0"))
+        assertTrue(text.contains("• Nieopłacalne: 1"))
+        assertTrue(text.contains("NAJLEPSZE ZLECENIE\nRestauracja Dobra"))
+        assertTrue(text.contains("NAJSŁABSZE ZLECENIE\nRestauracja Słaba"))
         assertFalse(text.contains("🔴 FUJARA"))
     }
 
