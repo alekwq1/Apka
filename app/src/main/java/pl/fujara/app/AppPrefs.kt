@@ -43,6 +43,14 @@ class AppPrefs(private val context: Context) {
         get() = prefs.getString("language_code", null) ?: detectSystemLanguage()
         set(value) = prefs.edit().putString("language_code", normalizeLanguage(value)).apply()
 
+    /** True dopoki uzytkownik nie wymusi konkretnego jezyka aplikacji. */
+    val usesSystemLanguage: Boolean
+        get() = !prefs.contains("language_code")
+
+    fun useSystemLanguage() {
+        prefs.edit().remove("language_code").apply()
+    }
+
     var themeMode: AppThemeMode
         get() = AppThemeMode.fromKey(prefs.getString("theme_mode", AppThemeMode.SYSTEM.key))
         set(value) = prefs.edit().putString("theme_mode", value.key).apply()

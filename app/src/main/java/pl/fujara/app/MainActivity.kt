@@ -279,6 +279,12 @@ class MainActivity : ComponentActivity() {
                                     AppScreen.SETTINGS -> SettingsScreen(
                                         prefs = prefs,
                                         language = language,
+                                        analysisEnabled = analysisEnabled,
+                                        serviceEnabled = serviceEnabled,
+                                        onAnalysisEnabledChanged = { enabled ->
+                                            prefs.analysisEnabled = enabled
+                                            analysisEnabled = enabled
+                                        },
                                         onLanguageChanged = { languageCode = it.code },
                                         onThemeChanged = { selected ->
                                             prefs.themeMode = selected
@@ -443,10 +449,15 @@ private fun PrivacyScreen(
             state = pagerState,
             modifier = Modifier.fillMaxWidth().weight(1f)
         ) { page ->
-            Column(
-                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
+            val pageScrollState = rememberScrollState()
+            Box(modifier = Modifier.fillMaxSize()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(pageScrollState)
+                        .padding(bottom = if (page == 0 && pageScrollState.canScrollForward) 58.dp else 0.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                 if (page == 0) {
                     Row(
                         modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -539,6 +550,32 @@ private fun PrivacyScreen(
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 15.dp)
                     ) {
                         Text(tx(language, "Gotowe — przejdź do FUJARY", "Done — open FUJARA", "Готово — перейти до FUJARA", "Готово — перейти в FUJARA"), fontWeight = FontWeight.Bold)
+                    }
+                }
+                }
+
+                if (page == 0 && pageScrollState.canScrollForward) {
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        color = bankInk()
+                    ) {
+                        Text(
+                            tx(
+                                language,
+                                "Przewiń w dół, aby przeczytać całość i przejść dalej ↓",
+                                "Scroll down to read everything and continue ↓",
+                                "Прокрутіть униз, щоб прочитати все й перейти далі ↓",
+                                "Прокрутите вниз, чтобы прочитать всё и продолжить ↓"
+                            ),
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     }
                 }
             }
@@ -835,6 +872,17 @@ private fun HomeScreen(
                 adjustmentsStore.addCashTip(today, amount)
                 refreshToken += 1
             }
+        )
+
+        InfoCard(
+            title = tx(language, "Podsumowanie dnia", "Day summary", "Підсумок дня", "Итог дня"),
+            body = tx(
+                language,
+                "Automatyczne zaczytywanie historii i podsumowanie dnia działa obecnie tylko dla Pyszne.pl.",
+                "Automatic history reading and day summaries currently work only with Pyszne.pl.",
+                "Автоматичне читання історії та підсумок дня наразі працюють лише з Pyszne.pl.",
+                "Автоматическое чтение истории и итог дня сейчас работают только с Pyszne.pl."
+            )
         )
 
         SectionHeader(
@@ -3436,25 +3484,34 @@ private fun AnalysisBarChart(
                 shape = RoundedCornerShape(16.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 13.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(selected.detail, fontWeight = FontWeight.Black)
+                    Text(
+                        selected.detail,
+                        fontWeight = FontWeight.Black,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.Bottom
+                    ) {
                         Text(
-                            tx(language, "zysk po kosztach", "profit after costs", "прибуток після витрат", "прибыль после расходов"),
-                            style = MaterialTheme.typography.labelSmall,
+                            tx(language, "Zysk po kosztach", "Profit after costs", "Прибуток після витрат", "Прибыль после расходов"),
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        Text(
+                            String.format(Locale.forLanguageTag("pl-PL"), "%+.0f zł", selected.value),
+                            fontWeight = FontWeight.Black,
+                            style = MaterialTheme.typography.titleLarge,
+                            textAlign = TextAlign.End,
+                            color = if (selected.value >= 0.0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
+                        )
                     }
-                    Text(
-                        String.format(Locale.forLanguageTag("pl-PL"), "%+.0f zł", selected.value),
-                        fontWeight = FontWeight.Black,
-                        style = MaterialTheme.typography.titleLarge,
-                        color = if (selected.value >= 0.0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
-                    )
                 }
             }
         }
@@ -4239,16 +4296,43 @@ private fun SettingsCategorySelector(
         SettingsCategory.LISTS to tx(language, "Listy", "Lists", "Списки", "Списки"),
         SettingsCategory.DATA to tx(language, "Dane", "Data", "Дані", "Данные")
     )
-    Row(
-        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        items.forEach { (category, label) ->
-            FilterChip(
-                selected = selected == category,
-                onClick = { onSelected(category) },
-                label = { Text(label) }
-            )
+
+    Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+        Text(
+            tx(language, "Wybierz dział ustawień", "Choose a settings section", "Оберіть розділ налаштувань", "Выберите раздел настроек"),
+            fontWeight = FontWeight.Black,
+            style = MaterialTheme.typography.titleSmall
+        )
+        Text(
+            tx(language, "Dotknij jednego z działów poniżej.", "Tap one of the sections below.", "Натисніть один із розділів нижче.", "Нажмите один из разделов ниже."),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodySmall
+        )
+        items.chunked(2).forEach { rowItems ->
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                rowItems.forEach { (category, label) ->
+                    val isSelected = selected == category
+                    if (isSelected) {
+                        Button(
+                            onClick = { onSelected(category) },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(16.dp),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 13.dp)
+                        ) {
+                            Text("$label  ✓", fontWeight = FontWeight.Black)
+                        }
+                    } else {
+                        OutlinedButton(
+                            onClick = { onSelected(category) },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(16.dp),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 13.dp)
+                        ) {
+                            Text("$label  ›", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -4257,6 +4341,9 @@ private fun SettingsCategorySelector(
 private fun SettingsScreen(
     prefs: AppPrefs,
     language: AppLanguage,
+    analysisEnabled: Boolean,
+    serviceEnabled: Boolean,
+    onAnalysisEnabledChanged: (Boolean) -> Unit,
     onLanguageChanged: (AppLanguage) -> Unit,
     onThemeChanged: (AppThemeMode) -> Unit,
     onBack: () -> Unit
@@ -4303,6 +4390,7 @@ private fun SettingsScreen(
         mutableStateOf(BlacklistEntryCodec.parse(prefs.tipperCustomersText))
     }
     var selectedLanguage by remember { mutableStateOf(AppLanguage.fromCode(prefs.languageCode)) }
+    var languageUsesSystem by remember { mutableStateOf(prefs.usesSystemLanguage) }
     var selectedTheme by remember { mutableStateOf(prefs.themeMode) }
     var decisionBasis by remember { mutableStateOf(prefs.decisionBasis) }
     var hapticsEnabled by remember { mutableStateOf(prefs.hapticsEnabled) }
@@ -4439,6 +4527,42 @@ private fun SettingsScreen(
             )
         )
 
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(22.dp),
+            color = MaterialTheme.colorScheme.surface
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 18.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        tx(language, "Analiza ofert", "Offer analysis", "Аналіз пропозицій", "Анализ предложений"),
+                        fontWeight = FontWeight.Black,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        when {
+                            analysisEnabled && serviceEnabled -> tx(language, "Włączona — FUJARA analizuje widoczne oferty.", "On — FUJARA analyzes visible offers.", "Увімкнено — FUJARA аналізує видимі пропозиції.", "Включено — FUJARA анализирует видимые предложения.")
+                            analysisEnabled -> tx(language, "Włączona, ale wymaga aktywnej Dostępności FUJARY.", "On, but FUJARA Accessibility must also be enabled.", "Увімкнено, але потрібна активна Доступність FUJARA.", "Включено, но нужна активная Доступность FUJARA.")
+                            else -> tx(language, "Wyłączona — panel oceny ofert jest wstrzymany.", "Off — offer rating is paused.", "Вимкнено — оцінювання пропозицій призупинено.", "Выключено — оценка предложений приостановлена.")
+                        },
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                Switch(
+                    checked = analysisEnabled,
+                    onCheckedChange = { enabled ->
+                        onAnalysisEnabledChanged(enabled)
+                        saved()
+                    }
+                )
+            }
+        }
+
         SettingsCategorySelector(
             selected = settingsCategory,
             language = language,
@@ -4483,10 +4607,22 @@ private fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                FilterChip(
+                    selected = languageUsesSystem,
+                    onClick = {
+                        prefs.useSystemLanguage()
+                        languageUsesSystem = true
+                        selectedLanguage = AppLanguage.fromCode(prefs.languageCode)
+                        onLanguageChanged(selectedLanguage)
+                        saved()
+                    },
+                    label = { Text(tx(language, "Domyślny (telefon)", "Default (phone)", "Типово (телефон)", "По умолчанию (телефон)")) }
+                )
                 AppLanguage.values().forEach { item ->
                     FilterChip(
-                        selected = selectedLanguage == item,
+                        selected = !languageUsesSystem && selectedLanguage == item,
                         onClick = {
+                            languageUsesSystem = false
                             selectedLanguage = item
                             prefs.languageCode = item.code
                             onLanguageChanged(item)
