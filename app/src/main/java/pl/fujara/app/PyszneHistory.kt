@@ -1076,34 +1076,44 @@ fun PyszneDaySummary.shareText(nickname: String = ""): String {
     val hours = durationSeconds / 3600
     val minutes = (durationSeconds % 3600) / 60
     val who = nickname.trim().takeIf { it.isNotBlank() }
-    val namedRestaurants = restaurants.filterNot { it.name.equals("Nieznana restauracja", ignoreCase = true) }
-    val best = namedRestaurants.firstOrNull()
-    val worst = namedRestaurants.minByOrNull { it.netPerHour ?: Double.POSITIVE_INFINITY }
+    val namedOrders = restaurants.filterNot { it.name.equals("Nieznana restauracja", ignoreCase = true) }
+    val best = bestPyszneOrderForDay(namedOrders)
+    val worst = worstPyszneOrderForDay(namedOrders)
+
+    fun money(value: Double) = String.format(locale, "%.2f zł", value)
+    fun hourly(value: Double?) = value?.let { String.format(locale, "%.1f zł/h", it) } ?: "—"
+    fun perKm(value: Double?) = value?.let { String.format(locale, "%.2f zł/km", it) } ?: "—"
 
     return buildString {
-        appendLine("🏁 FUJARA — PODSUMOWANIE DNIA")
-        appendLine("🍔 Pyszne • ${date.format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))}")
-        who?.let { appendLine("👤 $it") }
+        appendLine("FUJARA | PODSUMOWANIE DNIA")
+        appendLine("Pyszne · ${date.format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))}")
+        who?.let { appendLine("Kurier: $it") }
+        appendLine("────────────────────")
+        appendLine("WYNIK PO KOSZTACH")
+        appendLine("Zysk: ${money(netPln)}")
+        appendLine("Tempo: ${hourly(netPerHour)}")
+        appendLine("Efektywność: ${perKm(netPerKm)}")
         appendLine()
-        appendLine("💰 Przychód: ${String.format(locale, "%.2f", grossPln)} zł")
-        appendLine("📦 Zlecenia: $orderCount${if (cancelledOrders > 0) "  •  anulowane: $cancelledOrders" else ""}")
-        appendLine("🚗 Dystans: ${String.format(locale, "%.1f", distanceKm)} km")
-        appendLine("⏱ Czas: ${hours}h ${minutes}min")
-        if (cashTipsPln > 0.0) appendLine("💵 Napiwki gotówkowe: ${String.format(locale, "%.2f", cashTipsPln)} zł")
-        if (extraPauseMinutes > 0) appendLine("⏸ Dodatkowy przestój: ${extraPauseMinutes} min")
+        appendLine("PRZEBIEG DNIA")
+        appendLine("Przychód: ${money(grossPln)}")
+        appendLine("Zlecenia: $orderCount${if (cancelledOrders > 0) " · anulowane: $cancelledOrders" else ""}")
+        appendLine("Dystans: ${String.format(locale, "%.1f km", distanceKm)}")
+        appendLine("Czas: ${hours}h ${minutes}min")
+        if (cashTipsPln > 0.0) appendLine("Napiwki gotówkowe: ${money(cashTipsPln)}")
+        if (extraPauseMinutes > 0) appendLine("Dodatkowy przestój: ${extraPauseMinutes} min")
         appendLine()
-        appendLine("⚡ PO KOSZTACH")
-        appendLine("💵 ${String.format(locale, "%.0f", netPerHour ?: 0.0)} zł/h")
-        appendLine("🛣 ${String.format(locale, "%.2f", netPerKm ?: 0.0)} zł/km")
-        appendLine()
-        appendLine("🟢 SUPER: $goodOrders")
-        appendLine("🟡 NA STYK: $borderlineOrders")
-        appendLine("🔴 FUJARA: $poorOrders")
-        if (best != null || worst != null) {
+        appendLine("OCENA ZLECEŃ")
+        appendLine("Opłacalne: $goodOrders · Na granicy: $borderlineOrders · Nieopłacalne: $poorOrders")
+        best?.let {
             appendLine()
-            best?.let { appendLine("🏆 Najlepiej: ${it.name}") }
-            if (worst != null && worst.orderKey != best?.orderKey) appendLine("🪈 Najsłabiej: ${worst.name}")
+            appendLine("Najlepsze zlecenie: ${it.name}")
+            appendLine("${hourly(it.netPerHour)} · ${perKm(it.netPerKm)}")
         }
-        append("\n#FUJARA")
+        if (worst != null && worst.orderKey != best?.orderKey) {
+            appendLine("Najsłabsze zlecenie: ${worst.name}")
+            appendLine("${hourly(worst.netPerHour)} · ${perKm(worst.netPerKm)}")
+        }
+        appendLine("────────────────────")
+        append("FUJARA · analiza opłacalności dostaw")
     }
 }
