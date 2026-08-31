@@ -1,12 +1,12 @@
-# FUJARA 0.8.15
+# FUJARA 1.0.0
 
 Android app for local courier-offer profitability analysis.
 
 ## Google Play readiness
 - applicationId / namespace: `pl.fujara.app`
 - targetSdk / compileSdk: 36
-- versionCode: 32
-- versionName: 0.8.15
+- versionCode: 39
+- versionName: 1.0.0
 - signed AAB workflow: `.github/workflows/build-play-aab.yml`
 - debug APK workflow: `.github/workflows/test-apk.yml`
 - privacy page: `docs/privacy.html`
@@ -16,6 +16,12 @@ Android app for local courier-offer profitability analysis.
 
 Start with `PLAY-CONSOLE-START-HERE.md`.
 
+
+## 1.0.0 — release
+
+- Finalny numer wersji aplikacji: `1.0.0`.
+- Kosmetyczne poprawki ekranu Start, Analizy oraz alertów restauracji i odbiorców.
+- `versionCode`: 39.
 
 ## 0.8.15
 

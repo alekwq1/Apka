@@ -740,7 +740,9 @@ private fun HomeScreen(
     var refreshToken by remember { mutableStateOf(0) }
     LaunchedEffect(Unit) {
         while (true) {
-            delay(15_000)
+            // Start ma reagowac praktycznie od razu po zapisaniu zlecenia
+            // przez panel nakladki, bez czekania na kolejny dlugi cykl odswiezania.
+            delay(500)
             refreshToken += 1
         }
     }
@@ -855,15 +857,13 @@ private fun HomeScreen(
             )
         }
 
-        if (todaySummary.orderCount > 0) {
-            SectionHeader(title = tx(language, "Tempo dnia", "Today's pace", "Темп дня", "Темп дня"))
-            HomePaceCard(
-                perHour = todaySummary.netPerHour,
-                remaining = remaining,
-                goalReached = goalReached,
-                language = language
-            )
-        }
+        SectionHeader(title = tx(language, "Tempo dnia", "Today's pace", "Темп дня", "Темп дня"))
+        HomePaceCard(
+            perHour = todaySummary.netPerHour,
+            remaining = remaining,
+            goalReached = goalReached,
+            language = language
+        )
 
         CashTipDuringShiftCard(
             currentTips = liveCashTips,
@@ -3399,7 +3399,7 @@ private fun AnalysisDayRow(
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł · %.1f km", item.grossPln, item.distanceKm),
+                    String.format(Locale.forLanguageTag("pl-PL"), "%.2f zł · %.1f km · %s", item.grossPln, item.distanceKm, formatDuration(item.durationSeconds)),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -5218,7 +5218,7 @@ private fun SettingsScreen(
         TextButton(onClick = { uriHandler.openUri("https://alekwq1.github.io/Apka/privacy.html") }, modifier = Modifier.fillMaxWidth()) {
             Text(tx(language, "Polityka prywatności", "Privacy policy", "Політика конфіденційності", "Политика конфиденциальности"))
         }
-        Text("FUJARA 0.8.18", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+        Text("FUJARA 1.0.0", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
     }
 }
 

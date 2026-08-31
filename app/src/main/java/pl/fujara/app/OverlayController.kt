@@ -111,7 +111,9 @@ class OverlayController(
 
         status?.apply {
             text = if (blacklistHits.hasAny) {
-                tr(language, "CZARNA LISTA", "BLOCKLIST", "ЧОРНИЙ СПИСОК", "ЧЕРНЫЙ СПИСОК")
+                tr(language, "FUJARA Alert", "FUJARA Alert", "FUJARA Alert", "FUJARA Alert")
+            } else if (blacklistHits.hasTipper) {
+                tr(language, "NAPIWEK ALERT", "TIP ALERT", "ЧАЙОВІ ALERT", "ЧАЕВЫЕ ALERT")
             } else {
                 when (result.status) {
                     ProfitabilityStatus.PROFITABLE -> tr(language, "DOBRA", "GOOD", "ДОБРЕ", "ХОРОШО")
@@ -135,8 +137,10 @@ class OverlayController(
                 blacklistHits.customer?.let {
                     add(tr(language, "Odbiorca: $it", "Customer: $it", "Клієнт: $it", "Получатель: $it"))
                 }
-                blacklistHits.tipper?.let {
-                    add(tr(language, "⭐ Zuch z napiwkiem: $it", "⭐ Known tipper: $it", "⭐ Часто дає чайові: $it", "⭐ Часто даёт чаевые: $it"))
+                if (!blacklistHits.hasAny) {
+                    blacklistHits.tipper?.let {
+                        add(tr(language, "⭐ Zuch z napiwkiem: $it", "⭐ Known tipper: $it", "⭐ Часто дає чайові: $it", "⭐ Часто даёт чаевые: $it"))
+                    }
                 }
             }
             val noticeColor = if (blacklistHits.hasAny) red else green
