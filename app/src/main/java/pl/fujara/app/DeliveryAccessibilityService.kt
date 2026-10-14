@@ -703,6 +703,15 @@ class DeliveryAccessibilityService : AccessibilityService() {
         val ocr = ocrText.trim()
         if (accessibility.isBlank() && ocr.isBlank()) return
 
+        // Returning to the week must end the previous day's list session.
+        if (PyszneDayReferenceParser.isWeeklySummary(accessibility) || PyszneDayReferenceParser.isWeeklySummary(ocr)) {
+            activePyszneDayDate = null
+            activePyszneDaySeenAt = 0L
+            pendingOcrDayIdsDate = null
+            pendingOcrDayIdHits.clear()
+            return
+        }
+
         // Accessibility ma pierwszenstwo. OCR jest fallbackiem, ale nigdy nie
         // nadpisuje poprawnego odczytu Accessibility kwota z pierwszej dostawy.
         val accessibilityReference = accessibility.takeIf { it.isNotBlank() }

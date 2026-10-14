@@ -1,12 +1,12 @@
-# FUJARA 1.0.0
+# FUJARA 1.0.1
 
 Android app for local courier-offer profitability analysis.
 
 ## Google Play readiness
 - applicationId / namespace: `pl.fujara.app`
 - targetSdk / compileSdk: 36
-- versionCode: 39
-- versionName: 1.0.0
+- versionCode: 40
+- versionName: 1.0.1
 - signed AAB workflow: `.github/workflows/build-play-aab.yml`
 - debug APK workflow: `.github/workflows/test-apk.yml`
 - privacy page: `docs/privacy.html`
@@ -16,6 +16,10 @@ Android app for local courier-offer profitability analysis.
 
 Start with `PLAY-CONSOLE-START-HERE.md`.
 
+
+## 1.0.1 — naprawa podsumowania Pyszne
+
+Szczegóły: `NAPRAWA-1.0.1.md`. Obsługa aktualnej etykiety „przyjętych zleceń”, numerów bez # i bezpiecznej kontroli dnia.
 
 ## 1.0.0 — release
 

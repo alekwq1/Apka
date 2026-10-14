@@ -1,0 +1,539 @@
+--- a/INSTRUKCJA-GITHUB-APK.md
++++ b/INSTRUKCJA-GITHUB-APK.md
+@@ -17,7 +17,6 @@
+ - `app/`
+ - `build.gradle.kts`
+ - `settings.gradle.kts`
+-- `debug-test.keystore`
+ 
+ Ważne: plik `.github/workflows/build-apk.yml` musi znaleźć się dokładnie w tej ścieżce w repozytorium.
+ 
+@@ -46,9 +45,9 @@
+ 
+ ## 5. Kolejne wersje
+ 
+-Każdy ręczny `Run workflow` tworzy nowy testowy APK. Projekt ma dołączony stały **testowy** klucz podpisu (`debug-test.keystore`), więc kolejne APK powinny instalować się jako aktualizacja tej samej aplikacji i zachowywać jej ustawienia.
++Każdy ręczny `Run workflow` tworzy nowy testowy APK. Ta paczka nie zawiera stałego klucza testowego. Domyślny klucz debug może różnić się między maszynami/uruchomieniami CI, więc taki APK nie zawsze zaktualizuje aplikację już obecną na telefonie.
+ 
+-Ten klucz jest celowo testowy i jego hasło znajduje się w projekcie. **Nie używaj go do wersji produkcyjnej ani publikacji w Google Play.** Przed prawdziwym wydaniem aplikacji zrobimy osobny prywatny klucz release i przechowamy go jako GitHub Secret.
++Aktualizację z zachowaniem danych podpisz tym samym kluczem co zainstalowaną wersję (albo użyj dotychczasowego kanału Google Play). Nie zastępuj istniejącego klucza. Przed aktualizacją wyeksportuj kopię danych z ustawień FUJARY. Jeśli Android odrzuci aktualizację z powodu podpisu, nie odinstalowuj aplikacji — najpierw sprawdź klucz podpisu.
+ 
+ ## Gdy GitHub pokaże błąd
+ 
+--- a/NAPRAWA-1.0.1.md
++++ b/NAPRAWA-1.0.1.md
+@@ -0,0 +1,39 @@
++# FUJARA 1.0.1 — naprawa podsumowania Pyszne
++
++## Przyczyna
++Na przekazanym ekranie z 13.10.2026 widnieje „10 przyjętych zleceń”. Parser 1.0.0 rozpoznawał „10 zleceń” i „10 offers accepted”, ale nie dodatkowe słowo przed „zleceń”. Dlatego pomimo 10 zapisów i 290,94 zł nie powstawała kontrola dnia, a przycisk pozostawał nieaktywny. Lista pokazuje też numery bez #, podczas gdy stary parser listy wymagał #.
++
++## Zmiany
++- Rozpoznawanie nowych i starszych polskich/angielskich etykiet liczby zleceń, także rozdzielonych na kilka węzłów tekstu.
++- Rozpoznawanie numerów bez #, również samych liter (CPPXDD, CBYWRH), na osobnej linii przy kwocie. Zachowana obsługa numerów z # i deduplikacja.
++- Obsługa twardych/wąskich spacji, osobnej linii waluty oraz kwot z separatorem tysięcy.
++- Kwota musi znajdować się przy etykiecie przychodu. Parser nie przechodzi przez następną sekcję do kwoty restauracji.
++- Sprzeczne liczby/kwoty, różne daty i podsumowanie tygodnia są odrzucane. Nie ma zgadywania daty ani ręcznego obchodzenia kontroli.
++- Powrót na ekran tygodnia zeruje kontekst zbierania numerów poprzedniego dnia.
++- Identyczne odczyty nagłówka/listy nie powodują kolejnych zapisów JSON i przeliczania przypisania zleceń do dni.
++- Czytelniejsza instrukcja w aplikacji i pola napiwku/przestoju na pełną szerokość.
++- Wersja 1.0.1, versionCode 40; ten sam applicationId i format danych.
++- Poprawiona instrukcja podpisywania APK: archiwum nie zawiera stałego klucza debug.
++
++## Aktualizacja kodu
++1. Wyeksportuj kopię danych w ustawieniach obecnej FUJARY.
++2. Rozpakuj ZIP. Skopiuj zawartość folderu FUJARA-1.0.1 do swojego projektu (nie twórz dodatkowego poziomu folderów).
++3. Zachowaj swój folder .git, local.properties oraz dotychczasowy klucz i konfigurację podpisu.
++4. W Visual Studio Code sprawdź zmiany i wykonaj commit/push do istniejącego repozytorium FUJARY.
++5. Dotychczasowy workflow `Build APK` uruchamia `testDebugUnitTest assembleDebug`. Alternatywnie użyj Android Studio z JDK 17 i SDK 36.
++6. Zainstaluj jako aktualizację podpisaną tym samym kluczem co obecna aplikacja. Nie odinstalowuj obecnej wersji w celu obejścia konfliktu podpisu.
++
++## Sprawdzenie na telefonie
++1. Sprawdź w ustawieniach Androida, czy usługa dostępności FUJARY jest włączona.
++2. W Pyszne: Historia przychodów → tydzień → 13 października 2026.
++3. Przewiń na górę: data, 290,94 zł, „10 przyjętych zleceń”. Zatrzymaj ekran na 2–3 sekundy.
++4. Wróć do FUJARY → Dzień → 13 października. Kontrola powinna pokazać 10 i 290,94 zł.
++5. Przy 10 zapisach o sumie 290,94 zł wybierz „Potwierdź i policz”.
++6. Opcjonalnie przewiń listę Pyszne, aby uzupełnić identyfikatory. Nie zapisuj ponownie wszystkich dostaw tylko z powodu tej aktualizacji.
++
++## Weryfikacja i ograniczenia
++Uruchomiono testy JVM parserów, obliczeń i stabilizatora panelu, w tym 18 nowych testów regresyjnych. Fixture nowego ekranu to ręczna transkrypcja tekstu przekazanego zdjęcia, nie rzeczywisty zrzut drzewa Accessibility/OCR.
++
++Środowisko nie posiada Android SDK/Gradle. Rdzeń Kotlin skompilowano kompilatorem 2.3.21 i przetestowano przez JUnit 4.13.2; enumy ustawień zostały wyodrębnione bez zmian z AppPrefs.kt, Android API służyło tylko jako classpath. Nie uruchomiono testów UI, testu AnalysisCalendarTest ani pełnego budowania APK. Wynik testów rdzenia znajduje się w TEST-RESULTS.txt. Pełne testy Gradle i budowa APK pozostają w dołączonym workflow.
++
++Odczyt na konkretnym telefonie wymaga sprawdzenia po instalacji: widoczny tekst na zdjęciu nie gwarantuje, że Pyszne udostępnia identyczną treść usłudze dostępności lub OCR. Jeśli kontrola nadal nie pojawi się, potrzebny będzie wynik tej próby na urządzeniu.
+--- a/README.md
++++ b/README.md
+@@ -1,12 +1,12 @@
+-# FUJARA 1.0.0
++# FUJARA 1.0.1
+ 
+ Android app for local courier-offer profitability analysis.
+ 
+ ## Google Play readiness
+ - applicationId / namespace: `pl.fujara.app`
+ - targetSdk / compileSdk: 36
+-- versionCode: 39
+-- versionName: 1.0.0
++- versionCode: 40
++- versionName: 1.0.1
+ - signed AAB workflow: `.github/workflows/build-play-aab.yml`
+ - debug APK workflow: `.github/workflows/test-apk.yml`
+ - privacy page: `docs/privacy.html`
+@@ -16,6 +16,10 @@
+ 
+ Start with `PLAY-CONSOLE-START-HERE.md`.
+ 
++
++## 1.0.1 — naprawa podsumowania Pyszne
++
++Szczegóły: `NAPRAWA-1.0.1.md`. Obsługa aktualnej etykiety „przyjętych zleceń”, numerów bez # i bezpiecznej kontroli dnia.
+ 
+ ## 1.0.0 — release
+ 
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -14,8 +14,8 @@
+         applicationId = "pl.fujara.app"
+         minSdk = 26
+         targetSdk = 36
+-        versionCode = 39
+-        versionName = "1.0.0"
++        versionCode = 40
++        versionName = "1.0.1"
+ 
+         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+     }
+--- a/app/src/main/java/pl/fujara/app/DeliveryAccessibilityService.kt
++++ b/app/src/main/java/pl/fujara/app/DeliveryAccessibilityService.kt
+@@ -703,6 +703,15 @@
+         val ocr = ocrText.trim()
+         if (accessibility.isBlank() && ocr.isBlank()) return
+ 
++        // Returning to the week must end the previous day's list session.
++        if (PyszneDayReferenceParser.isWeeklySummary(accessibility) || PyszneDayReferenceParser.isWeeklySummary(ocr)) {
++            activePyszneDayDate = null
++            activePyszneDaySeenAt = 0L
++            pendingOcrDayIdsDate = null
++            pendingOcrDayIdHits.clear()
++            return
++        }
++
+         // Accessibility ma pierwszenstwo. OCR jest fallbackiem, ale nigdy nie
+         // nadpisuje poprawnego odczytu Accessibility kwota z pierwszej dostawy.
+         val accessibilityReference = accessibility.takeIf { it.isNotBlank() }
+--- a/app/src/main/java/pl/fujara/app/MainActivity.kt
++++ b/app/src/main/java/pl/fujara/app/MainActivity.kt
+@@ -1923,7 +1923,7 @@
+                 onClick = { refreshToken += 1 },
+                 modifier = Modifier.fillMaxWidth()
+             ) {
+-                Text(tx(language, "Odśwież logi", "Refresh logs", "Оновити записи", "Обновить записи"))
++                Text(tx(language, "Odśwież dane", "Refresh logs", "Оновити записи", "Обновить записи"))
+             }
+         }
+ 
+@@ -1970,8 +1970,8 @@
+                         Text(
+                             tx(
+                                 language,
+-                                "Otwórz w Pyszne: Zarobki → Podsumowanie dnia dla ${formatSummaryDate(selectedDate, language)}. FUJARA zapisze kontrolę tylko wtedy, gdy na ekranie odczyta jednocześnie datę, liczbę zleceń i kwotę tego dnia.",
+-                                "Open Pyszne daily summary for ${formatSummaryDate(selectedDate, language)}. FUJARA only accepts a check when date, order count and amount are read together.",
++                                "W Pyszne otwórz Historię przychodów → wybierz ${formatSummaryDate(selectedDate, language)} → przewiń na samą górę. Pozostaw ekran na 2–3 sekundy i wróć tutaj. Muszą być widoczne data, przychód i liczba przyjętych zleceń.",
++                                "In Pyszne open Earnings history → ${formatSummaryDate(selectedDate, language)} → scroll to the top. Wait 2–3 seconds, then return here. Keep the date, earnings and accepted order count visible.",
+                                 "Відкрийте підсумок дня Pyszne для вибраної дати.",
+                                 "Откройте итоги дня Pyszne для выбранной даты."
+                             ),
+@@ -1984,7 +1984,7 @@
+             Text(
+                 tx(
+                     language,
+-                    "Wartości kontrolne są tylko do odczytu — nie można ich ręcznie zmienić. To zabezpiecza przed połączeniem kwoty z jednego dnia z liczbą zleceń z innego.",
++                    "Kontrola wymaga ekranu jednego dnia. Podsumowanie tygodnia i sama lista restauracji nie wystarczą. Dane odświeżają się automatycznie.",
+                     "Control values are read-only. This prevents mixing an amount from one day with an order count from another.",
+                     "Контрольні значення не можна змінювати вручну.",
+                     "Контрольные значения нельзя менять вручную."
+@@ -2016,7 +2016,7 @@
+                 style = MaterialTheme.typography.bodySmall,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant
+             )
+-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
++            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                 OutlinedTextField(
+                     value = cashTipsText,
+                     onValueChange = { value ->
+@@ -2024,7 +2024,7 @@
+                         val parsed = cashTipsText.replace(',', '.').toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
+                         adjustmentsStore.setCashTips(selectedDate, parsed)
+                     },
+-                    modifier = Modifier.weight(1f),
++                    modifier = Modifier.fillMaxWidth(),
+                     label = { Text(tx(language, "Napiwek gotówkowy", "Cash tips", "Чайові", "Чаевые")) },
+                     suffix = { Text("zł") },
+                     singleLine = true,
+@@ -2034,7 +2034,7 @@
+                 OutlinedTextField(
+                     value = extraPauseText,
+                     onValueChange = { value -> extraPauseText = value.filter(Char::isDigit).take(3) },
+-                    modifier = Modifier.weight(1f),
++                    modifier = Modifier.fillMaxWidth(),
+                     label = { Text(tx(language, "Przestój", "Downtime", "Простій", "Простой")) },
+                     suffix = { Text("min") },
+                     singleLine = true,
+--- a/app/src/main/java/pl/fujara/app/PyszneHistory.kt
++++ b/app/src/main/java/pl/fujara/app/PyszneHistory.kt
+@@ -385,118 +385,88 @@
+ 
+ /** Odczyt kontrolny z ekranu Pyszne "Podsumowanie dnia". */
+ object PyszneDayReferenceParser {
+-    private val daySummaryMarker = Regex(
+-        """(?i)(?:podsumowanie\s+dnia|daily\s+summary|day\s+summary)"""
++    private val daySummaryMarker = Regex("""(?i)\b(?:podsumowanie\s+dnia|daily\s+summary|day\s+summary)\b""")
++    private val weekMarker = Regex("""(?i)\b(?:podsumowanie\s+tygodnia|przychody\s+w\s+tym\s+tygodniu|weekly\s+summary|week\s+summary|earnings\s+this\s+week)\b""")
++    private val orderCountRegex = Regex(
++        """(?i)\b(\d{1,3})\s*(?:(?:przyj[eę]t\p{L}*|zaakceptowan\p{L}*|accepted)\s+)?(?:zlece[nń]|zlecenia|zlecenie|offers?|orders?)\b(?:\s*(?:accepted|zaakceptowan\p{L}*))?"""
+     )
+-    private val orderCountRegex = Regex(
+-        """(?i)\b(\d{1,3})\s*(?:zlece[nń]|zleceń|zlecenia|offers?|orders?)\s*(?:accepted|zaakceptowan\p{L}*)?\b"""
+-    )
+-    private val moneyRegex = Regex(
+-        """(?i)(\d{1,5}(?:[ .]\d{3})*[,.]\d{2})\s*(?:zł|zl|pln)(?![\p{L}\p{N}])"""
+-    )
+-    private val listOrderIdRegex = Regex("""(?i)#\s*([A-Z0-9]{6})\b""")
+-
+-    // Wazne: kwoty dnia NIE sa juz wybierane jako "pierwsze pieniadze po dacie".
+-    // Na ekranie podsumowania pod naglowkiem jest lista dostaw (31,20 zl, 10,00 zl itd.)
+-    // i przy innym porzadku Accessibility taka kwota potrafila zostac uznana za sume dnia.
+-    private val topEarningsLabel = Regex(
+-        """(?i)^(?:przychody|earnings|income|revenue)\b.*$"""
+-    )
+-    private val totalEarningsLabel = Regex(
+-        """(?i)^(?:suma\s+przychod[oó]w|total\s+(?:earnings|income|revenue))\b.*$"""
+-    )
+-    private val exactDaySummaryLabel = Regex(
+-        """(?i)^(?:podsumowanie\s+dnia|daily\s+summary|day\s+summary)\b.*$"""
+-    )
+-
+-    fun parseOrderIds(text: String): List<String> = listOrderIdRegex.findAll(text)
+-        .map { it.groupValues[1].uppercase(Locale.ROOT) }
+-        .filter { it !in setOf("FUJARA", "PYSZNE") }
+-        .distinct()
+-        .toList()
++    private val moneyRegex = Regex("""(?i)(?<![\d,.\-])(\d{1,5}(?:[ .]\d{3})*[,.]\d{2})\s*(?:zł|zl|pln)(?![\p{L}\p{N}])""")
++    private val topEarningsLabel = Regex("""(?i)^(?:przychody|earnings|income|revenue)\b.*$""")
++    private val totalEarningsLabel = Regex("""(?i)^(?:suma\s+przychod[oó]w|total\s+(?:earnings|income|revenue))\b.*$""")
++    private val exactDaySummaryLabel = Regex("""(?i)^(?:podsumowanie\s+dnia|daily\s+summary|day\s+summary)\b.*$""")
++    private val sectionLabel = Regex("""(?i)^(?:szczeg[oó][lł]y\s+przychod[oó]w|earnings\s+details|stawka\s+bazowa|base\s+(?:pay|rate)|dodatkowe\s+korzy[sś]ci|przyznany\s+napiwek|inne|suma\s+przychod[oó]w|total\s+(?:earnings|income|revenue)|podsumowanie\s+dnia|daily\s+summary|day\s+summary)\b.*$""")
++
++    private fun normalize(text: String) = text.replace('\u00a0', ' ').replace('\u202f', ' ').replace("\u200b", "")
++
++    fun isWeeklySummary(text: String): Boolean = weekMarker.containsMatchIn(normalize(text))
++
++    fun parseOrderIds(text: String): List<String> {
++        val clean = normalize(text)
++        val prefixed = Regex("""(?i)#\s*([A-Z0-9]{6})\b""").findAll(clean)
++            .map { it.groupValues[1].uppercase(Locale.ROOT) }.toList()
++        // Current Pyszne lists show bare IDs, including all-letter IDs (CPPXDD).
++        // Require an entire uppercase line next to a restaurant/amount row.
++        val lines = clean.lines().map { it.trim() }.filter { it.isNotEmpty() }
++        val bare = lines.mapIndexedNotNull { index, line ->
++            if (!Regex("""^[A-Z0-9]{6}$""").matches(line)) return@mapIndexedNotNull null
++            val nearby = lines.subList(maxOf(0, index - 3), minOf(lines.size, index + 2))
++            if (nearby.none { moneyRegex.containsMatchIn(it) }) return@mapIndexedNotNull null
++            line
++        }
++        return (prefixed + bare).filter { it !in setOf("FUJARA", "PYSZNE", "STUART", "GLOVOO", "ORDERS", "INCOME") }.distinct()
++    }
+ 
+     fun parse(text: String): PyszneDayReference? {
+-        if (!daySummaryMarker.containsMatchIn(text)) return null
+-
+-        // Bez jawnej, jednej daty nie tworzymy dnia. Ta sama data moze wystepowac
+-        // dwa razy (naglowek + szczegoly przychodow) i to jest poprawne.
+-        val explicitDates = PyszneHistoryParser.parseDatesFromText(text).distinct()
+-        if (explicitDates.size != 1) return null
+-        val date = explicitDates.single()
+-
+-        val lines = text.lineSequence().map { it.trim() }.filter { it.isNotBlank() }.toList()
+-        if (lines.isEmpty()) return null
+-
+-        val topPairs = mutableListOf<Pair<Int, Double>>()
+-        lines.forEachIndexed { index, line ->
+-            if (!topEarningsLabel.matches(line)) return@forEachIndexed
+-            val window = lines.subList(index, minOf(lines.size, index + 7)).joinToString("\n")
+-            val count = parseCounts(window).firstOrNull() ?: return@forEachIndexed
+-            val amount = parseMoney(window).firstOrNull() ?: return@forEachIndexed
+-            topPairs += count to amount
+-        }
+-
+-        // Najpewniejsza kwota: pole "Suma przychodow" z sekcji szczegolow.
+-        val totalAmounts = lines.mapIndexedNotNull { index, line ->
+-            if (!totalEarningsLabel.matches(line)) return@mapIndexedNotNull null
+-            val window = lines.subList(index, minOf(lines.size, index + 3)).joinToString("\n")
+-            parseMoney(window).firstOrNull()
+-        }
+-
+-        // Najpewniejsza liczba: liczba zaakceptowanych ofert zaraz po "Podsumowanie dnia".
+-        val summaryCounts = lines.mapIndexedNotNull { index, line ->
+-            if (!exactDaySummaryLabel.matches(line)) return@mapIndexedNotNull null
+-            val window = lines.subList(index, minOf(lines.size, index + 4)).joinToString("\n")
+-            parseCounts(window).firstOrNull()
+-        }
+-
+-        val topCounts = topPairs.map { it.first }
+-        val topAmounts = topPairs.map { it.second }
+-        val count = uniqueCount(summaryCounts).orElseUnique(topCounts) ?: return null
+-        val amount = uniqueMoney(totalAmounts).orElseUniqueMoney(topAmounts) ?: return null
+-
+-        if (count !in 1..300 || amount !in 0.0..100_000.0) return null
+-
+-        // Jesli oba niezalezne miejsca ekranu sa widoczne, musza sie zgadzac.
+-        uniqueCount(summaryCounts)?.let { summaryCount ->
+-            uniqueCount(topCounts)?.let { topCount -> if (summaryCount != topCount) return null }
+-        }
+-        uniqueMoney(totalAmounts)?.let { total ->
+-            uniqueMoney(topAmounts)?.let { top -> if (kotlin.math.abs(total - top) >= 0.02) return null }
+-        }
+-
+-        return PyszneDayReference(
+-            date = date,
+-            orderCount = count,
+-            amountPln = amount,
+-            orderIds = parseOrderIds(text)
+-        )
++        val clean = normalize(text)
++        if (isWeeklySummary(clean) || !daySummaryMarker.containsMatchIn(clean)) return null
++        val dates = PyszneHistoryParser.parseDatesFromText(clean).distinct()
++        if (dates.size != 1) return null
++        val lines = clean.lines().map { it.trim() }.filter { it.isNotBlank() }
++
++        // Stop at the next section: an order amount must never become a day total.
++        fun window(index: Int, size: Int): String {
++            val result = mutableListOf(lines[index])
++            for (i in index + 1 until minOf(lines.size, index + size)) {
++                if (sectionLabel.matches(lines[i]) || topEarningsLabel.matches(lines[i])) break
++                result += lines[i]
++            }
++            return result.joinToString("\n")
++        }
++        val topIndices = lines.indices.filter { topEarningsLabel.matches(lines[it]) }
++        val totalIndices = lines.indices.filter { totalEarningsLabel.matches(lines[it]) }
++        val topWindows = topIndices.map { window(it, 7) }
++        fun labeledAmount(index: Int): Double? {
++            parseMoney(lines[index]).singleOrNull()?.let { return it }
++            // Value must start immediately after the label, never after a restaurant name.
++            val following = window(index, 3).substringAfter("\n", "").trim()
++            if (moneyRegex.find(following)?.range?.first != 0) return null
++            return parseMoney(following).firstOrNull()
++        }
++        val summaryWindows = lines.indices.filter { exactDaySummaryLabel.matches(lines[it]) }.map { window(it, 4) }
++        val topCounts = topWindows.flatMap(::parseCounts)
++        val summaryCounts = summaryWindows.flatMap(::parseCounts)
++        val topAmounts = topIndices.mapNotNull(::labeledAmount)
++        val totalAmounts = totalIndices.mapNotNull(::labeledAmount)
++
++        // Reject conflicting observations instead of silently falling back to another card.
++        val count = (topCounts + summaryCounts).distinct().singleOrNull() ?: return null
++        val cents = (topAmounts + totalAmounts).map { kotlin.math.round(it * 100).toInt() }.distinct()
++        if (cents.size != 1 || count !in 1..300) return null
++        val amount = cents.single() / 100.0
++        if (amount !in 0.0..100_000.0) return null
++        return PyszneDayReference(dates.single(), count, amount, parseOrderIds(clean))
+     }
+ 
+     private fun parseCounts(text: String): List<Int> = orderCountRegex.findAll(text)
+-        .mapNotNull { it.groupValues.getOrNull(1)?.toIntOrNull() }
+-        .filter { it in 1..300 }
+-        .toList()
++        .mapNotNull { it.groupValues[1].toIntOrNull() }.toList()
+ 
+     private fun parseMoney(text: String): List<Double> = moneyRegex.findAll(text)
+-        .mapNotNull { match ->
+-            match.groupValues.getOrNull(1)
+-                ?.replace(" ", "")
+-                ?.replace(',', '.')
+-                ?.toDoubleOrNull()
+-        }
+-        .filter { it in 0.0..100_000.0 }
+-        .toList()
+-
+-    private fun uniqueCount(values: List<Int>): Int? = values.distinct().singleOrNull()
+-
+-    private fun uniqueMoney(values: List<Double>): Double? {
+-        val cents = values.map { kotlin.math.round(it * 100.0).toInt() }.distinct()
+-        return cents.singleOrNull()?.div(100.0)
+-    }
+-
+-    private fun Int?.orElseUnique(other: List<Int>): Int? = this ?: uniqueCount(other)
+-    private fun Double?.orElseUniqueMoney(other: List<Double>): Double? = this ?: uniqueMoney(other)
++        .mapNotNull {
++            val raw = it.groupValues[1].replace(" ", "")
++            // Keep the final separator as decimal; earlier dots are grouping separators.
++            val last = maxOf(raw.lastIndexOf(','), raw.lastIndexOf('.'))
++            (raw.substring(0, last).replace(".", "").replace(",", "") + "." + raw.substring(last + 1)).toDoubleOrNull()
++        }.toList()
+ }
+ 
+ class PyszneLogStore(context: Context) {
+@@ -663,8 +633,11 @@
+             }
+         }
+ 
++        val mergedIds = mergeOrderIds(previous?.orderIds.orEmpty(), reference.orderIds)
++        if (previous != null && previous.orderCount == reference.orderCount &&
++            kotlin.math.abs(previous.amountPln - reference.amountPln) < 0.001 && previous.orderIds == mergedIds) return
+         refs[reference.date] = reference.copy(
+-            orderIds = mergeOrderIds(previous?.orderIds.orEmpty(), reference.orderIds),
++            orderIds = mergedIds,
+             capturedAtMillis = System.currentTimeMillis()
+         )
+         persistDayReferences(refs)
+@@ -677,8 +650,10 @@
+         if (orderIds.isEmpty()) return
+         val refs = allDayReferences().toMutableMap()
+         val previous = refs[date] ?: return
++        val mergedIds = mergeOrderIds(previous.orderIds, orderIds)
++        if (mergedIds == previous.orderIds) return
+         refs[date] = previous.copy(
+-            orderIds = mergeOrderIds(previous.orderIds, orderIds),
++            orderIds = mergedIds,
+             capturedAtMillis = System.currentTimeMillis()
+         )
+         persistDayReferences(refs)
+--- a/app/src/test/java/pl/fujara/app/PyszneOctoberRegressionTest.kt
++++ b/app/src/test/java/pl/fujara/app/PyszneOctoberRegressionTest.kt
+@@ -0,0 +1,134 @@
++package pl.fujara.app
++
++import org.junit.Assert.*
++import org.junit.Test
++import java.time.LocalDate
++
++/** Transcription of the supplied 13 October screenshot, not a live device capture. */
++class PyszneOctoberRegressionTest {
++    private val screen = """
++        Historia przychodów
++        13 października
++        2026
++        Przychody
++        290,94 zł
++        10 przyjętych zleceń
++        Szczegóły przychodów
++        13 października 2026
++        Stawka bazowa
++        278,94 zł
++        Dodatkowe korzyści
++        0,00 zł
++        Przyznany napiwek
++        12,00 zł
++        Inne
++        0,00 zł
++        Suma przychodów
++        290,94 zł
++        Podsumowanie dnia
++        10 przyjętych zleceń
++        Mobile Pizza Italiana (Władysława Cieszyńskiego 1)
++        46,00 zł
++        CD3KT7
++        McDonald's Gdańsk, Świętokrzyska (Świętokrzyska 2)
++        21,56 zł
++        43PF7J
++    """.trimIndent()
++
++    @Test fun readsOctoberScreenshot() {
++        val result = PyszneDayReferenceParser.parse(screen)!!
++        assertEquals(LocalDate.of(2026, 10, 13), result.date)
++        assertEquals(10, result.orderCount)
++        assertEquals(290.94, result.amountPln, 0.001)
++        assertEquals(listOf("CD3KT7", "43PF7J"), result.orderIds)
++    }
++    @Test fun supportsOldAndNewCountLabels() {
++        for (label in listOf("10 zleceń", "10 przyjetych zlecen", "10 zaakceptowanych zleceń", "10 accepted orders", "10 offers accepted")) {
++            assertEquals(label, 10, PyszneDayReferenceParser.parse(screen.replace("10 przyjętych zleceń", label))!!.orderCount)
++        }
++    }
++    @Test fun readsSplitCountAndCurrencyNodes() {
++        val result = PyszneDayReferenceParser.parse(screen.replace("10 przyjętych zleceń", "10\nprzyjętych\nzleceń").replace("290,94 zł", "290,94\nzł"))!!
++        assertEquals(290.94, result.amountPln, 0.001)
++    }
++    @Test fun readsNonBreakingSpaces() {
++        assertNotNull(PyszneDayReferenceParser.parse(screen.replace(' ', '\u00a0')))
++        assertNotNull(PyszneDayReferenceParser.parse(screen.replace(' ', '\u202f')))
++    }
++    @Test fun readsGroupedThousands() {
++        for (amount in listOf("1 290,94 zł", "1.290,94 zł", "1\u202f290,94 zł", "1290.94 PLN")) {
++            assertEquals(amount, 1290.94, PyszneDayReferenceParser.parse(screen.replace("290,94 zł", amount))!!.amountPln, 0.001)
++        }
++    }
++    @Test fun readsBareAllLetterIdsFromList() {
++        val ids = PyszneDayReferenceParser.parseOrderIds("""
++            Historia przychodów
++            Pizzeria u Skrzypka (Jaśkowa Dolina 130c)
++            26,59 zł
++            CPPXDD
++            Banditos (Lisia Grobla 7 loc C6)
++            30,65 zł
++            DBXRJ7
++            Ristorante I Pazzi
++            33,75 zł
++            CBYWRH
++        """.trimIndent())
++        assertEquals(listOf("CPPXDD", "DBXRJ7", "CBYWRH"), ids)
++    }
++    @Test fun doesNotReadOrdinaryWordsAsIds() {
++        assertEquals(emptyList<String>(), PyszneDayReferenceParser.parseOrderIds("Przychody\n290,94 zł\nFUJARA\nPyszne\norders\nINCOME\nORDERS"))
++    }
++    @Test fun deduplicatesPrefixedAndBareIds() {
++        assertEquals(listOf("CD3KT7"), PyszneDayReferenceParser.parseOrderIds("#CD3KT7\n46,00 zł\nCD3KT7"))
++    }
++    @Test fun refusesWeekEvenWithLeakedDayMarker() {
++        val week = """
++            Historia przychodów
++            12 pa - 19 października 2026
++            Przychody w tym tygodniu
++            547,54 zł
++            19 zleceń
++            Suma przychodów
++            547,54 zł
++            Podsumowanie tygodnia
++            poniedziałek, 12 października
++            9 zleceń
++            256,60 zł
++            wtorek, 13 października
++            10 zleceń
++            290,94 zł
++            Podsumowanie dnia
++        """.trimIndent()
++        assertTrue(PyszneDayReferenceParser.isWeeklySummary(week))
++        assertNull(PyszneDayReferenceParser.parse(week))
++    }
++    @Test fun refusesConflictingAmounts() {
++        assertNull(PyszneDayReferenceParser.parse(screen.replace("Suma przychodów\n290,94", "Suma przychodów\n291,94")))
++    }
++    @Test fun refusesConflictingCounts() {
++        assertNull(PyszneDayReferenceParser.parse(screen.replace("Podsumowanie dnia\n10", "Podsumowanie dnia\n11")))
++    }
++    @Test fun refusesDuplicateConflictingCards() {
++        assertNull(PyszneDayReferenceParser.parse(screen + "\nPrzychody\n400,00 zł\n10 przyjętych zleceń"))
++    }
++    @Test fun refusesMissingDate() {
++        assertNull(PyszneDayReferenceParser.parse(screen.replace("13 października\n2026", "").replace("13 października 2026", "")))
++    }
++    @Test fun refusesDifferentDates() {
++        assertNull(PyszneDayReferenceParser.parse(screen + "\n14 października 2026"))
++    }
++    @Test fun refusesInvalidDate() {
++        assertNull(PyszneDayReferenceParser.parse(screen.replace("13 października", "32 października")))
++    }
++    @Test fun doesNotTakeFirstRestaurantAsTotal() {
++        val text = "13 października 2026\nPrzychody\nSuma przychodów\nPodsumowanie dnia\n10 przyjętych zleceń\nMobile Pizza\n46,00 zł\nCD3KT7"
++        assertNull(PyszneDayReferenceParser.parse(text))
++    }
++    @Test fun acceptsTotalWhenTopCardIsOffscreen() {
++        val text = screen.substring(screen.indexOf("Szczegóły przychodów"))
++        assertEquals(290.94, PyszneDayReferenceParser.parse(text)!!.amountPln, 0.001)
++    }
++    @Test fun rejectsBottomListWithoutDayHeader() {
++        assertNull(PyszneDayReferenceParser.parse("Historia przychodów\nBanditos\n30,65 zł\nDBXRJ7"))
++    }
++}

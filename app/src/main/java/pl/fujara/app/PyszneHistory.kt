@@ -385,118 +385,88 @@ object PyszneWorkDayResolver {
 
 /** Odczyt kontrolny z ekranu Pyszne "Podsumowanie dnia". */
 object PyszneDayReferenceParser {
-    private val daySummaryMarker = Regex(
-        """(?i)(?:podsumowanie\s+dnia|daily\s+summary|day\s+summary)"""
-    )
+    private val daySummaryMarker = Regex("""(?i)\b(?:podsumowanie\s+dnia|daily\s+summary|day\s+summary)\b""")
+    private val weekMarker = Regex("""(?i)\b(?:podsumowanie\s+tygodnia|przychody\s+w\s+tym\s+tygodniu|weekly\s+summary|week\s+summary|earnings\s+this\s+week)\b""")
     private val orderCountRegex = Regex(
-        """(?i)\b(\d{1,3})\s*(?:zlece[nń]|zleceń|zlecenia|offers?|orders?)\s*(?:accepted|zaakceptowan\p{L}*)?\b"""
+        """(?i)\b(\d{1,3})\s*(?:(?:przyj[eę]t\p{L}*|zaakceptowan\p{L}*|accepted)\s+)?(?:zlece[nń]|zlecenia|zlecenie|offers?|orders?)\b(?:\s*(?:accepted|zaakceptowan\p{L}*))?"""
     )
-    private val moneyRegex = Regex(
-        """(?i)(\d{1,5}(?:[ .]\d{3})*[,.]\d{2})\s*(?:zł|zl|pln)(?![\p{L}\p{N}])"""
-    )
-    private val listOrderIdRegex = Regex("""(?i)#\s*([A-Z0-9]{6})\b""")
+    private val moneyRegex = Regex("""(?i)(?<![\d,.\-])(\d{1,5}(?:[ .]\d{3})*[,.]\d{2})\s*(?:zł|zl|pln)(?![\p{L}\p{N}])""")
+    private val topEarningsLabel = Regex("""(?i)^(?:przychody|earnings|income|revenue)\b.*$""")
+    private val totalEarningsLabel = Regex("""(?i)^(?:suma\s+przychod[oó]w|total\s+(?:earnings|income|revenue))\b.*$""")
+    private val exactDaySummaryLabel = Regex("""(?i)^(?:podsumowanie\s+dnia|daily\s+summary|day\s+summary)\b.*$""")
+    private val sectionLabel = Regex("""(?i)^(?:szczeg[oó][lł]y\s+przychod[oó]w|earnings\s+details|stawka\s+bazowa|base\s+(?:pay|rate)|dodatkowe\s+korzy[sś]ci|przyznany\s+napiwek|inne|suma\s+przychod[oó]w|total\s+(?:earnings|income|revenue)|podsumowanie\s+dnia|daily\s+summary|day\s+summary)\b.*$""")
 
-    // Wazne: kwoty dnia NIE sa juz wybierane jako "pierwsze pieniadze po dacie".
-    // Na ekranie podsumowania pod naglowkiem jest lista dostaw (31,20 zl, 10,00 zl itd.)
-    // i przy innym porzadku Accessibility taka kwota potrafila zostac uznana za sume dnia.
-    private val topEarningsLabel = Regex(
-        """(?i)^(?:przychody|earnings|income|revenue)\b.*$"""
-    )
-    private val totalEarningsLabel = Regex(
-        """(?i)^(?:suma\s+przychod[oó]w|total\s+(?:earnings|income|revenue))\b.*$"""
-    )
-    private val exactDaySummaryLabel = Regex(
-        """(?i)^(?:podsumowanie\s+dnia|daily\s+summary|day\s+summary)\b.*$"""
-    )
+    private fun normalize(text: String) = text.replace('\u00a0', ' ').replace('\u202f', ' ').replace("\u200b", "")
 
-    fun parseOrderIds(text: String): List<String> = listOrderIdRegex.findAll(text)
-        .map { it.groupValues[1].uppercase(Locale.ROOT) }
-        .filter { it !in setOf("FUJARA", "PYSZNE") }
-        .distinct()
-        .toList()
+    fun isWeeklySummary(text: String): Boolean = weekMarker.containsMatchIn(normalize(text))
+
+    fun parseOrderIds(text: String): List<String> {
+        val clean = normalize(text)
+        val prefixed = Regex("""(?i)#\s*([A-Z0-9]{6})\b""").findAll(clean)
+            .map { it.groupValues[1].uppercase(Locale.ROOT) }.toList()
+        // Current Pyszne lists show bare IDs, including all-letter IDs (CPPXDD).
+        // Require an entire uppercase line next to a restaurant/amount row.
+        val lines = clean.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        val bare = lines.mapIndexedNotNull { index, line ->
+            if (!Regex("""^[A-Z0-9]{6}$""").matches(line)) return@mapIndexedNotNull null
+            val nearby = lines.subList(maxOf(0, index - 3), minOf(lines.size, index + 2))
+            if (nearby.none { moneyRegex.containsMatchIn(it) }) return@mapIndexedNotNull null
+            line
+        }
+        return (prefixed + bare).filter { it !in setOf("FUJARA", "PYSZNE", "STUART", "GLOVOO", "ORDERS", "INCOME") }.distinct()
+    }
 
     fun parse(text: String): PyszneDayReference? {
-        if (!daySummaryMarker.containsMatchIn(text)) return null
+        val clean = normalize(text)
+        if (isWeeklySummary(clean) || !daySummaryMarker.containsMatchIn(clean)) return null
+        val dates = PyszneHistoryParser.parseDatesFromText(clean).distinct()
+        if (dates.size != 1) return null
+        val lines = clean.lines().map { it.trim() }.filter { it.isNotBlank() }
 
-        // Bez jawnej, jednej daty nie tworzymy dnia. Ta sama data moze wystepowac
-        // dwa razy (naglowek + szczegoly przychodow) i to jest poprawne.
-        val explicitDates = PyszneHistoryParser.parseDatesFromText(text).distinct()
-        if (explicitDates.size != 1) return null
-        val date = explicitDates.single()
-
-        val lines = text.lineSequence().map { it.trim() }.filter { it.isNotBlank() }.toList()
-        if (lines.isEmpty()) return null
-
-        val topPairs = mutableListOf<Pair<Int, Double>>()
-        lines.forEachIndexed { index, line ->
-            if (!topEarningsLabel.matches(line)) return@forEachIndexed
-            val window = lines.subList(index, minOf(lines.size, index + 7)).joinToString("\n")
-            val count = parseCounts(window).firstOrNull() ?: return@forEachIndexed
-            val amount = parseMoney(window).firstOrNull() ?: return@forEachIndexed
-            topPairs += count to amount
+        // Stop at the next section: an order amount must never become a day total.
+        fun window(index: Int, size: Int): String {
+            val result = mutableListOf(lines[index])
+            for (i in index + 1 until minOf(lines.size, index + size)) {
+                if (sectionLabel.matches(lines[i]) || topEarningsLabel.matches(lines[i])) break
+                result += lines[i]
+            }
+            return result.joinToString("\n")
         }
-
-        // Najpewniejsza kwota: pole "Suma przychodow" z sekcji szczegolow.
-        val totalAmounts = lines.mapIndexedNotNull { index, line ->
-            if (!totalEarningsLabel.matches(line)) return@mapIndexedNotNull null
-            val window = lines.subList(index, minOf(lines.size, index + 3)).joinToString("\n")
-            parseMoney(window).firstOrNull()
+        val topIndices = lines.indices.filter { topEarningsLabel.matches(lines[it]) }
+        val totalIndices = lines.indices.filter { totalEarningsLabel.matches(lines[it]) }
+        val topWindows = topIndices.map { window(it, 7) }
+        fun labeledAmount(index: Int): Double? {
+            parseMoney(lines[index]).singleOrNull()?.let { return it }
+            // Value must start immediately after the label, never after a restaurant name.
+            val following = window(index, 3).substringAfter("\n", "").trim()
+            if (moneyRegex.find(following)?.range?.first != 0) return null
+            return parseMoney(following).firstOrNull()
         }
+        val summaryWindows = lines.indices.filter { exactDaySummaryLabel.matches(lines[it]) }.map { window(it, 4) }
+        val topCounts = topWindows.flatMap(::parseCounts)
+        val summaryCounts = summaryWindows.flatMap(::parseCounts)
+        val topAmounts = topIndices.mapNotNull(::labeledAmount)
+        val totalAmounts = totalIndices.mapNotNull(::labeledAmount)
 
-        // Najpewniejsza liczba: liczba zaakceptowanych ofert zaraz po "Podsumowanie dnia".
-        val summaryCounts = lines.mapIndexedNotNull { index, line ->
-            if (!exactDaySummaryLabel.matches(line)) return@mapIndexedNotNull null
-            val window = lines.subList(index, minOf(lines.size, index + 4)).joinToString("\n")
-            parseCounts(window).firstOrNull()
-        }
-
-        val topCounts = topPairs.map { it.first }
-        val topAmounts = topPairs.map { it.second }
-        val count = uniqueCount(summaryCounts).orElseUnique(topCounts) ?: return null
-        val amount = uniqueMoney(totalAmounts).orElseUniqueMoney(topAmounts) ?: return null
-
-        if (count !in 1..300 || amount !in 0.0..100_000.0) return null
-
-        // Jesli oba niezalezne miejsca ekranu sa widoczne, musza sie zgadzac.
-        uniqueCount(summaryCounts)?.let { summaryCount ->
-            uniqueCount(topCounts)?.let { topCount -> if (summaryCount != topCount) return null }
-        }
-        uniqueMoney(totalAmounts)?.let { total ->
-            uniqueMoney(topAmounts)?.let { top -> if (kotlin.math.abs(total - top) >= 0.02) return null }
-        }
-
-        return PyszneDayReference(
-            date = date,
-            orderCount = count,
-            amountPln = amount,
-            orderIds = parseOrderIds(text)
-        )
+        // Reject conflicting observations instead of silently falling back to another card.
+        val count = (topCounts + summaryCounts).distinct().singleOrNull() ?: return null
+        val cents = (topAmounts + totalAmounts).map { kotlin.math.round(it * 100).toInt() }.distinct()
+        if (cents.size != 1 || count !in 1..300) return null
+        val amount = cents.single() / 100.0
+        if (amount !in 0.0..100_000.0) return null
+        return PyszneDayReference(dates.single(), count, amount, parseOrderIds(clean))
     }
 
     private fun parseCounts(text: String): List<Int> = orderCountRegex.findAll(text)
-        .mapNotNull { it.groupValues.getOrNull(1)?.toIntOrNull() }
-        .filter { it in 1..300 }
-        .toList()
+        .mapNotNull { it.groupValues[1].toIntOrNull() }.toList()
 
     private fun parseMoney(text: String): List<Double> = moneyRegex.findAll(text)
-        .mapNotNull { match ->
-            match.groupValues.getOrNull(1)
-                ?.replace(" ", "")
-                ?.replace(',', '.')
-                ?.toDoubleOrNull()
-        }
-        .filter { it in 0.0..100_000.0 }
-        .toList()
-
-    private fun uniqueCount(values: List<Int>): Int? = values.distinct().singleOrNull()
-
-    private fun uniqueMoney(values: List<Double>): Double? {
-        val cents = values.map { kotlin.math.round(it * 100.0).toInt() }.distinct()
-        return cents.singleOrNull()?.div(100.0)
-    }
-
-    private fun Int?.orElseUnique(other: List<Int>): Int? = this ?: uniqueCount(other)
-    private fun Double?.orElseUniqueMoney(other: List<Double>): Double? = this ?: uniqueMoney(other)
+        .mapNotNull {
+            val raw = it.groupValues[1].replace(" ", "")
+            // Keep the final separator as decimal; earlier dots are grouping separators.
+            val last = maxOf(raw.lastIndexOf(','), raw.lastIndexOf('.'))
+            (raw.substring(0, last).replace(".", "").replace(",", "") + "." + raw.substring(last + 1)).toDoubleOrNull()
+        }.toList()
 }
 
 class PyszneLogStore(context: Context) {
@@ -663,8 +633,11 @@ class PyszneLogStore(context: Context) {
             }
         }
 
+        val mergedIds = mergeOrderIds(previous?.orderIds.orEmpty(), reference.orderIds)
+        if (previous != null && previous.orderCount == reference.orderCount &&
+            kotlin.math.abs(previous.amountPln - reference.amountPln) < 0.001 && previous.orderIds == mergedIds) return
         refs[reference.date] = reference.copy(
-            orderIds = mergeOrderIds(previous?.orderIds.orEmpty(), reference.orderIds),
+            orderIds = mergedIds,
             capturedAtMillis = System.currentTimeMillis()
         )
         persistDayReferences(refs)
@@ -677,8 +650,10 @@ class PyszneLogStore(context: Context) {
         if (orderIds.isEmpty()) return
         val refs = allDayReferences().toMutableMap()
         val previous = refs[date] ?: return
+        val mergedIds = mergeOrderIds(previous.orderIds, orderIds)
+        if (mergedIds == previous.orderIds) return
         refs[date] = previous.copy(
-            orderIds = mergeOrderIds(previous.orderIds, orderIds),
+            orderIds = mergedIds,
             capturedAtMillis = System.currentTimeMillis()
         )
         persistDayReferences(refs)

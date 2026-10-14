@@ -1923,7 +1923,7 @@ private fun PyszneSummaryScreen(
                 onClick = { refreshToken += 1 },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(tx(language, "Odśwież logi", "Refresh logs", "Оновити записи", "Обновить записи"))
+                Text(tx(language, "Odśwież dane", "Refresh logs", "Оновити записи", "Обновить записи"))
             }
         }
 
@@ -1970,8 +1970,8 @@ private fun PyszneSummaryScreen(
                         Text(
                             tx(
                                 language,
-                                "Otwórz w Pyszne: Zarobki → Podsumowanie dnia dla ${formatSummaryDate(selectedDate, language)}. FUJARA zapisze kontrolę tylko wtedy, gdy na ekranie odczyta jednocześnie datę, liczbę zleceń i kwotę tego dnia.",
-                                "Open Pyszne daily summary for ${formatSummaryDate(selectedDate, language)}. FUJARA only accepts a check when date, order count and amount are read together.",
+                                "W Pyszne otwórz Historię przychodów → wybierz ${formatSummaryDate(selectedDate, language)} → przewiń na samą górę. Pozostaw ekran na 2–3 sekundy i wróć tutaj. Muszą być widoczne data, przychód i liczba przyjętych zleceń.",
+                                "In Pyszne open Earnings history → ${formatSummaryDate(selectedDate, language)} → scroll to the top. Wait 2–3 seconds, then return here. Keep the date, earnings and accepted order count visible.",
                                 "Відкрийте підсумок дня Pyszne для вибраної дати.",
                                 "Откройте итоги дня Pyszne для выбранной даты."
                             ),
@@ -1984,7 +1984,7 @@ private fun PyszneSummaryScreen(
             Text(
                 tx(
                     language,
-                    "Wartości kontrolne są tylko do odczytu — nie można ich ręcznie zmienić. To zabezpiecza przed połączeniem kwoty z jednego dnia z liczbą zleceń z innego.",
+                    "Kontrola wymaga ekranu jednego dnia. Podsumowanie tygodnia i sama lista restauracji nie wystarczą. Dane odświeżają się automatycznie.",
                     "Control values are read-only. This prevents mixing an amount from one day with an order count from another.",
                     "Контрольні значення не можна змінювати вручну.",
                     "Контрольные значения нельзя менять вручную."
@@ -2016,7 +2016,7 @@ private fun PyszneSummaryScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
                     value = cashTipsText,
                     onValueChange = { value ->
@@ -2024,7 +2024,7 @@ private fun PyszneSummaryScreen(
                         val parsed = cashTipsText.replace(',', '.').toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
                         adjustmentsStore.setCashTips(selectedDate, parsed)
                     },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                     label = { Text(tx(language, "Napiwek gotówkowy", "Cash tips", "Чайові", "Чаевые")) },
                     suffix = { Text("zł") },
                     singleLine = true,
@@ -2034,7 +2034,7 @@ private fun PyszneSummaryScreen(
                 OutlinedTextField(
                     value = extraPauseText,
                     onValueChange = { value -> extraPauseText = value.filter(Char::isDigit).take(3) },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                     label = { Text(tx(language, "Przestój", "Downtime", "Простій", "Простой")) },
                     suffix = { Text("min") },
                     singleLine = true,

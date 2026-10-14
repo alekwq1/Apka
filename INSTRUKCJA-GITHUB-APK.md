@@ -17,7 +17,6 @@ Wgraj **zawartość tego folderu**, czyli między innymi:
 - `app/`
 - `build.gradle.kts`
 - `settings.gradle.kts`
-- `debug-test.keystore`
 
 Ważne: plik `.github/workflows/build-apk.yml` musi znaleźć się dokładnie w tej ścieżce w repozytorium.
 
@@ -46,9 +45,9 @@ Możesz też pobrać build z **Actions -> konkretny run -> Artifacts**, ale GitH
 
 ## 5. Kolejne wersje
 
-Każdy ręczny `Run workflow` tworzy nowy testowy APK. Projekt ma dołączony stały **testowy** klucz podpisu (`debug-test.keystore`), więc kolejne APK powinny instalować się jako aktualizacja tej samej aplikacji i zachowywać jej ustawienia.
+Każdy ręczny `Run workflow` tworzy nowy testowy APK. Ta paczka nie zawiera stałego klucza testowego. Domyślny klucz debug może różnić się między maszynami/uruchomieniami CI, więc taki APK nie zawsze zaktualizuje aplikację już obecną na telefonie.
 
-Ten klucz jest celowo testowy i jego hasło znajduje się w projekcie. **Nie używaj go do wersji produkcyjnej ani publikacji w Google Play.** Przed prawdziwym wydaniem aplikacji zrobimy osobny prywatny klucz release i przechowamy go jako GitHub Secret.
+Aktualizację z zachowaniem danych podpisz tym samym kluczem co zainstalowaną wersję (albo użyj dotychczasowego kanału Google Play). Nie zastępuj istniejącego klucza. Przed aktualizacją wyeksportuj kopię danych z ustawień FUJARY. Jeśli Android odrzuci aktualizację z powodu podpisu, nie odinstalowuj aplikacji — najpierw sprawdź klucz podpisu.
 
 ## Gdy GitHub pokaże błąd
 
