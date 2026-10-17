@@ -1,37 +1,32 @@
-# FUJARA — Google Play listing
+# FUJARA — Google Play / polski opis aplikacji (1.0.2)
 
 ## Nazwa aplikacji
-FUJARA
+FUJARA – kalkulator kuriera
 
 ## Krótki opis
-Sprawdź, ile zostaje po kosztach, zanim przyjmiesz zlecenie.
+Sprawdź opłacalność zlecenia kurierskiego przed jego przyjęciem.
 
-## Pełny opis
-FUJARA pomaga kurierom szybko ocenić opłacalność widocznej oferty przed podjęciem decyzji.
+## Pełny opis — WKLEJ CAŁOŚĆ DO GOOGLE PLAY
 
-Gdy na ekranie pojawi się karta zlecenia z obsługiwanej aplikacji kurierskiej, FUJARA może odczytać widoczną kwotę, dystans i czas, a następnie pokazać mały panel z najważniejszymi liczbami.
+FUJARA to kalkulator opłacalności zleceń dla kurierów. Pomaga szybko ocenić widoczną ofertę dostawy i samodzielnie podjąć decyzję o jej przyjęciu.
 
-Możesz zobaczyć m.in.:
-- kwotę oferty,
-- wynik po ustawionym koszcie pojazdu,
-- wynik w zł/km,
-- wynik w zł/h,
-- dystans i czas,
-- prosty status opłacalności oznaczony kolorem.
+Aplikacja pokazuje m.in. kwotę oferty, szacowany wynik po kosztach pojazdu, zł/km, zł/h, dystans, czas oraz kolorową ocenę opłacalności. Samodzielnie ustawiasz koszt przejechania kilometra, zapas czasu i progi dla poszczególnych platform. Dostępne są także lokalne zestawienia i podsumowania zleceń Pyszne.
 
-Sam ustawiasz koszt przejazdu 1 km oraz własne minimalne wyniki na kilometr i godzinę. Możesz też ustawić inne progi dla obsługiwanych platform.
+KORZYSTANIE Z USŁUGI ACCESSIBILITYSERVICE (UŁATWIENIA DOSTĘPU)
 
-„Po kosztach” oznacza w FUJARA kwotę oferty pomniejszoną o ustawiony koszt przejazdu. Nie jest to dochód netto po podatkach ani pełny wynik księgowy.
+FUJARA korzysta z interfejsu Android AccessibilityService w celu wykrywania i odczytywania danych z widocznych ofert w obsługiwanych aplikacjach kurierskich. Usługa może odczytać tekst widoczny na ekranie, w tym kwotę, dystans, czas, godzinę odbioru lub dostawy oraz identyfikator zlecenia, jeśli są dostępne. Aby rozpoznać kartę oferty, aplikacja może wykonywać tymczasowy zrzut całego widocznego ekranu i lokalnie analizować go przy użyciu OCR. Zrzut może obejmować także inne treści widoczne w tle. Rozpoznawanie działa również dla obrazu oferty wyświetlonego w galerii.
 
-FUJARA nie klika przycisków, nie akceptuje i nie odrzuca zleceń za Ciebie. Decyzja zawsze należy do użytkownika.
+Odczytane informacje służą do wyliczenia opłacalności i pokazania wyniku w nakładce. Analiza odbywa się lokalnie na urządzeniu — FUJARA nie wysyła zrzutów ekranu ani odczytanych danych zleceń na serwer i nie wykorzystuje ich do reklam. Zrzuty ekranu nie są zapisywane w historii aplikacji. Wybrane dane historii Pyszne mogą być zachowane lokalnie po naciśnięciu przez użytkownika „ZAPISZ DANE”; aplikacja może także zapisywać lokalne wartości kontrolne podsumowania dnia.
 
-Rozpoznawanie oferty i obliczenia wykonywane są lokalnie na telefonie. FUJARA nie wysyła odczytanych ofert na serwer i nie wykorzystuje ich do reklam ani profilowania.
+Przed włączeniem funkcji FUJARA pokazuje w aplikacji osobną informację o użyciu AccessibilityService i prosi o wyraźną zgodę. Usługę użytkownik włącza ręcznie w ustawieniach Androida i może wyłączyć w dowolnym momencie. FUJARA nie jest narzędziem przeznaczonym do obsługi urządzenia przez osoby z niepełnosprawnościami.
 
-Panel jest widoczny tak długo, jak karta oferty pozostaje na ekranie, i znika po jej zamknięciu.
+FUJARA nie klika przycisków, nie przyjmuje ani nie odrzuca zleceń za użytkownika. Decyzja zawsze należy do Ciebie.
 
-FUJARA — sprawdź liczby, zanim klikniesz „przyjmij”.
+„Po kosztach” oznacza kwotę oferty pomniejszoną o ustawiony koszt przejazdu i nie jest pełnym dochodem netto po podatkach ani profesjonalnym rozliczeniem księgowym.
 
-## Hasło marki używane poza metadanymi sklepu
-Nie bądź fujarą. Sprawdź marżę zanim przyjmiesz zlecenie.
+Więcej o przetwarzaniu danych znajdziesz w Polityce prywatności FUJARA.
 
-Angielski: Don’t be a FUJARA. Deliver smarter.
+FUJARA — sprawdź liczby, zanim przyjmiesz zlecenie.
+
+## Uwaga
+W Play Console wklej tylko tekst między nagłówkiem „Pełny opis” a nagłówkiem „Uwaga”, bez nagłówków markdown. Zawsze zachowaj zgodność z aktualnym buildem i funkcjami aplikacji.

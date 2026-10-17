@@ -11,4 +11,6 @@ For review without a courier account or a live delivery offer:
 4. On the FUJARA home screen tap “Show calculation demo”.
 5. The demo displays a sample amount, route, time, result after vehicle costs and profitability status. It is clearly marked as DEMO and does not use real user data.
 
-Privacy policy: https://alekwq1.github.io/Apka/privacy.html
+Privacy policy (direct HTML page): https://alekwq1.github.io/Apka/privacy.html
+
+The screen-access disclosure is shown on the first screen before consent. The service does not analyze screen content without the app consent flag. The policy page contains full policy text without requiring an additional click.

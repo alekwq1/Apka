@@ -1,3 +1,5 @@
+# UWAGA: instrukcja historyczna. Dla odrzucenia z 16.10.2026 użyj `NAPRAWA-GOOGLE-PLAY-2026-10-16.md`.
+
 # FUJARA 0.7.1 — start w Google Play od zera
 
 Ten projekt jest przygotowany do pierwszego wydania jako `pl.fujara.app` i targetuje Android 16 / API 36.

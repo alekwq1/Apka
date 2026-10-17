@@ -1,6 +1,6 @@
 # FUJARA — propozycje odpowiedzi w Play Console
 
-Stan dla wersji 0.8.4. Odpowiedzi muszą zawsze odpowiadać faktycznemu buildowi.
+Stan zweryfikowany pod kątem kodu wersji 1.0.2. Odpowiedzi muszą zawsze odpowiadać faktycznemu buildowi.
 
 ## Ads
 **Does your app contain ads?** → `No`
@@ -31,7 +31,7 @@ Dla obecnego kodu:
 - brak analytics/Firebase,
 - brak konta,
 - OCR i kalkulacja działają lokalnie.
-- opcjonalna historia Pyszne jest zapisywana lokalnie po ręcznym naciśnięciu `ZAPISZ DANE`; ekran `Podsumowanie dnia` może lokalnie zapisać tylko datę, liczbę zleceń i łączną kwotę do kontroli kompletności; brak automatycznej transmisji tej historii.
+- opcjonalna historia Pyszne jest zapisywana lokalnie po ręcznym naciśnięciu `ZAPISZ DANE`; ekran `Podsumowanie dnia` może lokalnie zapisać datę, liczbę zleceń, łączną kwotę i widoczne identyfikatory zleceń do kontroli kompletności; brak automatycznej transmisji tej historii.
 - funkcja udostępniania otwiera systemowy Share Sheet dopiero po działaniu użytkownika.
 
 W związku z tym dane oferty nie są transmitowane poza urządzenie przez FUJARA. W formularzu Data safety odpowiedzi o `collection` i `sharing` powinny odzwierciedlać brak przesyłania danych poza urządzenie.
@@ -50,16 +50,16 @@ Typ aplikacji: narzędzie / kalkulator dla kurierów. Odpowiadaj zgodnie z prawd
 ## AccessibilityService declaration
 - Is the app an accessibility tool? → `No`.
 - Cel: rozpoznanie widocznej karty oferty kurierskiej i lokalne obliczenie opłacalności przed samodzielną decyzją użytkownika.
-- Dane: widoczny tekst oferty — kwota, dystans, czas, planowana godzina odbioru/dostawy, jeśli jest pokazana.
+- Dane: widoczny tekst oferty — kwota, dystans, czas, planowana godzina odbioru/dostawy i identyfikator, jeśli jest pokazany; tymczasowy zrzut całego ekranu na potrzeby OCR, który może obejmować tło.
 - Udostępnianie danych: brak.
 - Automatyzacja: aplikacja nie klika, nie akceptuje i nie odrzuca zleceń.
-- Zgoda: przed otwarciem systemowych ustawień FUJARA pokazuje osobny ekran disclosure i wymaga naciśnięcia `Rozumiem`.
+- Zgoda: przed otwarciem systemowych ustawień FUJARA pokazuje osobny ekran disclosure i wymaga naciśnięcia `Zgadzam się · dalej`.
 
 ## Accessibility video
 Nagraj około 30–60 sekund:
 1. świeże uruchomienie FUJARA,
 2. pokaż cały ekran wyjaśniający AccessibilityService,
-3. naciśnij `Rozumiem`,
+3. naciśnij `Zgadzam się · dalej`,
 4. `Otwórz ustawienia`,
 5. pokaż ręczne włączenie FUJARA w Accessibility,
 6. wróć do aplikacji,

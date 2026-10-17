@@ -13,14 +13,14 @@ Z widocznej oferty mogą być odczytane:
 - planowana godzina odbioru/dostawy, jeśli jest pokazana,
 - tekst potrzebny do rozpoznania platformy/oferty.
 
-Przy pływającej karcie techniczny screenshot może obejmować tło, ale FUJARA nie wykorzystuje treści spoza rozpoznanej oferty do innych celów i nie zapisuje historii ekranu.
+W czasie odczytu usługa może wykonać techniczny screenshot całego widocznego ekranu (także galerii z ofertą), który może obejmować tło, ale FUJARA nie wykorzystuje treści spoza rozpoznanej oferty do innych celów i nie zapisuje historii ekranu.
 
 ## Co aplikacja robi z danymi
 - lokalnie rozpoznaje tekst,
 - lokalnie oblicza wynik po kosztach, zł/km i zł/h,
 - wyświetla wynik w nakładce.
-- tylko po ręcznym naciśnięciu `ZAPISZ DANE` na ekranie historii Pyszne zapisuje lokalnie datę, restaurację/punkt odbioru, kwotę, dystans i czas aktywności; do deduplikacji przechowuje hash/fingerprint, nie surowy numer zlecenia.
-- na ekranie `Podsumowanie dnia` Pyszne może lokalnie zapamiętać datę, liczbę zleceń i łączną kwotę wyłącznie do porównania kompletności lokalnego logu.
+- tylko po ręcznym naciśnięciu `ZAPISZ DANE` na ekranie historii Pyszne zapisuje lokalnie datę, restaurację/punkt odbioru, kwotę, dystans, czas aktywności oraz widoczny identyfikator zlecenia, jeśli jest dostępny; do deduplikacji przechowuje też hash/fingerprint.
+- na ekranie `Podsumowanie dnia` Pyszne może lokalnie zapamiętać datę, liczbę zleceń, łączną kwotę i identyfikatory widoczne na liście do porównania kompletności lokalnego logu.
 
 ## Czego nie robi
 - nie klika,

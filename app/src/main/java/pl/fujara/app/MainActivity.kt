@@ -473,12 +473,12 @@ private fun PrivacyScreen(
                     }
 
                     Text(
-                        text = tx(language, "01 · Prywatność i dane", "01 · Privacy & data", "01 · Конфіденційність", "01 · Конфиденциальность"),
+                        text = tx(language, "01 · Odczyt ekranu – zgoda", "01 · Screen access consent", "01 · Конфіденційність", "01 · Конфиденциальность"),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Black
                     )
                     Text(
-                        text = tx(language, "FUJARA potrzebuje dostępu do ekranu wyłącznie do rozpoznania widocznej oferty i lokalnych obliczeń.", "FUJARA needs screen access only to recognize the visible offer and calculate locally.", "FUJARA потрібен доступ до екрана лише для розпізнавання видимої пропозиції.", "FUJARA нужен доступ к экрану только для распознавания видимого предложения."),
+                        text = tx(language, "FUJARA używa usługi AccessibilityService do odczytu ekranu w celu rozpoznania ofert i obliczenia opłacalności. Wymagana jest Twoja wyraźna zgoda.", "FUJARA uses AccessibilityService to read the screen for courier offer recognition and local calculations. Your explicit consent is required.", "FUJARA потрібен доступ до екрана лише для розпізнавання видимої пропозиції.", "FUJARA нужен доступ к экрану только для распознавания видимого предложения."),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
@@ -486,10 +486,10 @@ private fun PrivacyScreen(
                         title = tx(language, "Jak używamy AccessibilityService", "How AccessibilityService is used", "Як використовується AccessibilityService", "Как используется AccessibilityService"),
                         body = tx(
                             language,
-                            "FUJARA odczytuje z widocznej karty oferty kwotę, dystans, czas i planowaną godzinę odbioru/dostawy, jeśli jest dostępna. Na ekranie historii Pyszne zapis danych następuje dopiero po działaniu użytkownika; lokalnie trafiają tylko dane potrzebne do podsumowań (m.in. data, restauracja, kwota, dystans, czas i techniczny identyfikator przeciw duplikatom). Pełny OCR, screenshot i adres klienta nie są zapisywane. Obliczenia pozostają na telefonie, a aplikacja nie klika, nie przyjmuje ani nie odrzuca zleceń za Ciebie.",
-                            "FUJARA reads the amount, distance, duration and planned pickup/delivery time from the visible offer when available. Pyszne history data is saved only after a user action and only the fields needed for summaries are stored locally. Full OCR, screenshots and customer addresses are not stored. Calculations stay on the phone and the app does not click, accept or reject jobs for you.",
-                            "FUJARA локально читає видиму пропозицію та зберігає лише дані, потрібні для підсумків після дії користувача. Повний OCR, screenshot та адреса клієнта не зберігаються.",
-                            "FUJARA локально читает видимое предложение и сохраняет только данные, нужные для итогов после действия пользователя. Полный OCR, screenshot и адрес клиента не сохраняются."
+                            "AccessibilityService odczytuje widoczne dane oferty (m.in. kwotę, dystans, czas i godziny, identyfikator, jeśli jest pokazany). Może też wykonać tymczasowy zrzut całego widocznego ekranu do lokalnej analizy OCR – w tle mogą być inne treści. FUJARA nie zapisuje zrzutów ani pełnego tekstu OCR i nie wysyła tych danych na serwer. Wybrane dane historii Pyszne zapisujesz lokalnie przyciskiem ZAPISZ DANE; wartości kontrolne dnia mogą być zapamiętywane automatycznie. FUJARA nie klika, nie przyjmuje i nie odrzuca zleceń. Możesz wyłączyć usługę w ustawieniach Androida.",
+                            "AccessibilityService reads visible offer details, such as amount, distance, duration, planned times and order ID when available. It may temporarily capture the entire visible screen for on-device OCR, including unrelated background content. FUJARA does not store screenshots or full OCR text or send this data to a server. Pyszne order history is saved locally after you tap SAVE DATA; daily reference totals may be saved automatically. FUJARA does not click, accept or reject jobs. You can disable the service in Android Settings.",
+                            "AccessibilityService читає дані видимої пропозиції. Для локального OCR може тимчасово знімати весь екран разом із фоном. Знімки та повний текст OCR не зберігаються й не надсилаються на сервер. Дані історії Pyszne зберігаються локально за вашою дією, а підсумкові показники дня можуть зберігатися автоматично. Застосунок не натискає кнопки та не приймає замовлення.",
+                            "AccessibilityService читает данные видимого предложения. Для локального OCR может временно делать снимок всего экрана, включая фон. Снимки и полный текст OCR не сохраняются и не передаются на сервер. История Pyszne записывается локально по вашему действию, а контрольные показатели дня могут сохраняться автоматически. Приложение не нажимает кнопки и не принимает заказы."
                         )
                     )
 
@@ -512,7 +512,7 @@ private fun PrivacyScreen(
                             },
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text(tx(language, "Rozumiem · dalej", "I understand · next", "Розумію · далі", "Понимаю · далее"))
+                            Text(tx(language, "Zgadzam się · dalej", "I consent · next", "Даю згоду · далі", "Согласен · далее"))
                         }
                     }
                 } else {

@@ -74,14 +74,14 @@ class DeliveryAccessibilityService : AccessibilityService() {
         pyszneLogStore = PyszneLogStore(this)
         overlay = OverlayController(this)
         recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-        updateStatusNotification(prefs.analysisEnabled)
+        updateStatusNotification(prefs.privacyAccepted && prefs.analysisEnabled)
         handler.postDelayed(pollRunnable, 600L)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event ?: return
 
-        if (!prefs.analysisEnabled) {
+        if (!prefs.privacyAccepted || !prefs.analysisEnabled) {
             updateStatusNotification(false)
             if (::overlay.isInitialized) overlay.hide()
             return
@@ -153,7 +153,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
     private fun scanVisibleScreen() {
         if (ocrBusy) return
 
-        if (!prefs.analysisEnabled) {
+        if (!prefs.privacyAccepted || !prefs.analysisEnabled) {
             updateStatusNotification(false)
             if (::overlay.isInitialized) overlay.hide()
             return
