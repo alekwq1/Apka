@@ -121,10 +121,10 @@ class DecisionTracker(
         val result: Profitability,
         val shownAtMillis: Long,
         var lastSeenAtMillis: Long,
-        val restaurant: String?,
-        val pickupAddress: String?,
-        val dropoffAddress: String?,
-        val stops: Int,
+        var restaurant: String?,
+        var pickupAddress: String?,
+        var dropoffAddress: String?,
+        var stops: Int,
         val duringActiveJob: Boolean,
         val blacklisted: Boolean,
         var visible: Boolean = true,
@@ -156,6 +156,11 @@ class DecisionTracker(
             existing.lastSeenAtMillis = nowMillis
             existing.visible = true
             existing.vanishedAtMillis = null
+            // Szczegoly moga dojsc pozniej (np. adresy Wolt po rozwinieciu arkusza).
+            if (existing.restaurant == null) existing.restaurant = restaurant?.takeIf { it.isNotBlank() }
+            if (existing.pickupAddress == null) existing.pickupAddress = pickupAddress?.takeIf { it.isNotBlank() }
+            if (existing.dropoffAddress == null) existing.dropoffAddress = dropoffAddress?.takeIf { it.isNotBlank() }
+            if (stops > existing.stops) existing.stops = stops
             return existing
         }
 
@@ -306,7 +311,7 @@ class DecisionTracker(
 /** Rozpoznawanie etykiet przyciskow decyzji (PL/EN/UK/RU) w aplikacjach kurierskich. */
 object DecisionButtons {
     private val accept = Regex(
-        """(?i)(?<!\p{L})(?:akceptuj|zaakceptuj(?:\s+zlecenie)?|przyjmij|przyjmuj[eę]|accept(?:\s+(?:order|job|offer|delivery))?|прийняти|принять|принимаю|jestem\s+zainteresowany)(?!\p{L})"""
+        """(?i)(?<!\p{L})(?:akceptuj|zaakceptuj(?:\s+zlecenie)?|przyjmij|przyjmuj[eę]|accept(?:\s+(?:order|job|offer|delivery))?|rozpocznij\s+odbi[oó]r|прийняти|принять|принимаю|jestem\s+zainteresowany)(?!\p{L})"""
     )
     private val reject = Regex(
         """(?i)(?<!\p{L})(?:odrzu[cć](?:\s+zlecenie)?|odrzucam|decline|reject|skip|відхилити|отклонить|пропустить)(?!\p{L})"""

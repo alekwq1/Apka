@@ -774,6 +774,66 @@ internal fun WoltAnalysisSection(language: String) {
 }
 
 // ---------------------------------------------------------------------------------
+// WOLT – dzien (do ekranu Dzien i Start, razem z Pyszne)
+// ---------------------------------------------------------------------------------
+
+@Composable
+internal fun WoltDayCard(language: String, date: LocalDate, refresh: Int, compact: Boolean = false) {
+    val context = LocalContext.current
+    val orderStore = remember { WoltOrderStore(context) }
+    val eventStore = remember { OfferEventStore(context) }
+    val orders = remember(refresh, date) { orderStore.mergedForDate(date) }
+    val officialTotal = remember(refresh, date) { orderStore.dayTotal(date) }
+    val acceptedEvents = remember(refresh, date) { eventStore.forDate(date).filter { it.platform == CourierPlatform.WOLT && it.decision == OfferDecision.ACCEPTED } }
+    if (orders.isEmpty() && officialTotal == null && acceptedEvents.isEmpty()) return
+
+    val total = officialTotal ?: orders.sumOf { it.grossPln }.takeIf { it > 0 } ?: acceptedEvents.sumOf { it.amountPln }
+    val count = if (orders.isNotEmpty()) orders.size else acceptedEvents.size
+    val km = orders.mapNotNull { it.distanceKm }.sum().takeIf { it > 0 } ?: acceptedEvents.sumOf { it.distanceKm }
+    val measuredMinutes = orders.mapNotNull { it.durationMinutes }.sum()
+    val source = when {
+        officialTotal != null -> at(language, "oficjalnie z Wolt", "official from Wolt", "офіційно з Wolt", "официально из Wolt")
+        orders.any { it.source == WoltOrder.SOURCE_LIVE } -> at(language, "zmierzone przez FUJARĘ", "measured by FUJARA", "виміряно FUJARA", "измерено FUJARA")
+        else -> at(language, "szacunek z przyjętych ofert", "estimate from accepted offers", "оцінка", "оценка")
+    }
+
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFF00C2E8).copy(alpha = 0.12f))) {
+        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("WOLT · " + source, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelLarge)
+                    Text(money(total), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(at(language, "$count dostaw", "$count deliveries", "$count доставок", "$count доставок"), fontWeight = FontWeight.Bold)
+                    Text(String.format(plLocale, "%.1f km", km) + (if (measuredMinutes > 0) " · ${WorkAnalytics.formatHours(measuredMinutes)}" else ""), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            if (!compact && orders.isNotEmpty()) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                orders.sortedByDescending { it.minuteOfDay }.forEach { order ->
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(DecisionAnalytics.minuteOfDayLabel(order.minuteOfDay), modifier = Modifier.width(48.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                        Column(Modifier.weight(1f)) {
+                            Text(order.venue + (if (order.stops > 1) " · ${order.stops}×" else ""), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, maxLines = 1)
+                            Text(
+                                listOfNotNull(
+                                    order.distanceKm?.let { String.format(plLocale, "%.1f km", it) },
+                                    order.durationMinutes?.let { "$it min" },
+                                    if (order.source == WoltOrder.SOURCE_LIVE) at(language, "pomiar", "measured", "вимір", "замер") else "Wolt"
+                                ).joinToString(" · "),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        Text(money(order.grossPln), fontWeight = FontWeight.Black)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------
 // USTAWIENIA ASYSTENTA
 // ---------------------------------------------------------------------------------
 
@@ -942,6 +1002,14 @@ internal fun AssistantSettingsSection(prefs: AppPrefs, language: String) {
                     }
                 )
             }
+        }
+        var woltExpand by remember { mutableStateOf(prefs.woltAutoExpandOffer) }
+        AssistantSwitch(at(language, "Wolt: sam rozwiń kartę oferty, żeby odczytać adresy", "Wolt: auto-expand offer card to read addresses", "Wolt: авто-розгортання картки", "Wolt: авто-раскрытие карточки"), woltExpand) {
+            woltExpand = it; prefs.woltAutoExpandOffer = it
+        }
+        var autoDismiss by remember { mutableStateOf(prefs.autoDismissAfterReject) }
+        AssistantSwitch(at(language, "Po odrzuceniu głosem zamknij pozostały arkusz gestem", "After voice decline, swipe away leftover sheet", "Після відхилення закрити аркуш жестом", "После отказа закрыть лист жестом"), autoDismiss) {
+            autoDismiss = it; prefs.autoDismissAfterReject = it
         }
         var mapTiles by remember { mutableStateOf(prefs.mapTilesEnabled) }
         AssistantSwitch(at(language, "Mini-mapa w panelu z podkładem OpenStreetMap", "Mini-map in panel with OpenStreetMap tiles", "Міні-мапа з OSM", "Мини-карта с OSM"), mapTiles) {

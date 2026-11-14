@@ -1,12 +1,12 @@
-# FUJARA 1.2.1
+# FUJARA 1.3.0
 
 Android app for local courier-offer profitability analysis.
 
 ## Google Play readiness
 - applicationId / namespace: `pl.fujara.app`
 - targetSdk / compileSdk: 36
-- versionCode: 44
-- versionName: 1.2.1
+- versionCode: 45
+- versionName: 1.3.0
 - signed AAB workflow: `.github/workflows/build-play-aab.yml`
 - debug APK workflow: `.github/workflows/test-apk.yml`
 - privacy page: `docs/privacy.html`

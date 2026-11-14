@@ -831,6 +831,8 @@ private fun HomeScreen(
 
         WorkShiftCard(language = language.code)
 
+        WoltDayCard(language = language.code, date = today, refresh = refreshToken, compact = true)
+
         TodayPerformanceCard(
             summary = todaySummary,
             goal = goal,
@@ -1746,6 +1748,8 @@ private fun PyszneSummaryScreen(
                 }
             }
         }
+
+        WoltDayCard(language = language.code, date = selectedDate, refresh = refreshToken)
 
         Surface(
             modifier = Modifier.fillMaxWidth().clickable { verificationExpanded = !verificationExpanded },

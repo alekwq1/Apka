@@ -75,6 +75,8 @@ class DeliveryAccessibilityService : AccessibilityService() {
     private var lastNotificationLanguage: String? = null
     private var lastNotificationWork: String? = null
     private lateinit var workSessionStore: WorkSessionStore
+    private lateinit var activeJobStore: ActiveJobStore
+    private var expandedOfferSignature: String? = null
     private var activePyszneDayDate: LocalDate? = null
     private var activePyszneDaySeenAt = 0L
     // OCR numerow z listy jest fallbackiem. Numer musi zostac zobaczony co najmniej
@@ -104,6 +106,8 @@ class DeliveryAccessibilityService : AccessibilityService() {
         woltEarningsStore = WoltEarningsStore(this)
         woltOrderStore = WoltOrderStore(this)
         workSessionStore = WorkSessionStore(this)
+        activeJobStore = ActiveJobStore(this)
+        activeJobTracker.restore(activeJobStore.load(), System.currentTimeMillis())
         routeAdvisor = RouteAdvisor(this, prefs)
         voice = VoiceRejectController(
             service = this,
@@ -198,7 +202,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         handler.removeCallbacks(pollRunnable)
         handler.removeCallbacks(decisionTickRunnable)
-        runCatching { decisionTracker.offerNotVisible(System.currentTimeMillis()); persistDecisions() }
+        runCatching { decisionTracker.offerNotVisible(System.currentTimeMillis()); persistDecisions(); persistActiveJobs() }
         voice?.destroy()
         voice = null
         if (::routeAdvisor.isInitialized) routeAdvisor.shutdown()
@@ -1128,9 +1132,13 @@ class DeliveryAccessibilityService : AccessibilityService() {
             lastPyszneOverlayWasHistoryDetails = false
         }
 
-        val kind = when (val classified = ScreenClassifier.classify(sourceText)) {
+        var kind = when (val classified = ScreenClassifier.classify(sourceText)) {
             ScreenKind.OTHER -> if (Regex("(?i)nawiguj|navigate").containsMatchIn(sourceText)) ScreenKind.ACTIVE_JOB else ScreenKind.OFFER_CARD
             else -> classified
+        }
+        // Ta sama karta co widoczna oferta (np. OCR bez przycisku) nie jest aktywnym zleceniem.
+        decisionTracker.current?.let { pendingNow ->
+            if (kind == ScreenKind.ACTIVE_JOB && pendingNow.visible && pendingNow.signature == OfferSignature.of(platform, offer)) kind = ScreenKind.OFFER_CARD
         }
         val nowMillis = System.currentTimeMillis()
         val details = offerDetails(platform, sourceText)
@@ -1187,11 +1195,18 @@ class DeliveryAccessibilityService : AccessibilityService() {
             lastRouteSignature = null
         }
 
+        if (platform == CourierPlatform.WOLT) maybeExpandWoltOffer(signature, details)
+        // Adresy Wolt dochodza po rozwinieciu – trasa musi byc policzona jeszcze raz.
+        if (details.pickupAddress != null && lastRouteSignature == signature && lastRouteAdvice?.points?.none { it.kind == MapPoint.Kind.NEW_DROP } == true && details.dropoffAddress != null) {
+            lastRouteAdvice = null
+            lastRouteSignature = null
+        }
+
         var advice = lastRouteAdvice?.takeIf { lastRouteSignature == signature }
         if (advice == null && routeAdvisor.enabled) {
             routeAdvisor.startLocationUpdates()
             advice = routeAdvisor.advise(
-                signature = signature,
+                signature = signature + "|" + (details.pickupAddress?.hashCode() ?: 0) + "|" + (details.dropoffAddress?.hashCode() ?: 0),
                 restaurant = details.restaurant,
                 pickupAddress = details.pickupAddress,
                 dropoffAddress = details.dropoffAddress,
@@ -1274,12 +1289,15 @@ class DeliveryAccessibilityService : AccessibilityService() {
         CourierPlatform.PYSZNE -> PyszneOfferDetailsParser.parse(sourceText).let {
             OfferDetails(it.restaurant, it.pickupAddress, it.dropoffAddress, it.stops)
         }
-        CourierPlatform.WOLT -> OfferDetails(
-            restaurant = WoltOfferDetailsParser.restaurant(sourceText),
-            pickupAddress = null,
-            dropoffAddress = null,
-            stops = WoltOfferDetailsParser.stops(sourceText)
-        )
+        CourierPlatform.WOLT -> {
+            val (pickup, drop) = WoltOfferDetailsParser.addresses(sourceText)
+            OfferDetails(
+                restaurant = WoltOfferDetailsParser.restaurant(sourceText),
+                pickupAddress = pickup,
+                dropoffAddress = drop,
+                stops = WoltOfferDetailsParser.stops(sourceText)
+            )
+        }
         else -> {
             // Stuart / Uber: adresy sa czesto w tekscie jako "Nazwa - ulica 1, 80-000 Miasto".
             val lines = sourceText.lines().map { it.trim() }.filter { it.isNotBlank() }
@@ -1342,6 +1360,64 @@ class DeliveryAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun persistActiveJobs() {
+        if (::activeJobStore.isInitialized) runCatching { activeJobStore.save(activeJobTracker.snapshot()) }
+    }
+
+    /** Zlecenie oznaczone jako dostarczone: Wolt (i inne bez historii) zapisujemy z pomiarem czasu. */
+    private fun onJobDelivered(job: ActiveJob, nowMillis: Long) {
+        if (job.platform == CourierPlatform.PYSZNE) return // Pyszne ma wlasna historie (auto-zapis szczegolow)
+        if (job.amountPln <= 0.0 && job.restaurant == null) return
+        val accepted = DecisionAnalytics.localDateTime(job.acceptedAtMillis)
+        val duration = ((nowMillis - job.acceptedAtMillis) / 60_000L).toInt().coerceIn(1, 240)
+        val order = WoltOrder(
+            date = accepted.toLocalDate(),
+            minuteOfDay = accepted.hour * 60 + accepted.minute,
+            venue = job.restaurant ?: platformLabel(job.platform),
+            grossPln = job.amountPln,
+            distanceKm = job.distanceKm.takeIf { it > 0.0 },
+            stops = job.stops,
+            source = WoltOrder.SOURCE_LIVE,
+            durationMinutes = duration,
+            acceptedAtMillis = job.acceptedAtMillis,
+            deliveredAtMillis = nowMillis
+        )
+        if (job.platform == CourierPlatform.WOLT && ::woltOrderStore.isInitialized && woltOrderStore.saveLive(order)) {
+            HapticLanguage.record(this)
+            val language = prefs.languageCode
+            val message = tr(
+                language,
+                "✓ Zapisano Wolt: ${order.venue} · ${String.format(java.util.Locale.forLanguageTag("pl-PL"), "%.2f", order.grossPln)} zł · ${duration} min",
+                "✓ Saved Wolt: ${order.venue} · ${String.format(java.util.Locale.forLanguageTag("pl-PL"), "%.2f", order.grossPln)} zł · ${duration} min",
+                "✓ Збережено Wolt: ${order.venue} · ${duration} хв",
+                "✓ Сохранено Wolt: ${order.venue} · ${duration} мин"
+            )
+            runCatching { android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_LONG).show() }
+        }
+    }
+
+    /** Wolt: karta oferty nie pokazuje adresow, dopoki arkusz nie zostanie przesuniety w gore. */
+    private fun maybeExpandWoltOffer(signature: String, details: OfferDetails) {
+        if (!prefs.woltAutoExpandOffer || expandedOfferSignature == signature) return
+        if (details.pickupAddress != null && details.dropoffAddress != null) return
+        expandedOfferSignature = signature
+        handler.postDelayed({
+            if (lastOfferSignature != signature) return@postDelayed
+            if (!RejectActionPerformer.offerCardVisible(this, ::isDeliveryPackage)) return@postDelayed
+            // Start gestu w obszarze tekstu "Spodziewany zarobek" (nie na przycisku Akceptuj).
+            RejectActionPerformer.swipe(this, fromYFraction = 0.70f, toYFraction = 0.28f)
+            scheduleThrottledScan(650L)
+        }, 600L)
+    }
+
+    /** Po odrzuceniu: jesli Wolt zostawil arkusz bez przycisku Akceptuj, zamykamy go gestem w gore. */
+    private fun dismissResidualSheetIfAny() {
+        if (!prefs.autoDismissAfterReject) return
+        if (RejectActionPerformer.offerCardVisible(this, ::isDeliveryPackage)) return
+        if (!RejectActionPerformer.residualOfferSheetVisible(this, ::isDeliveryPackage)) return
+        RejectActionPerformer.swipe(this, fromYFraction = 0.60f, toYFraction = 0.12f)
+    }
+
     private fun shortJobLabel(job: ActiveJob, currentMinuteOfDay: Int): String {
         val name = platformLabel(job.platform) + " " + job.label.take(28)
         val stage = if (job.stage == ActiveJob.Stage.TO_CUSTOMER) "→🏠" else "→🍴"
@@ -1373,12 +1449,22 @@ class DeliveryAccessibilityService : AccessibilityService() {
         val now = System.currentTimeMillis()
         // 1.2: etapy aktywnego zlecenia (Zakończ odbiór / Dostarcz zamówienie / Odrzuć dostawę).
         if (platform != null) {
-            if (texts.any { JobStageButtons.isDelivered(it) }) {
-                activeJobTracker.onFinished(platform)
-                lastRouteSignature = null
-            } else if (texts.any { JobStageButtons.isPickedUp(it) }) {
-                activeJobTracker.onPickedUp(platform, now)
-                lastRouteSignature = null
+            when {
+                texts.any { JobStageButtons.isCancelled(it) } -> {
+                    activeJobTracker.onFinished(platform)
+                    lastRouteSignature = null
+                    persistActiveJobs()
+                }
+                texts.any { JobStageButtons.isDelivered(it) } -> {
+                    activeJobTracker.onFinished(platform)?.let { onJobDelivered(it, now) }
+                    lastRouteSignature = null
+                    persistActiveJobs()
+                }
+                texts.any { JobStageButtons.isPickedUp(it) } -> {
+                    activeJobTracker.onPickedUp(platform, now)
+                    lastRouteSignature = null
+                    persistActiveJobs()
+                }
             }
         }
         val pending = decisionTracker.current
@@ -1396,6 +1482,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
                 dropoffAddress = pending.dropoffAddress,
                 stops = pending.stops
             )
+            persistActiveJobs()
         }
         persistDecisions()
         decisionCounterCache = 0L to null
@@ -1423,6 +1510,9 @@ class DeliveryAccessibilityService : AccessibilityService() {
         val finished = decisionTracker.drainFinished()
         if (finished.isEmpty()) return
         offerEventStore.appendAll(finished)
+        finished.filter { it.decision == OfferDecision.ACCEPTED && it.decisionSource == DecisionSource.NEXT_SCREEN }
+            .forEach { activeJobTracker.enrichFromOffer(it.platform, it) }
+        persistActiveJobs()
         decisionCounterCache = 0L to null
     }
 
@@ -1479,18 +1569,14 @@ class DeliveryAccessibilityService : AccessibilityService() {
         decisionTracker.rejectedByVoice(System.currentTimeMillis())
         persistDecisions()
         // Niektore aplikacje pytaja jeszcze raz "Odrzucić?" – potwierdzamy, bo kurier juz potwierdzil glosem.
-        handler.postDelayed({
-            val outcome = RejectActionPerformer.confirmIfDialog(this, ::isDeliveryPackage)
-            if (outcome == RejectActionPerformer.ConfirmOutcome.BLOCKED_DROP_DELIVERY) {
-                voiceHint = tr(prefs.languageCode, "To było „Odrzuć” aktywnej dostawy – cofnąłem", "That was the active delivery's decline – reverted", "Це було відхилення активної доставки – скасовано", "Это был отказ от активной доставки – отменено")
-                if (::overlay.isInitialized) overlay.updateExtras(overlay.currentExtras().copy(voiceState = VoiceState.UNAVAILABLE, voiceHint = voiceHint))
-                HapticLanguage.offer(this, ProfitabilityStatus.UNPROFITABLE)
-            }
-        }, 700L)
+        handler.postDelayed({ RejectActionPerformer.confirmIfDialog(this, ::isDeliveryPackage) }, 700L)
+        handler.postDelayed({ RejectActionPerformer.confirmIfDialog(this, ::isDeliveryPackage) }, 1_500L)
         handler.postDelayed({
             voice?.offerGone()
             if (::overlay.isInitialized) overlay.hide()
         }, 1_200L)
+        handler.postDelayed({ dismissResidualSheetIfAny() }, 1_900L)
+        handler.postDelayed({ dismissResidualSheetIfAny() }, 3_500L)
     }
 
     private fun platformLabel(platform: CourierPlatform): String = platform.displayName

@@ -25,10 +25,20 @@ object ScreenClassifier {
     private val inProgressMarker = Regex("""(?i)zako[nń]cz\s+odbi[oó]r|dostarcz\s+zam[oó]wienie|odbi[oó]r\s+z(?!\p{L})|dostawa\s+do(?!\p{L})|zam[oó]wienie\s+dostarczone|w\s+drodze|rozpocznij\s+odbi[oó]r|zad[zź]wo[nń]\s+do\s+klienta""")
     private val offerOnlyMarker = Regex("""(?i)spodziewany\s+zarobek|szac\.?\s*zarobki|szacowany\s+zarobek|expected\s+earnings""")
 
+    private val pickupSchedule = Regex("""(?i)odbierz\s+na\s+\d{1,2}[:.]\d{2}""")
+    private val deliverySchedule = Regex("""(?i)dostarcz\s+na\s+\d{1,2}[:.]\d{2}""")
+    private val rejectMarker = Regex("""(?i)(?<!\p{L})odrzu[cć](?!\p{L})""")
+    private val pyszneOfferMarker = Regex("""(?i)dostawa\s+do\s+klienta|przystank|odbi[oó]r\s*:""")
+
     fun classify(text: String): ScreenKind {
         if (text.isBlank()) return ScreenKind.OTHER
         if (historyMarker.containsMatchIn(text) && !acceptMarker.containsMatchIn(text)) return ScreenKind.HISTORY_DETAILS
         if (acceptMarker.containsMatchIn(text) || countdownMarker.containsMatchIn(text) || offerOnlyMarker.containsMatchIn(text)) return ScreenKind.OFFER_CARD
+        // Karta oferty Pyszne ma OBA terminy (Odbierz na + Dostarcz na) i "X Odrzuć";
+        // ekran aktywnego zlecenia Pyszne pokazuje tylko jeden z nich. Czesciowy odczyt
+        // karty bez przycisku "Zaakceptuj" nie moze tworzyc widmowego aktywnego zlecenia.
+        if (pickupSchedule.containsMatchIn(text) && deliverySchedule.containsMatchIn(text)) return ScreenKind.OFFER_CARD
+        if (rejectMarker.containsMatchIn(text) && pyszneOfferMarker.containsMatchIn(text)) return ScreenKind.OFFER_CARD
         val activeSignal = scheduleMarker.containsMatchIn(text) || etaMarker.containsMatchIn(text) || inProgressMarker.containsMatchIn(text)
         if (activeSignal && (navigateMarker.containsMatchIn(text) || etaMarker.containsMatchIn(text) || inProgressMarker.containsMatchIn(text))) {
             return ScreenKind.ACTIVE_JOB
@@ -123,7 +133,7 @@ object PyszneActiveScreenParser {
     private val deliverAt = Regex("""(?i)dostarcz\s+na\s+(\d{1,2})[:.](\d{2})""")
     private val orderMarker = Regex("""(?i)zam[oó]wienie\s*#""")
     private val pickedUpMarker = Regex("""(?i)dostarcz\s+zam[oó]wienie""")
-    private val skip = Regex("""(?i)^(?:nawiguj|\d+\s*zam[oó]wieni|notatki|uwagi|zako[nń]cz|dostarcz|odbierz|odbi[oó]r|natalia$)""")
+    private val skip = Regex("""(?i)^(?:nawiguj|\d+\s*zam[oó]wieni|notatki|uwagi|zako[nń]cz|dostarcz|dostawa|odbierz|odbi[oó]r|odrzu[cć]|zam[oó]wienie|\d+[,.]\d+\s*(?:zł|km))""")
 
     fun parse(text: String): PyszneActiveScreen? {
         if (ScreenClassifier.classify(text) != ScreenKind.ACTIVE_JOB) return null
@@ -175,7 +185,9 @@ data class ActiveJob(
     val stage: Stage = Stage.TO_PICKUP,
     val lastSeenAtMillis: Long = acceptedAtMillis,
     /** "Odbiór za 7 min" / "Dostawa za 24 min" z Wolt – ETA w minutach od [lastSeenAtMillis]. */
-    val etaMinutes: Int? = null
+    val etaMinutes: Int? = null,
+    /** Moment odebrania (klikniecie "Zakończ odbiór" / "Rozpocznij odbiór"). */
+    val pickedUpAtMillis: Long? = null
 ) {
     enum class Stage { TO_PICKUP, TO_CUSTOMER }
 
@@ -289,13 +301,35 @@ class ActiveJobTracker(
     /** Klikniecie "Zakończ odbiór" / "Rozpocznij odbiór" / "Odebrano". */
     fun onPickedUp(platform: CourierPlatform, nowMillis: Long) {
         val job = jobs[platform] ?: return
-        jobs[platform] = job.copy(stage = ActiveJob.Stage.TO_CUSTOMER, lastSeenAtMillis = nowMillis)
+        jobs[platform] = job.copy(stage = ActiveJob.Stage.TO_CUSTOMER, lastSeenAtMillis = nowMillis, pickedUpAtMillis = job.pickedUpAtMillis ?: nowMillis)
     }
 
-    /** Klikniecie "Dostarcz zamówienie" / "Zamówienie dostarczone" / "Odrzuć dostawę". */
-    fun onFinished(platform: CourierPlatform) {
-        jobs.remove(platform)
+    /** Klikniecie "Dostarcz zamówienie" / "Zamówienie dostarczone" / "Odrzuć dostawę". Zwraca zakonczone zlecenie. */
+    fun onFinished(platform: CourierPlatform): ActiveJob? = jobs.remove(platform)
+
+    /** Uzupelnia zlecenie danymi z zaakceptowanej oferty (kwota, km, czas, adresy), gdy ich brakuje. */
+    fun enrichFromOffer(platform: CourierPlatform, event: OfferEvent) {
+        val job = jobs[platform] ?: return
+        jobs[platform] = job.copy(
+            amountPln = if (job.amountPln > 0.0) job.amountPln else event.amountPln,
+            distanceKm = if (job.distanceKm > 0.0) job.distanceKm else event.distanceKm,
+            estimatedMinutes = job.estimatedMinutes ?: event.durationMinutes,
+            restaurant = job.restaurant ?: event.restaurant,
+            pickupAddress = job.pickupAddress ?: event.pickupAddress,
+            dropoffAddress = job.dropoffAddress ?: event.dropoffAddress,
+            pickupMinuteOfDay = job.pickupMinuteOfDay ?: event.pickupMinuteOfDay,
+            deliveryMinuteOfDay = job.deliveryMinuteOfDay ?: event.deliveryMinuteOfDay,
+            stops = maxOf(job.stops, event.stops),
+            acceptedAtMillis = minOf(job.acceptedAtMillis, event.decidedAtMillis ?: job.acceptedAtMillis)
+        )
     }
+
+    /** Przywrocenie po restarcie uslugi (znaczniki czasu zapisane trwale). */
+    fun restore(saved: List<ActiveJob>, nowMillis: Long) {
+        saved.filter { nowMillis - it.lastSeenAtMillis <= staleAfterMs }.forEach { jobs[it.platform] = it }
+    }
+
+    fun snapshot(): List<ActiveJob> = jobs.values.toList()
 
     fun activeJobs(nowMillis: Long): List<ActiveJob> {
         jobs.entries.removeIf { nowMillis - it.value.lastSeenAtMillis > staleAfterMs }
@@ -313,10 +347,13 @@ class ActiveJobTracker(
 /** Etykiety przyciskow zmieniajacych etap zlecenia. */
 object JobStageButtons {
     private val pickedUp = Regex("""(?i)^(?:zako[nń]cz\s+odbi[oó]r|rozpocznij\s+odbi[oó]r|odbierz\s+zam[oó]wieni[ae]|odebrano|picked\s+up|odbierz)$""")
-    private val delivered = Regex("""(?i)^(?:dostarcz\s+zam[oó]wienie|zam[oó]wienie\s+dostarczone|dostarczono|delivered|zako[nń]cz\s+dostaw[eę]|odrzu[cć]\s+dostaw[eę])$""")
+    private val delivered = Regex("""(?i)^(?:dostarcz\s+zam[oó]wienie|zam[oó]wienie\s+dostarczone|dostarczono|delivered|zako[nń]cz\s+dostaw[eę])$""")
+    private val cancelled = Regex("""(?i)^(?:odrzu[cć]\s+dostaw[eę]|anuluj\s+dostaw[eę]|cancel\s+delivery)$""")
 
     fun isPickedUp(text: String): Boolean = pickedUp.matches(text.trim())
     fun isDelivered(text: String): Boolean = delivered.matches(text.trim())
+    /** Zrzucenie przyjetej dostawy – zlecenie znika, ale NIE jest zrealizowane. */
+    fun isCancelled(text: String): Boolean = cancelled.matches(text.trim())
 }
 
 /** Ocena czasowa nowej oferty w trakcie aktywnego zlecenia. */

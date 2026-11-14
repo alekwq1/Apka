@@ -155,6 +155,30 @@ object WoltOfferDetailsParser {
         }
         return 1
     }
+
+    private val pickupLabel = Regex("""(?i)^(?:odbi[oó]r|odbi[oó]r\s+z|pickup|restauracja|lokal)\s*:?$""")
+    private val dropLabel = Regex("""(?i)^(?:dostawa|dostawa\s+do|klient|delivery|drop-?off)\s*:?$""")
+
+    /**
+     * Adresy z rozwinietej karty oferty Wolt (po przesunieciu arkusza w gore).
+     * Nie znamy dokladnego ukladu, wiec: etykiety Odbiór/Dostawa jesli sa, inaczej
+     * pierwsza linia adresowa = odbior, druga = dostawa.
+     */
+    fun addresses(text: String): Pair<String?, String?> {
+        val lines = text.lines().map { it.trim() }.filter { it.isNotBlank() }
+        var pickup: String? = null
+        var drop: String? = null
+        lines.forEachIndexed { index, line ->
+            if (pickup == null && pickupLabel.matches(line)) pickup = lines.drop(index + 1).take(3).firstOrNull { AddressLines.isAddress(it) }
+            if (drop == null && dropLabel.matches(line)) drop = lines.drop(index + 1).take(3).firstOrNull { AddressLines.isAddress(it) }
+        }
+        if (pickup == null || drop == null) {
+            val addressLines = lines.filter { AddressLines.isAddress(it) }.distinct()
+            if (pickup == null) pickup = addressLines.firstOrNull { it != drop }
+            if (drop == null) drop = addressLines.firstOrNull { it != pickup }
+        }
+        return pickup to drop
+    }
 }
 
 /** Snapshoty "Zarobki brutto" + zestawienie dnia Wolt z zaakceptowanych ofert. */

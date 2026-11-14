@@ -256,6 +256,16 @@ class AppPrefs(private val context: Context) {
         get() = prefs.getBoolean("voice_reject_require_confirmation", false)
         set(value) = prefs.edit().putBoolean("voice_reject_require_confirmation", value).apply()
 
+    /** Wolt: po pojawieniu sie oferty rozwin arkusz gestem, zeby odczytac adresy odbioru i dostawy. */
+    var woltAutoExpandOffer: Boolean
+        get() = prefs.getBoolean("wolt_auto_expand_offer", true)
+        set(value) = prefs.edit().putBoolean("wolt_auto_expand_offer", value).apply()
+
+    /** Po odrzuceniu glosem: jesli zostal "ogon" arkusza oferty, zamknij go gestem. */
+    var autoDismissAfterReject: Boolean
+        get() = prefs.getBoolean("auto_dismiss_after_reject", true)
+        set(value) = prefs.edit().putBoolean("auto_dismiss_after_reject", value).apply()
+
     /** Pokazuj w panelu licznik dzisiejszych decyzji (✓ / ✗). */
     var showDecisionCounter: Boolean
         get() = prefs.getBoolean("overlay_show_decisions", true)

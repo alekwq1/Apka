@@ -271,7 +271,7 @@ class VoiceRejectController(
 
 /** Klika "Odrzuć" w aplikacji kurierskiej (Wolt / Pyszne / Stuart) przez Accessibility. */
 object RejectActionPerformer {
-    private val confirmDialogLabel = Regex("""(?i)^(?:odrzu[cć]|tak(?:,\s*odrzu[cć])?|potwierd[zź]|decline|yes|confirm|так|да)\b""")
+    private val confirmDialogLabel = Regex("""(?i)^(?:odrzu[cć](?:\s+dostaw[eę])?|tak(?:,\s*odrzu[cć])?|potwierd[zź]|decline|yes|confirm|так|да)(?!\p{L})""")
 
     fun perform(service: AccessibilityService, isDeliveryPackage: (String) -> Boolean): Boolean {
         val node = findRejectNode(service, isDeliveryPackage) ?: return false
@@ -286,35 +286,63 @@ object RejectActionPerformer {
      * nigdy nie potwierdzamy – cofamy go, zeby nie zrzucic kursu.
      */
     fun confirmIfDialog(service: AccessibilityService, isDeliveryPackage: (String) -> Boolean): ConfirmOutcome {
-        val candidates = mutableListOf<AccessibilityNodeInfo>()
-        val texts = StringBuilder()
+        // Wolt: "Na pewno chcesz odrzucić tę dostawę? Stracisz zarobki…" z przyciskami
+        // "Odrzuć dostawę" (potwierdza odrzucenie) i "Rozpocznij odbiór" (= AKCEPTACJA!).
+        // Klikamy wylacznie przycisk zaczynajacy sie od "Odrzuć"/"Tak"; nigdy "Rozpocznij odbiór".
         for (window in service.windows) {
             val root = runCatching { window.root }.getOrNull() ?: continue
             val pkg = root.packageName?.toString().orEmpty()
             if (!isDeliveryPackage(pkg)) continue
-            collect(root, candidates, predicate = { text -> confirmDialogLabel.containsMatchIn(text.trim()) && text.trim().length <= 24 })
-            collectAllText(root, texts, 0)
+            val candidates = mutableListOf<AccessibilityNodeInfo>()
+            collect(root, candidates, predicate = { text -> confirmDialogLabel.containsMatchIn(text.trim()) && text.trim().length <= 24 && !forbiddenLabel.containsMatchIn(text) })
+            val best = candidates.firstOrNull() ?: continue
+            return if (click(service, best)) ConfirmOutcome.CONFIRMED else ConfirmOutcome.NO_DIALOG
         }
-        val all = texts.toString()
-        if (dropDeliveryDialog.containsMatchIn(all)) {
-            val cancel = mutableListOf<AccessibilityNodeInfo>()
-            for (window in service.windows) {
-                val root = runCatching { window.root }.getOrNull() ?: continue
-                if (!isDeliveryPackage(root.packageName?.toString().orEmpty())) continue
-                collect(root, cancel, predicate = { text -> cancelLabel.containsMatchIn(text.trim()) && text.trim().length <= 30 })
-            }
-            val cancelNode = cancel.firstOrNull { it.isClickable } ?: cancel.firstOrNull()
-            if (cancelNode != null) click(service, cancelNode) else service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
-            return ConfirmOutcome.BLOCKED_DROP_DELIVERY
-        }
-        val best = candidates.firstOrNull { it.isClickable } ?: candidates.firstOrNull() ?: return ConfirmOutcome.NO_DIALOG
-        return if (click(service, best)) ConfirmOutcome.CONFIRMED else ConfirmOutcome.NO_DIALOG
+        return ConfirmOutcome.NO_DIALOG
     }
 
-    enum class ConfirmOutcome { NO_DIALOG, CONFIRMED, BLOCKED_DROP_DELIVERY }
+    enum class ConfirmOutcome { NO_DIALOG, CONFIRMED }
 
-    private val dropDeliveryDialog = Regex("""(?i)stracisz\s+zarobki|odrzuci[cć]\s+t[eę]\s+dostaw[eę]|lose\s+(?:your\s+)?earnings|decline\s+this\s+delivery""")
-    private val cancelLabel = Regex("""(?i)^(?:rozpocznij\s+odbi[oó]r|anuluj|wr[oó][cć]|cancel|back|zamknij|nie)$""")
+    /** Etykiety, ktorych nigdy nie wolno kliknac w ramach odrzucania. */
+    private val forbiddenLabel = Regex("""(?i)rozpocznij|akceptuj|accept|odbierz|start""")
+
+    /** Czy na ekranie nadal widac karte oferty (przycisk akceptacji / licznik). */
+    fun offerCardVisible(service: AccessibilityService, isDeliveryPackage: (String) -> Boolean): Boolean {
+        val text = allDeliveryText(service, isDeliveryPackage)
+        return Regex("""(?i)(?<!\p{L})(?:akceptuj|zaakceptuj|accept)(?!\p{L})""").containsMatchIn(text) ||
+            Regex("""(?i)sekund\s+do\s+automatycznego""").containsMatchIn(text)
+    }
+
+    /** Czy po odrzuceniu zostal "ogon" arkusza oferty Wolt (bez przycisku Akceptuj). */
+    fun residualOfferSheetVisible(service: AccessibilityService, isDeliveryPackage: (String) -> Boolean): Boolean {
+        val text = allDeliveryText(service, isDeliveryPackage)
+        if (offerCardVisible(service, isDeliveryPackage)) return false
+        return Regex("""(?i)spodziewany\s+zarobek|dostaw\w*\s+od\b|odleg[lł]o[sś][cć]\s*\n?\s*\d""").containsMatchIn(text)
+    }
+
+    fun allDeliveryText(service: AccessibilityService, isDeliveryPackage: (String) -> Boolean): String {
+        val sb = StringBuilder()
+        for (window in service.windows) {
+            val root = runCatching { window.root }.getOrNull() ?: continue
+            if (!isDeliveryPackage(root.packageName?.toString().orEmpty())) continue
+            collectAllText(root, sb, 0)
+        }
+        return sb.toString()
+    }
+
+    /** Przesuniecie arkusza (swipe) – do rozwiniecia szczegolow oferty Wolt lub zamkniecia ogona. */
+    fun swipe(service: AccessibilityService, fromYFraction: Float, toYFraction: Float, durationMs: Long = 320L): Boolean {
+        val metrics = service.resources.displayMetrics
+        val x = metrics.widthPixels / 2f
+        val path = Path().apply {
+            moveTo(x, metrics.heightPixels * fromYFraction)
+            lineTo(x, metrics.heightPixels * toYFraction)
+        }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0L, durationMs))
+            .build()
+        return runCatching { service.dispatchGesture(gesture, null, null) }.getOrDefault(false)
+    }
 
     private fun collectAllText(node: AccessibilityNodeInfo, out: StringBuilder, depth: Int) {
         if (depth > 60) return
@@ -328,11 +356,14 @@ object RejectActionPerformer {
 
     private fun findRejectNode(service: AccessibilityService, isDeliveryPackage: (String) -> Boolean): AccessibilityNodeInfo? {
         val candidates = mutableListOf<AccessibilityNodeInfo>()
+        // Okna sa od najwyzszego – karta oferty lezy nad ekranem aktywnej dostawy,
+        // wiec bierzemy pierwsze okno, w ktorym jest "Odrzuć".
         for (window in service.windows) {
             val root = runCatching { window.root }.getOrNull() ?: continue
             val pkg = root.packageName?.toString().orEmpty()
             if (!isDeliveryPackage(pkg)) continue
-            collect(root, candidates, predicate = { text -> DecisionButtons.isRejectLabel(text) })
+            collect(root, candidates, predicate = { text -> DecisionButtons.isRejectLabel(text) && !forbiddenLabel.containsMatchIn(text) })
+            if (candidates.isNotEmpty()) break
         }
         if (candidates.isEmpty()) {
             service.rootInActiveWindow?.let { root ->
@@ -357,11 +388,23 @@ object RejectActionPerformer {
         }
     }
 
+    /**
+     * Klikalny przodek tylko wtedy, gdy jest niewiele wiekszy od samego napisu.
+     * BLAD 1.2: w Wolt napis "Odrzuć" nie jest klikalny, a klikalnym przodkiem byla cala
+     * karta oferty – klik/tap w jej srodek trafial w "Akceptuj". Teraz w takiej sytuacji
+     * tapiemy dokladnie w srodek napisu.
+     */
     private fun clickableSelfOrAncestor(node: AccessibilityNodeInfo): AccessibilityNodeInfo {
-        var current: AccessibilityNodeInfo? = node
+        if (node.isClickable) return node
+        val own = Rect().also { node.getBoundsInScreen(it) }
+        var current: AccessibilityNodeInfo? = node.parent
         var hops = 0
-        while (current != null && hops < 6) {
-            if (current.isClickable) return current
+        while (current != null && hops < 4) {
+            if (current.isClickable) {
+                val bounds = Rect().also { current.getBoundsInScreen(it) }
+                val smallEnough = own.isEmpty || (bounds.height() <= own.height() * 3 + 48 && bounds.width() <= own.width() * 4 + 96)
+                return if (smallEnough) current else node
+            }
             current = current.parent
             hops++
         }
@@ -369,8 +412,8 @@ object RejectActionPerformer {
     }
 
     private fun click(service: AccessibilityService, node: AccessibilityNodeInfo): Boolean {
-        if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
         val bounds = Rect().also { node.getBoundsInScreen(it) }
+        if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
         if (bounds.isEmpty) return false
         return tap(service, bounds.exactCenterX(), bounds.exactCenterY())
     }

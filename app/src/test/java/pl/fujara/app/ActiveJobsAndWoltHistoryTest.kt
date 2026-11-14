@@ -152,7 +152,8 @@ class ActiveJobsAndWoltHistoryTest {
         assertTrue(JobStageButtons.isPickedUp("Rozpocznij odbiór"))
         assertTrue(JobStageButtons.isDelivered("Dostarcz zamówienie"))
         assertTrue(JobStageButtons.isDelivered("Zamówienie dostarczone"))
-        assertTrue(JobStageButtons.isDelivered("Odrzuć dostawę"))
+        assertTrue(JobStageButtons.isCancelled("Odrzuć dostawę"))
+        assertEquals(false, JobStageButtons.isDelivered("Odrzuć dostawę"))
         assertEquals(false, JobStageButtons.isDelivered("Odrzuć"))
     }
 
@@ -171,6 +172,42 @@ class ActiveJobsAndWoltHistoryTest {
         // Inna restauracja na ekranie aktywnego zlecenia tej samej platformy = nowe zlecenie.
         tracker.onActiveScreen(CourierPlatform.WOLT, 5_000L, null, null, "McDonald's - Szczęśliwa", false)
         assertEquals("McDonald's - Szczęśliwa", tracker.activeAt(5_000L, CourierPlatform.WOLT)!!.restaurant)
+    }
+
+    @Test
+    fun `pyszne offer card with both schedules is never an active job`() {
+        // Czesciowy odczyt karty bez przycisku "Zaakceptuj" (OCR) – kiedys tworzyl widmowe zlecenie.
+        val partial = "Odrzuć\nNawiguj\n19,61 zł\n6,4 km • 2 przystanki\nOdbiór: Lena Grill Kebab\nLelewela 18a, 80-422 Gdańsk\nOdbierz na 21:41\nDostawa do klienta\nBiała 12, 80-435 Gdańsk\nDostarcz na 21:45"
+        assertEquals(ScreenKind.OFFER_CARD, ScreenClassifier.classify(partial))
+        assertNull(PyszneActiveScreenParser.parse(partial))
+        // Prawdziwy ekran aktywny ma tylko jeden termin.
+        assertEquals(ScreenKind.ACTIVE_JOB, ScreenClassifier.classify("Odbierz na 21:41\nLena Grill Kebab\nNawiguj"))
+    }
+
+    @Test
+    fun `wolt expanded offer addresses`() {
+        val text = "Odrzuć\n43,17 zł\nSpodziewany zarobek za pełną dostawę\n2 dostaw(y) od\nMcDonald's - Morena\nOdbiór\nPiekarnicza 1, 80-126 Gdańsk\nDostawa\nMyśliwska 33/5, 80-283 Gdańsk\nOdległość\n11.7 km\nAkceptuj"
+        val (pickup, drop) = WoltOfferDetailsParser.addresses(text)
+        assertEquals("Piekarnicza 1, 80-126 Gdańsk", pickup)
+        assertEquals("Myśliwska 33/5, 80-283 Gdańsk", drop)
+        val noLabels = "Spodziewany zarobek\nDostawa od\nKFC\nJana Pawła II 19, 80-462 Gdańsk\nChłopska 20E, 80-375 Gdańsk\nAkceptuj"
+        val (p2, d2) = WoltOfferDetailsParser.addresses(noLabels)
+        assertEquals("Jana Pawła II 19, 80-462 Gdańsk", p2)
+        assertEquals("Chłopska 20E, 80-375 Gdańsk", d2)
+    }
+
+    @Test
+    fun `live wolt order merges with official row and keeps measured duration`() {
+        val day = LocalDate.of(2026, 11, 14)
+        val live = WoltOrder(day, 18 * 60 + 35, "SMASHYNSKI - smash burgers", 35.66, 10.1, 1, WoltOrder.SOURCE_LIVE, durationMinutes = 27)
+        val official = WoltOrder(day, 18 * 60 + 42, "SMASHYNSKI, SMASHYNSKI - smash burgers", 35.66, 10.13, 1)
+        val other = WoltOrder(day, 17 * 60 + 12, "Sushi Dla Mnie Galeria Bałtycka", 26.78, 8.22, 1)
+        val merged = WoltOrderMerger.merge(listOf(live, official, other))
+        assertEquals(2, merged.size)
+        val smash = merged.first { it.grossPln == 35.66 }
+        assertEquals(WoltOrder.SOURCE_OFFICIAL, smash.source)
+        assertEquals(27, smash.durationMinutes)
+        assertEquals(10.13, smash.distanceKm!!, 0.001)
     }
 
     @Test

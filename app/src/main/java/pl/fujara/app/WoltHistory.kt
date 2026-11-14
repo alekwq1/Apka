@@ -23,10 +23,25 @@ data class WoltOrder(
     val venue: String,
     val grossPln: Double,
     val distanceKm: Double?,
-    val stops: Int
+    val stops: Int,
+    /** "official" – z ekranu Zarobki brutto; "live" – zmierzone przez FUJARE (akceptacja → dostarczone). */
+    val source: String = SOURCE_OFFICIAL,
+    /** Zmierzony czas realizacji (akceptacja → dostarczone) – tylko source=live. */
+    val durationMinutes: Int? = null,
+    val acceptedAtMillis: Long? = null,
+    val deliveredAtMillis: Long? = null
 ) {
     val key: String
         get() = "${date}|$minuteOfDay|${venue.lowercase(Locale.ROOT)}|${String.format(Locale.ROOT, "%.2f", grossPln)}"
+
+    /** Klucz do laczenia wpisu "live" z oficjalnym: ta sama data, kwota i podobny lokal. */
+    val matchKey: String
+        get() = "${date}|${String.format(Locale.ROOT, "%.2f", grossPln)}"
+
+    companion object {
+        const val SOURCE_OFFICIAL = "official"
+        const val SOURCE_LIVE = "live"
+    }
 }
 
 data class WoltDayDetails(val date: LocalDate, val totalPln: Double?, val orders: List<WoltOrder>)
@@ -189,6 +204,15 @@ class WoltOrderStore(context: Context) {
 
     fun orders(): List<WoltOrder> = synchronized(lock) { loadOrdersLocked().toList() }
     fun ordersForDate(date: LocalDate): List<WoltOrder> = orders().filter { it.date == date }.sortedBy { it.minuteOfDay }
+
+    /**
+     * Zlecenia dnia bez duplikatow: oficjalny wpis Wolt i zmierzony przez FUJARE wpis "live"
+     * o tej samej kwocie sa laczone (kwota/dystans z Wolt, czas realizacji z pomiaru).
+     */
+    fun mergedForDate(date: LocalDate): List<WoltOrder> = WoltOrderMerger.merge(ordersForDate(date))
+
+    /** Zapis zmierzonego zlecenia (akceptacja → dostarczone). Zwraca true, gdy dodano nowy wpis. */
+    fun saveLive(order: WoltOrder): Boolean = saveOrders(listOf(order.copy(source = WoltOrder.SOURCE_LIVE))) > 0
     fun dayTotal(date: LocalDate): Double? = synchronized(lock) { loadTotalsLocked()[date] }
     fun dayTotals(): Map<LocalDate, Double> = synchronized(lock) { loadTotalsLocked().toMap() }
 
@@ -263,6 +287,10 @@ class WoltOrderStore(context: Context) {
         .put("gross", o.grossPln)
         .put("km", o.distanceKm ?: JSONObject.NULL)
         .put("stops", o.stops)
+        .put("source", o.source)
+        .put("duration", o.durationMinutes ?: JSONObject.NULL)
+        .put("acceptedAt", o.acceptedAtMillis ?: JSONObject.NULL)
+        .put("deliveredAt", o.deliveredAtMillis ?: JSONObject.NULL)
 
     private fun decodeOrder(o: JSONObject): WoltOrder? = runCatching {
         WoltOrder(
@@ -271,12 +299,35 @@ class WoltOrderStore(context: Context) {
             venue = o.getString("venue"),
             grossPln = o.getDouble("gross"),
             distanceKm = if (o.isNull("km")) null else o.optDouble("km"),
-            stops = o.optInt("stops", 1)
+            stops = o.optInt("stops", 1),
+            source = o.optString("source", WoltOrder.SOURCE_OFFICIAL),
+            durationMinutes = if (o.isNull("duration")) null else o.optInt("duration"),
+            acceptedAtMillis = if (o.isNull("acceptedAt")) null else o.optLong("acceptedAt"),
+            deliveredAtMillis = if (o.isNull("deliveredAt")) null else o.optLong("deliveredAt")
         )
     }.getOrNull()
 
     companion object {
         const val ORDERS_FILE = "wolt_orders.jsonl"
         const val TOTALS_FILE = "wolt_day_totals.jsonl"
+    }
+}
+
+object WoltOrderMerger {
+    fun merge(orders: List<WoltOrder>): List<WoltOrder> {
+        val official = orders.filter { it.source == WoltOrder.SOURCE_OFFICIAL }
+        val live = orders.filter { it.source == WoltOrder.SOURCE_LIVE }.toMutableList()
+        val out = mutableListOf<WoltOrder>()
+        official.forEach { off ->
+            val match = live.firstOrNull { it.matchKey == off.matchKey && kotlin.math.abs(it.minuteOfDay - off.minuteOfDay) <= 90 }
+            if (match != null) {
+                live.remove(match)
+                out += off.copy(durationMinutes = match.durationMinutes, acceptedAtMillis = match.acceptedAtMillis, deliveredAtMillis = match.deliveredAtMillis)
+            } else {
+                out += off
+            }
+        }
+        out += live
+        return out.sortedBy { it.minuteOfDay }
     }
 }
