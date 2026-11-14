@@ -83,9 +83,9 @@ class DeliveryAccessibilityService : AccessibilityService() {
     private var lastNotificationWork: String? = null
     private lateinit var workSessionStore: WorkSessionStore
     private lateinit var activeJobStore: ActiveJobStore
-    private val woltExpandStartedAt = java.util.LinkedHashMap<String, Long>()
-    private val woltCollapsedSignatures = java.util.LinkedHashSet<String>()
-    private val woltDetailsBySignature = object : java.util.LinkedHashMap<String, OfferDetails>() {
+    private val expandStartedAt = java.util.LinkedHashMap<String, Long>()
+    private val collapsedSignatures = java.util.LinkedHashSet<String>()
+    private val offerDetailsBySignature = object : java.util.LinkedHashMap<String, OfferDetails>() {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, OfferDetails>?): Boolean = size > 30
     }
     private var lastOfferDecisionAt = 0L
@@ -510,7 +510,13 @@ class DeliveryAccessibilityService : AccessibilityService() {
                     showOffer(
                         rawOffer = offer,
                         applicationName = recognizedName,
-                        sourceText = if (platform == CourierPlatform.PYSZNE) pyszneSourceText else (resolved?.text ?: recognitionText),
+                        sourceText = when (platform) {
+                            CourierPlatform.PYSZNE -> pyszneSourceText
+                            // OCR jest maskowany pod panelem FUJARY – adresy z drzewa dostepnosci uzupelniaja tekst.
+                            CourierPlatform.WOLT -> listOf(resolved?.text ?: recognitionText, accessibilityTextForPackage(sourcePackageName))
+                                .map { it.trim() }.filter { it.isNotBlank() }.distinct().joinToString("\n")
+                            else -> resolved?.text ?: recognitionText
+                        },
                         packageName = if (
                             isGalleryPackage(sourcePackageName) ||
                             packagePlatform == null ||
@@ -1224,15 +1230,16 @@ class DeliveryAccessibilityService : AccessibilityService() {
             lastRouteSignature = null
         }
 
-        // Wolt: adresy sa dopiero po rozwinieciu arkusza. Zapamietujemy je dla tej oferty,
-        // bo po zwinieciu arkusza znikaja z ekranu.
-        val routeDetails = if (platform == CourierPlatform.WOLT) {
-            if (details.fromTimeline) woltDetailsBySignature[signature] = details
-            maybeExpandWoltOffer(signature, details)
-            maybeCollapseWoltOffer(signature, sourceText, details)
-            woltDetailsBySignature[signature] ?: details
-        } else {
-            details
+        // Wolt / Pyszne: komplet adresow bywa dopiero po rozwinieciu arkusza. Zapamietujemy
+        // najpelniejszy odczyt dla tej oferty, bo po zwinieciu adresy znikaja z ekranu.
+        val remembered = offerDetailsBySignature[signature]
+        if (remembered == null || details.pointCount > remembered.pointCount || (details.fromTimeline && !remembered.fromTimeline)) {
+            offerDetailsBySignature[signature] = details
+        }
+        val routeDetails = offerDetailsBySignature[signature] ?: details
+        if (platform == CourierPlatform.WOLT || platform == CourierPlatform.PYSZNE) {
+            maybeExpandOffer(platform, signature, routeDetails)
+            maybeCollapseOffer(platform, signature, sourceText, routeDetails)
         }
         val routeKey = signature + "|" + routeDetails.pickups.joinToString("/") + "|" + routeDetails.drops.joinToString("/")
         if (lastRouteSignature != null && lastRouteSignature != routeKey && lastRouteSignature!!.startsWith(signature)) {
@@ -1241,10 +1248,12 @@ class DeliveryAccessibilityService : AccessibilityService() {
         }
         // Weryfikacja przed mapa: dla Wolt czekamy na adresy z rozwinietej karty (max ~4 s),
         // zeby nie geokodowac samej nazwy lokalu (dawalo zle punkty, np. KFC pod Pruszczem).
-        val woltAwaitingAddresses = platform == CourierPlatform.WOLT && prefs.woltAutoExpandOffer &&
-            !routeDetails.fromTimeline && nowMillis - (woltExpandStartedAt[signature] ?: nowMillis) < 4_000L
+        val woltAwaitingAddresses = (platform == CourierPlatform.WOLT || platform == CourierPlatform.PYSZNE) &&
+            !routeDetails.fromTimeline && expandStartedAt.containsKey(signature) &&
+            nowMillis - (expandStartedAt[signature] ?: nowMillis) < 4_500L
 
-        var advice = lastRouteAdvice?.takeIf { lastRouteSignature == routeKey }
+        // Niezweryfikowana analiza (brak lokalizacji / adresu) jest ponawiana co 3 s.
+        var advice = lastRouteAdvice?.takeIf { lastRouteSignature == routeKey && (it.verified || nowMillis - it.computedAtMillis < 3_000L) }
         if (advice == null && routeAdvisor.enabled && !woltAwaitingAddresses) {
             routeAdvisor.startLocationUpdates()
             advice = routeAdvisor.advise(
@@ -1265,9 +1274,9 @@ class DeliveryAccessibilityService : AccessibilityService() {
                         overlay.currentExtras().copy(
                             routeText = RouteAdvisor.describe(fresh, prefs.languageCode).ifBlank { null },
                             routePending = false,
-                            spatialNote = fresh.spatial?.note,
-                            spatialVerdict = fresh.spatial?.verdict,
-                            mapPoints = if (prefs.showMiniMap) fresh.points else emptyList(),
+                            spatialNote = spatialNoteFor(fresh, prefs.languageCode),
+                            spatialVerdict = if (fresh.verified) fresh.spatial?.verdict else null,
+                            mapPoints = if (prefs.showMiniMap && fresh.verified) fresh.points else emptyList(),
                             mapTiles = prefs.mapTilesEnabled,
                             feasibilityNote = feasibility?.note ?: overlay.currentExtras().feasibilityNote,
                             feasibilityVerdict = feasibility?.verdict ?: overlay.currentExtras().feasibilityVerdict
@@ -1294,14 +1303,14 @@ class DeliveryAccessibilityService : AccessibilityService() {
             feasibilityVerdict = feasibility?.verdict,
             routeText = advice?.let { RouteAdvisor.describe(it, language).ifBlank { null } }
                 ?: when {
-                    woltAwaitingAddresses -> tr(language, "🧭 czytam adresy Wolt…", "🧭 reading Wolt addresses…", "🧭 читаю адреси…", "🧭 читаю адреса…")
+                    woltAwaitingAddresses -> tr(language, "🧭 czytam adresy odbioru i dostawy…", "🧭 reading pickup and drop-off…", "🧭 читаю адреси…", "🧭 читаю адреса…")
                     routeAdvisor.enabled -> tr(language, "🧭 liczę trasę…", "🧭 routing…", "🧭 рахую маршрут…", "🧭 считаю маршрут…")
                     else -> null
                 },
             routePending = advice == null,
-            spatialNote = advice?.spatial?.note,
-            spatialVerdict = advice?.spatial?.verdict,
-            mapPoints = if (prefs.showMiniMap) advice?.points.orEmpty() else emptyList(),
+            spatialNote = advice?.let { spatialNoteFor(it, language) },
+            spatialVerdict = advice?.takeIf { it.verified }?.spatial?.verdict,
+            mapPoints = if (prefs.showMiniMap && advice?.verified == true) advice.points else emptyList(),
             mapTiles = prefs.mapTilesEnabled,
             voiceState = if (prefs.voiceRejectEnabled) voiceState else null,
             voiceHint = voiceHint,
@@ -1331,13 +1340,25 @@ class DeliveryAccessibilityService : AccessibilityService() {
         val stops: Int,
         val pickups: List<String> = listOfNotNull(pickupAddress),
         val drops: List<String> = listOfNotNull(dropoffAddress),
-        /** Czy adresy pochodza z rozwinietej karty ("Ramy czasowe"). */
-        val fromTimeline: Boolean = false
-    )
+        /** Czy odczytano komplet adresow (Wolt: "Ramy czasowe"; Pyszne: wszystkie dostawy). */
+        val fromTimeline: Boolean = false,
+        val expectedDrops: Int = 1
+    ) {
+        val pointCount: Int get() = pickups.size + drops.size
+    }
 
     private fun offerDetails(platform: CourierPlatform, sourceText: String): OfferDetails = when (platform) {
         CourierPlatform.PYSZNE -> PyszneOfferDetailsParser.parse(sourceText).let {
-            OfferDetails(it.restaurant, it.pickupAddress, it.dropoffAddress, it.stops)
+            OfferDetails(
+                restaurant = it.restaurant,
+                pickupAddress = it.pickupAddress,
+                dropoffAddress = it.dropoffAddress,
+                stops = it.stops,
+                pickups = it.pickups,
+                drops = it.drops,
+                fromTimeline = it.complete,
+                expectedDrops = it.expectedDrops
+            )
         }
         CourierPlatform.WOLT -> {
             val timeline = WoltOfferDetailsParser.stopsFromTimeline(sourceText)
@@ -1473,41 +1494,60 @@ class DeliveryAccessibilityService : AccessibilityService() {
     /** Gesty startuja po przeciwnej stronie niz panel FUJARY, zeby nie trafic w nakladke. */
     private fun gestureX(platform: CourierPlatform): Float = if (prefs.overlaySide(platform) == "start") 0.82f else 0.18f
 
-    /** Wolt: karta oferty nie pokazuje adresow, dopoki arkusz nie zostanie przesuniety w gore. */
-    private fun maybeExpandWoltOffer(signature: String, details: OfferDetails) {
-        if (!prefs.woltAutoExpandOffer || woltExpandStartedAt.containsKey(signature)) return
-        if (details.fromTimeline) {
-            // Kurier sam rozwinal karte – nic nie robimy, ale zapamietujemy oferte.
-            woltExpandStartedAt[signature] = System.currentTimeMillis()
-            woltCollapsedSignatures += signature
-            return
+    private fun spatialNoteFor(advice: RouteAdvice, language: String): String? =
+        if (advice.verified) {
+            advice.spatial?.note
+        } else {
+            "⏳ " + tr(language, "Sprawdzam przed oceną: brak ", "Checking before verdict: missing ", "Перевіряю: бракує ", "Проверяю: нет ") +
+                advice.missing.joinToString(", ")
         }
-        woltExpandStartedAt[signature] = System.currentTimeMillis()
-        if (woltExpandStartedAt.size > 40) woltExpandStartedAt.keys.take(20).forEach { woltExpandStartedAt.remove(it) }
+
+    /**
+     * Rozwija karte oferty, gdy nie widac kompletu adresow (Wolt: zawsze; Pyszne: gdy
+     * dostaw mniej niz wynika z "N przystanki"). Na czas odczytu panel FUJARY jest
+     * ukrywany, bo OCR maskuje jego obszar i adresy pod nim byly niewidoczne.
+     */
+    private fun maybeExpandOffer(platform: CourierPlatform, signature: String, details: OfferDetails) {
+        val enabled = when (platform) {
+            CourierPlatform.WOLT -> prefs.woltAutoExpandOffer
+            CourierPlatform.PYSZNE -> prefs.pyszneAutoExpandOffer
+            else -> false
+        }
+        if (!enabled || expandStartedAt.containsKey(signature) || details.fromTimeline) return
+        if (platform == CourierPlatform.PYSZNE && details.pickups.isNotEmpty() && details.drops.size >= details.expectedDrops) return
+        expandStartedAt[signature] = System.currentTimeMillis()
+        if (expandStartedAt.size > 40) expandStartedAt.keys.take(20).forEach { expandStartedAt.remove(it) }
         handler.postDelayed({
             if (lastOfferSignature != signature) return@postDelayed
             if (!RejectActionPerformer.offerCardVisible(this, ::isDeliveryPackage)) return@postDelayed
-            // Start gestu na tekscie "Spodziewany zarobek" (nie na przycisku Akceptuj), w gore.
-            RejectActionPerformer.swipe(this, fromYFraction = 0.70f, toYFraction = 0.25f, xFraction = gestureX(CourierPlatform.WOLT))
-            scheduleThrottledScan(700L)
-        }, 500L)
+            if (::overlay.isInitialized) overlay.suppress(3_800L)
+            val (from, to) = if (platform == CourierPlatform.WOLT) 0.70f to 0.25f else 0.64f to 0.14f
+            RejectActionPerformer.swipe(this, fromYFraction = from, toYFraction = to, xFraction = gestureX(platform))
+            scheduleThrottledScan(750L)
+            handler.postDelayed({ scheduleThrottledScan(100L) }, 1_500L)
+            // Bezpiecznik: panel wraca najpozniej po 4 s, nawet gdy odczyt sie nie uda.
+            handler.postDelayed({ if (::overlay.isInitialized) overlay.unsuppress() }, 4_000L)
+        }, 450L)
     }
 
-    /** Po odczytaniu adresow zwijamy arkusz z powrotem, zeby kurier widzial mape Wolta. */
-    private fun maybeCollapseWoltOffer(signature: String, sourceText: String, details: OfferDetails) {
-        if (!prefs.woltAutoExpandOffer || signature in woltCollapsedSignatures) return
-        val startedAt = woltExpandStartedAt[signature] ?: return
-        val expanded = Regex("(?i)ramy\\s+czasowe").containsMatchIn(sourceText)
+    /** Po odczytaniu adresow zwijamy arkusz, zeby kurier widzial mape aplikacji, i pokazujemy panel. */
+    private fun maybeCollapseOffer(platform: CourierPlatform, signature: String, sourceText: String, details: OfferDetails) {
+        if (signature in collapsedSignatures) return
+        val startedAt = expandStartedAt[signature] ?: return
+        val expandedMarker = if (platform == CourierPlatform.WOLT) Regex("(?i)ramy\\s+czasowe") else Regex("(?i)szczeg[oó][lł]y\\s+przychod|suma\\s+przychod")
+        val expanded = expandedMarker.containsMatchIn(sourceText)
         val elapsed = System.currentTimeMillis() - startedAt
-        if (!(details.fromTimeline || (expanded && elapsed > 2_500L))) return
-        woltCollapsedSignatures += signature
-        if (woltCollapsedSignatures.size > 40) woltCollapsedSignatures.remove(woltCollapsedSignatures.first())
+        if (!(details.fromTimeline || (expanded && elapsed > 2_800L) || elapsed > 4_500L)) return
+        collapsedSignatures += signature
+        if (collapsedSignatures.size > 40) collapsedSignatures.remove(collapsedSignatures.first())
         handler.postDelayed({
+            if (::overlay.isInitialized) overlay.unsuppress()
             if (lastOfferSignature != signature) return@postDelayed
             if (!RejectActionPerformer.offerCardVisible(this, ::isDeliveryPackage)) return@postDelayed
-            // Arkusz rozwiniety: gora arkusza ~10% ekranu. Ciagniemy w dol na wysokosc mapy.
-            RejectActionPerformer.swipe(this, fromYFraction = 0.13f, toYFraction = 0.66f, xFraction = gestureX(CourierPlatform.WOLT))
-        }, 350L)
+            if (!expanded && elapsed > 4_500L) return@postDelayed
+            val (from, to) = if (platform == CourierPlatform.WOLT) 0.13f to 0.66f else 0.12f to 0.62f
+            RejectActionPerformer.swipe(this, fromYFraction = from, toYFraction = to, xFraction = gestureX(platform))
+        }, 300L)
     }
 
     /**
@@ -1685,14 +1725,67 @@ class DeliveryAccessibilityService : AccessibilityService() {
         lastOfferDecisionAt = System.currentTimeMillis()
         persistDecisions()
         // Niektore aplikacje pytaja jeszcze raz "Odrzucić?" – potwierdzamy, bo kurier juz potwierdzil glosem.
-        handler.postDelayed({ RejectActionPerformer.confirmIfDialog(this, ::isDeliveryPackage) }, 700L)
-        handler.postDelayed({ RejectActionPerformer.confirmIfDialog(this, ::isDeliveryPackage) }, 1_500L)
+        confirmRejectDialog(startedAt = System.currentTimeMillis(), attempt = 0)
         handler.postDelayed({
             voice?.offerGone()
             if (::overlay.isInitialized) overlay.hide()
         }, 1_200L)
         handler.postDelayed({ dismissResidualSheetIfAny() }, 1_900L)
         handler.postDelayed({ dismissResidualSheetIfAny() }, 3_500L)
+    }
+
+    /**
+     * Wolt po "Odrzuć" pokazuje dialog "Na pewno chcesz odrzucić tę dostawę?" z przyciskami
+     * "Odrzuć dostawę" i "Rozpocznij odbiór" (= akceptacja!). Szukamy WYLACZNIE "Odrzuć dostawę":
+     * najpierw w drzewie dostepnosci co 350 ms (do 4 s), a gdy Wolt nie udostepnia przyciskow –
+     * OCR zrzutu i tap w srodek dokladnie tej linii.
+     */
+    private fun confirmRejectDialog(startedAt: Long, attempt: Int) {
+        val delay = if (attempt == 0) 450L else 350L
+        handler.postDelayed({
+            val elapsed = System.currentTimeMillis() - startedAt
+            if (elapsed > 4_200L) return@postDelayed
+            if (RejectActionPerformer.confirmIfDialog(this, ::isDeliveryPackage) == RejectActionPerformer.ConfirmOutcome.CONFIRMED) return@postDelayed
+            val dialogText = RejectActionPerformer.allDeliveryText(this, ::isDeliveryPackage)
+            val dialogVisibleInTree = Regex("(?i)na\\s+pewno\\s+chcesz\\s+odrzuci").containsMatchIn(dialogText)
+            if ((attempt == 3 || attempt == 7) && !dialogVisibleInTree) {
+                ocrTapExactLine(Regex("(?i)^odrzu[cć]\\s+dostaw[eę]$")) { tapped ->
+                    if (!tapped) confirmRejectDialog(startedAt, attempt + 1)
+                }
+                return@postDelayed
+            }
+            confirmRejectDialog(startedAt, attempt + 1)
+        }, delay)
+    }
+
+    /** OCR calego ekranu (bez panelu FUJARY) i tap w srodek linii, ktora DOKLADNIE pasuje do wzorca. */
+    private fun ocrTapExactLine(pattern: Regex, onResult: (Boolean) -> Unit) {
+        val scanner = recognizer
+        if (scanner == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.R) { onResult(false); return }
+        val started = runCatching {
+            takeScreenshot(Display.DEFAULT_DISPLAY, mainExecutor, object : AccessibilityService.TakeScreenshotCallback {
+                override fun onSuccess(screenshot: AccessibilityService.ScreenshotResult) {
+                    val buffer = screenshot.hardwareBuffer
+                    val bitmap = Bitmap.wrapHardwareBuffer(buffer, screenshot.colorSpace)?.copy(Bitmap.Config.ARGB_8888, true)
+                    buffer.close()
+                    if (bitmap == null) { onResult(false); return }
+                    if (::overlay.isInitialized) overlay.screenBounds()?.let { r ->
+                        Canvas(bitmap).drawRect(r, Paint().apply { color = Color.BLACK })
+                    }
+                    scanner.process(InputImage.fromBitmap(bitmap, 0))
+                        .addOnSuccessListener { result ->
+                            val line = result.textBlocks.flatMap { it.lines }.firstOrNull { pattern.matches(it.text.trim()) }
+                            val box = line?.boundingBox
+                            bitmap.recycle()
+                            if (box == null) onResult(false) else onResult(RejectActionPerformer.tap(this@DeliveryAccessibilityService, box.exactCenterX(), box.exactCenterY()))
+                        }
+                        .addOnFailureListener { bitmap.recycle(); onResult(false) }
+                }
+
+                override fun onFailure(errorCode: Int) = onResult(false)
+            })
+        }.isSuccess
+        if (!started) onResult(false)
     }
 
     private fun platformLabel(platform: CourierPlatform): String = platform.displayName

@@ -27,10 +27,17 @@ data class RouteAdvice(
     val spatial: SpatialVerdict?,
     /** Punkty do mini-mapy: ja, odbior/dostawa biezacych, odbior/dostawa nowej. */
     val points: List<MapPoint>,
-    val computedAtMillis: Long
+    val computedAtMillis: Long,
+    /**
+     * Rzetelna analiza: aktualna lokalizacja (≤ 2 min), wszystkie odbiory i dostawy nowej
+     * oferty oraz pozostale punkty zlecen w trakcie zgeokodowane. Tylko wtedy pokazujemy
+     * werdykt i mape.
+     */
+    val verified: Boolean = true,
+    val missing: List<String> = emptyList()
 ) {
     val hasAnything: Boolean
-        get() = toPickup != null || spatial != null || points.size >= 2
+        get() = true
 }
 
 /**
@@ -85,7 +92,7 @@ class RouteAdvisor(private val context: Context, private val prefs: AppPrefs) {
                     val current = lastLocation
                     if (current == null || candidate.time > current.time) lastLocation = candidate
                 }
-                manager.requestLocationUpdates(provider, 20_000L, 60f, listener, Looper.getMainLooper())
+                manager.requestLocationUpdates(provider, 5_000L, 15f, listener, Looper.getMainLooper())
             }
             listening = providers.isNotEmpty()
         }
@@ -97,10 +104,29 @@ class RouteAdvisor(private val context: Context, private val prefs: AppPrefs) {
         listening = false
     }
 
-    fun currentPoint(): GeoPoint? {
+    fun currentPoint(maxAgeMs: Long = 2 * 60_000L): GeoPoint? {
         val location = lastLocation ?: return null
-        if (System.currentTimeMillis() - location.time > 15 * 60_000L) return null
+        if (System.currentTimeMillis() - location.time > maxAgeMs) return null
         return GeoPoint(location.latitude, location.longitude)
+    }
+
+    /** Swieza pozycja (API 30+: getCurrentLocation), gdy ostatnia jest starsza niz 2 min. */
+    @android.annotation.SuppressLint("MissingPermission")
+    fun requestFreshLocation() {
+        if (!hasLocationPermission() || currentPoint() != null) return
+        val manager = context.getSystemService(LocationManager::class.java) ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+                .filter { runCatching { manager.isProviderEnabled(it) }.getOrDefault(false) }
+                .forEach { provider ->
+                    runCatching {
+                        manager.getCurrentLocation(provider, null, context.mainExecutor) { loc ->
+                            val previous = lastLocation
+                            if (loc != null && (previous == null || loc.time >= previous.time)) lastLocation = loc
+                        }
+                    }
+                }
+        }
     }
 
     /**
@@ -123,9 +149,16 @@ class RouteAdvisor(private val context: Context, private val prefs: AppPrefs) {
         adviceCache[signature]?.let { return it }
         if (!inFlight.add(signature)) return null
 
-        val origin = currentPoint()
+        requestFreshLocation()
         val profile = RouteProfile.fromKey(prefs.routeProfile)
         executor.execute {
+            // Czekamy do 3 s na swieza pozycje – bez niej ocena bylaby od starego miejsca.
+            var waited = 0
+            while (currentPoint() == null && waited < 3_000 && hasLocationPermission()) {
+                Thread.sleep(200)
+                waited += 200
+            }
+            val origin = currentPoint()
             val advice = runCatching {
                 val cityHint = prefs.routeCityHint.trim()
                 val anchor = origin ?: cityCenter(cityHint)
@@ -135,6 +168,13 @@ class RouteAdvisor(private val context: Context, private val prefs: AppPrefs) {
                 val pickupQueries = pickups.ifEmpty { listOfNotNull(restaurant) }
                 val newPickups = pickupQueries.mapNotNull { q -> geo(q) }
                 val newDrops = drops.mapNotNull { q -> geo(q) }
+                val missing = mutableListOf<String>()
+                if (origin == null) missing += tr(language, "Twoja lokalizacja", "your location", "твоя локація", "твоя геолокация")
+                if (pickups.isEmpty()) missing += tr(language, "adres odbioru", "pickup address", "адреса забору", "адрес забора")
+                else if (newPickups.size < pickups.size) missing += tr(language, "punkt odbioru na mapie", "pickup on map", "забір на мапі", "забор на карте")
+                if (drops.isEmpty()) missing += tr(language, "adres dostawy", "drop-off address", "адреса доставки", "адрес доставки")
+                else if (newDrops.size < drops.size) missing += tr(language, "punkt dostawy na mapie", "drop-off on map", "доставка на мапі", "доставка на карте")
+                var expectedActive = 0
 
                 val points = mutableListOf<MapPoint>()
                 origin?.let { points += MapPoint(it, tr(language, "Ja", "Me", "Я", "Я"), MapPoint.Kind.ME) }
@@ -143,6 +183,7 @@ class RouteAdvisor(private val context: Context, private val prefs: AppPrefs) {
                     var pickupNo = 0
                     var dropNo = 0
                     job.remainingAddresses().forEach { (address, isPickup) ->
+                        expectedActive++
                         geo(address)?.let { pt ->
                             activePoints += pt
                             val tag = platformShort(job.platform)
@@ -168,16 +209,20 @@ class RouteAdvisor(private val context: Context, private val prefs: AppPrefs) {
                 val spatial = if (newPickups.isNotEmpty()) SpatialAdvisor.evaluateLeg(origin, activePoints, newLeg, language) else null
                 val toPickup = if (origin != null && newPickups.isNotEmpty()) route(origin, newPickups.first(), profile) else null
 
+                if (activePoints.size < expectedActive) missing += tr(language, "adres zlecenia w trakcie", "active job address", "адреса поточного", "адрес текущего")
                 RouteAdvice(
                     toPickup = toPickup,
                     spatial = spatial,
                     points = points,
-                    computedAtMillis = System.currentTimeMillis()
+                    computedAtMillis = System.currentTimeMillis(),
+                    verified = missing.isEmpty(),
+                    missing = missing
                 )
             }.getOrNull()
             inFlight.remove(signature)
-            if (advice != null && advice.hasAnything) {
-                adviceCache[signature] = advice
+            if (advice != null) {
+                // Niepelnej analizy nie cache'ujemy – kolejny skan sprobuje ponownie.
+                if (advice.verified) adviceCache[signature] = advice
                 if (adviceCache.size > 60) adviceCache.keys.take(20).forEach { adviceCache.remove(it) }
                 main.post { onResult(advice) }
             }

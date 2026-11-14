@@ -276,6 +276,11 @@ class AppPrefs(private val context: Context) {
         get() = prefs.getBoolean("wolt_auto_expand_offer", true)
         set(value) = prefs.edit().putBoolean("wolt_auto_expand_offer", value).apply()
 
+    /** Pyszne: przy kilku przystankach rozwin karte, zeby odczytac wszystkie dostawy. */
+    var pyszneAutoExpandOffer: Boolean
+        get() = prefs.getBoolean("pyszne_auto_expand_offer", true)
+        set(value) = prefs.edit().putBoolean("pyszne_auto_expand_offer", value).apply()
+
     /** Po odrzuceniu glosem: jesli zostal "ogon" arkusza oferty, zamknij go gestem. */
     var autoDismissAfterReject: Boolean
         get() = prefs.getBoolean("auto_dismiss_after_reject", true)

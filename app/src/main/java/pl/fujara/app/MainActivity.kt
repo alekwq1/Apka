@@ -790,7 +790,7 @@ private fun HomeScreen(
         } else saved
     }
     val rules = prefs.rulesForPlatform(CourierPlatform.PYSZNE)
-    val todaySummary = PyszneDaySummaryCalculator.calculate(
+    val pyszneSummary = PyszneDaySummaryCalculator.calculate(
         date = today,
         entries = todayEntries,
         rules = rules,
@@ -799,6 +799,23 @@ private fun HomeScreen(
         cashTipsPln = liveCashTips,
         extraPauseMinutes = storedToday?.extraPauseMinutes ?: 0
     )
+    // 1.5: suma dnia = Pyszne + Wolt, PLN/h z czasu pracy Start/Pauza/Stop.
+    val woltOrderStore = remember { WoltOrderStore(context) }
+    val offerEventStore = remember { OfferEventStore(context) }
+    val workStore = remember { WorkSessionStore(context) }
+    val woltToday = remember(refreshToken / 4) {
+        WoltDayPartCalculator.calculate(
+            date = today,
+            orders = woltOrderStore.mergedForDate(today),
+            officialDayTotal = woltOrderStore.dayTotal(today),
+            acceptedOffers = offerEventStore.forDate(today),
+            rules = prefs.rulesForPlatform(CourierPlatform.WOLT),
+            decisionBasis = prefs.decisionBasis,
+            zusPercent = if (prefs.zusEnabled) prefs.zusPercent else 0.0
+        )
+    }
+    val workMinutesToday = remember(refreshToken / 20) { workStore.todayMinutes() }
+    val todaySummary = CombinedDayCalculator.combine(pyszneSummary, woltToday, workMinutesToday)
     val active = serviceEnabled && analysisEnabled
     val goal = prefs.dailyGoalNetPln.coerceAtLeast(0.0)
     val progress = if (goal > 0.0) (todaySummary.netPln / goal).toFloat().coerceIn(0f, 1f) else 0f

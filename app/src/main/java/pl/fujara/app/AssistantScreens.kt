@@ -290,9 +290,19 @@ private fun HourlyReportCard(language: String, from: LocalDate, to: LocalDate, e
     val woltOrders = remember { WoltOrderStore(context) }
     val report = remember(refresh, from, to, events) {
         val pyszne = logStore.all().filter { !it.cancelled }.groupBy { it.date }.mapValues { (_, list) -> list.sumOf { it.amountPln } }
+        // Wolt: oficjalna suma dnia, a gdy jej brak – zlecenia zmierzone przez FUJARE.
+        val woltByDate = mutableMapOf<LocalDate, Double>()
+        var d = from
+        while (!d.isAfter(to)) {
+            val official = woltOrders.dayTotal(d)
+            val orders = woltOrders.mergedForDate(d).sumOf { it.grossPln }
+            val value = maxOf(official ?: 0.0, orders)
+            if (value > 0.0) woltByDate[d] = value
+            d = d.plusDays(1)
+        }
         HourlyReportCalculator.build(
             from = from, to = to, segments = workStore.segments(), nowMillis = System.currentTimeMillis(),
-            pyszneByDate = pyszne, woltOfficialByDate = woltOrders.dayTotals(), events = events
+            pyszneByDate = pyszne, woltOfficialByDate = woltByDate, events = events
         )
     }
     AssistantCard(title = at(language, "Godzinówka (czas pracy Start/Stop)", "Hourly rate (Start/Stop time)", "Погодинна (Старт/Стоп)", "Почасовая (Старт/Стоп)")) {
@@ -801,7 +811,7 @@ internal fun WoltDayCard(language: String, date: LocalDate, refresh: Int, compac
         Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("WOLT · " + source, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelLarge)
+                    Text("WOLT · " + source + if (compact) at(language, " · wliczone w dzień", " · included in day", " · враховано", " · учтено") else "", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelLarge)
                     Text(money(total), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
                 }
                 Column(horizontalAlignment = Alignment.End) {
@@ -1006,6 +1016,10 @@ internal fun AssistantSettingsSection(prefs: AppPrefs, language: String) {
         var woltExpand by remember { mutableStateOf(prefs.woltAutoExpandOffer) }
         AssistantSwitch(at(language, "Wolt: sam rozwiń kartę oferty, żeby odczytać adresy", "Wolt: auto-expand offer card to read addresses", "Wolt: авто-розгортання картки", "Wolt: авто-раскрытие карточки"), woltExpand) {
             woltExpand = it; prefs.woltAutoExpandOffer = it
+        }
+        var pyszneExpand by remember { mutableStateOf(prefs.pyszneAutoExpandOffer) }
+        AssistantSwitch(at(language, "Pyszne: rozwiń kartę przy kilku przystankach", "Pyszne: expand card for multi-stop offers", "Pyszne: розгортати при кількох зупинках", "Pyszne: раскрывать при нескольких остановках"), pyszneExpand) {
+            pyszneExpand = it; prefs.pyszneAutoExpandOffer = it
         }
         var autoDismiss by remember { mutableStateOf(prefs.autoDismissAfterReject) }
         AssistantSwitch(at(language, "Po odrzuceniu głosem zamknij pozostały arkusz gestem", "After voice decline, swipe away leftover sheet", "Після відхилення закрити аркуш жестом", "После отказа закрыть лист жестом"), autoDismiss) {

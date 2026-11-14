@@ -261,9 +261,45 @@ class OverlayController(
                 positionHistorySaveButton()
             }
         }
+        logicallyShown = true
+        if (isSuppressed()) applySuppression()
+    }
+
+    // ---- 1.5: chwilowe ukrycie panelu na czas odczytu rozwinietej karty ----
+    // OCR maskuje obszar panelu, wiec adresy pod panelem byly niewidoczne (brak dostawy Wolt).
+    private var suppressedUntil = 0L
+    private var logicallyShown = false
+
+    private fun isSuppressed(): Boolean = System.currentTimeMillis() < suppressedUntil
+
+    private fun applySuppression() {
+        root?.visibility = View.GONE
+        collapseRoot?.visibility = View.GONE
+        restoreRoot?.visibility = View.GONE
+        saveHistoryRoot?.visibility = View.GONE
+    }
+
+    fun suppress(durationMs: Long) {
+        logicallyShown = logicallyShown || isVisible()
+        suppressedUntil = System.currentTimeMillis() + durationMs
+        applySuppression()
+    }
+
+    fun unsuppress() {
+        if (suppressedUntil == 0L) return
+        suppressedUntil = 0L
+        if (!logicallyShown) return
+        if (userCollapsed) {
+            restoreRoot?.visibility = View.VISIBLE
+        } else {
+            root?.visibility = View.VISIBLE
+            collapseRoot?.visibility = View.VISIBLE
+        }
     }
 
     fun hide() {
+        logicallyShown = false
+        suppressedUntil = 0L
         userCollapsed = false
         root?.visibility = View.GONE
         collapseRoot?.visibility = View.GONE
@@ -274,7 +310,7 @@ class OverlayController(
     }
 
     fun isVisible(): Boolean =
-        root?.visibility == View.VISIBLE || restoreRoot?.visibility == View.VISIBLE
+        root?.visibility == View.VISIBLE || restoreRoot?.visibility == View.VISIBLE || (isSuppressed() && logicallyShown)
 
     fun destroy() {
         removeOverlayView()

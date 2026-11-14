@@ -67,6 +67,28 @@ object AddressLines {
 
     /** Usuwa dopiski typu "4,21 km" na koncu linii Stuart. */
     fun clean(line: String): String = line.replace(Regex("""\s+\d+[,.]\d+\s*km$"""), "").trim().trimEnd(',')
+
+    private val postalStart = Regex("""^\d{2}-\d{3}""")
+
+    /**
+     * Adres zaczynajacy sie w linii [index], z obsluga podzialu na dwie linie:
+     * "Prezydenta Lecha Kaczyńskiego 32,c," / "80-365 Gdańsk". Zwraca adres i liczbe zuzytych linii.
+     */
+    fun addressAt(lines: List<String>, index: Int): Pair<String, Int>? {
+        val line = lines.getOrNull(index)?.trim() ?: return null
+        val next = lines.getOrNull(index + 1)?.trim().orEmpty()
+        if (!postal.containsMatchIn(line) && postalStart.containsMatchIn(next) && Regex("""\d""").containsMatchIn(line) && line.length in 4..80) {
+            return clean("${line.trimEnd(',')}, $next") to 2
+        }
+        if (isAddress(line)) return clean(line) to 1
+        return null
+    }
+
+    /** Pierwszy adres w oknie [from, from+window). */
+    fun firstAddress(lines: List<String>, from: Int, window: Int = 3): String? {
+        for (i in from until minOf(lines.size, from + window)) addressAt(lines, i)?.let { return it.first }
+        return null
+    }
 }
 
 /** Adresy i nazwa lokalu z karty Pyszne (oferta lub aktywne zlecenie). */
@@ -74,47 +96,62 @@ data class PyszneOfferDetails(
     val restaurant: String?,
     val pickupAddress: String?,
     val dropoffAddress: String?,
-    val stops: Int
-)
+    val stops: Int,
+    val pickups: List<String> = listOfNotNull(pickupAddress),
+    val drops: List<String> = listOfNotNull(dropoffAddress),
+    /** Ile dostaw powinno byc wg "N przystanki" (przystanki minus odbiory). */
+    val expectedDrops: Int = 1
+) {
+    val complete: Boolean
+        get() = pickups.isNotEmpty() && drops.size >= expectedDrops
+}
 
 object PyszneOfferDetailsParser {
-    private val pickupLabel = Regex("""(?i)^(?:odbi[oó]r|pickup)\s*[:\-]?\s*(.*)$""")
+    // "Odbiór: X", "2 Odbiory: McDonald's Gdańsk, Chłopska", "Odbiór" + nazwa w nastepnej linii.
+    private val pickupLabel = Regex("""(?i)^(?:\d+\s+)?(?:odbi[oó]r(?:y|ów)?|pickups?)\s*[:\-]?\s*(.*)$""")
     private val dropoffLabel = Regex("""(?i)^(?:dostawa\s+do\s+klienta|dostawa|delivery|dostarcz\s+do)\s*[:\-]?\s*(.*)$""")
-    private val stopsMarker = Regex("""(?i)(\d)\s*przystank""")
+    private val stopsMarker = Regex("""(?i)(\d)\s*przystan""")
     private val timeLine = Regex("""(?i)^(?:odbierz|dostarcz)\w*\s+(?:na|do)\s+\d""")
-    private val noise = Regex("""(?i)^(?:nawiguj|odrzu[cć]|zaakceptuj|akceptuj|notatki|uwagi|zam[oó]wienie|\d+\s*zam[oó]wie|zako[nń]cz|dostarcz\s+zam|\d+[,.]\d+\s*(?:zł|km))""")
+    private val noise = Regex("""(?i)^(?:nawiguj|odrzu[cć]|x\s*odrzu|zaakceptuj|akceptuj|notatki|uwagi|zam[oó]wienie|\d+\s*zam[oó]wie|zako[nń]cz|dostarcz\s+zam|szczeg[oó][lł]y|stawka|suma|\d+[,.]\d+\s*(?:zł|km))""")
 
     fun parse(text: String): PyszneOfferDetails {
         val lines = text.lines().map { it.trim() }.filter { it.isNotBlank() }
         var restaurant: String? = null
-        var pickupAddress: String? = null
-        var dropoffAddress: String? = null
+        val pickups = mutableListOf<String>()
+        val drops = mutableListOf<String>()
 
-        lines.forEachIndexed { index, line ->
-            if (restaurant == null) {
-                pickupLabel.find(line)?.let { match ->
-                    val inline = match.groupValues[1].trim()
-                    val following = lines.drop(index + 1).take(4)
-                    val candidates = (if (inline.isNotBlank()) listOf(inline) else emptyList()) + following
+        var i = 0
+        while (i < lines.size) {
+            val line = lines[i]
+            val pickupMatch = if (timeLine.containsMatchIn(line)) null else pickupLabel.find(line)
+            if (pickupMatch != null) {
+                val inline = pickupMatch.groupValues[1].trim()
+                if (restaurant == null) {
+                    val candidates = (if (inline.isNotBlank()) listOf(inline) else emptyList()) + lines.drop(i + 1).take(4)
                     restaurant = candidates.firstOrNull { c ->
                         !AddressLines.isAddress(c) && !timeLine.containsMatchIn(c) && !noise.containsMatchIn(c) && c.length in 2..80
                     }
-                    pickupAddress = candidates.firstOrNull { AddressLines.isAddress(it) && !timeLine.containsMatchIn(it) }
                 }
+                AddressLines.firstAddress(lines, i + 1, 4)?.let { if (it !in pickups) pickups += it }
+                i++
+                continue
             }
-            if (dropoffAddress == null) {
-                dropoffLabel.find(line)?.let {
-                    dropoffAddress = lines.drop(index + 1).take(3).firstOrNull { AddressLines.isAddress(it) && !timeLine.containsMatchIn(it) }
-                }
+            if (dropoffLabel.find(line) != null && !timeLine.containsMatchIn(line)) {
+                AddressLines.firstAddress(lines, i + 1, 3)?.let { if (it !in drops && it !in pickups) drops += it }
             }
+            i++
         }
 
-        val stops = stopsMarker.find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()?.coerceIn(1, 6) ?: 1
+        val stops = stopsMarker.find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()?.coerceIn(1, 9) ?: (pickups.size + drops.size).coerceAtLeast(1)
+        val expected = (stops - pickups.size.coerceAtLeast(1)).coerceAtLeast(1)
         return PyszneOfferDetails(
             restaurant = restaurant?.takeIf { PyszneHistoryParser.normalizeRestaurant(it).isNotBlank() },
-            pickupAddress = pickupAddress,
-            dropoffAddress = dropoffAddress,
-            stops = stops
+            pickupAddress = pickups.firstOrNull(),
+            dropoffAddress = drops.firstOrNull(),
+            stops = stops,
+            pickups = pickups,
+            drops = drops,
+            expectedDrops = expected
         )
     }
 }
@@ -548,10 +585,15 @@ object SpatialAdvisor {
         val fromActiveEnd = activeRemaining.lastOrNull()?.let { km(it, newPickup) }
 
         if (activeRemaining.isEmpty()) {
-            val note = toNewPickup?.let {
-                tr(language, "Do odbioru ${fmt(it)} km (brak aktywnego zlecenia)", "To pickup ${fmt(it)} km (no active job)", "До забору ${fmt(it)} км", "До забора ${fmt(it)} км")
-            } ?: tr(language, "Brak aktywnego zlecenia", "No active job", "Немає активного", "Нет активного")
-            return SpatialVerdict(SpatialVerdict.Verdict.UNKNOWN, 0.0, 0.0, pathKm(listOf(start) + newLeg), toNewPickup, null, note)
+            val whole = pathKm(listOf(start) + newLeg)
+            val note = tr(
+                language,
+                "Brak zlecenia w trakcie · cała trasa oferty ~${fmt(whole)} km",
+                "No job in progress · whole offer route ~${fmt(whole)} km",
+                "Немає замовлення в процесі · маршрут ~${fmt(whole)} км",
+                "Нет заказа в процессе · маршрут ~${fmt(whole)} км"
+            )
+            return SpatialVerdict(SpatialVerdict.Verdict.UNKNOWN, 0.0, 0.0, whole, toNewPickup, null, note)
         }
 
         // Wplatamy nowy odcinek (odbior → dostawa) w kazde mozliwe miejsce trasy i bierzemy najkrotsza.

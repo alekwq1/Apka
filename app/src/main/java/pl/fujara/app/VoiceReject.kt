@@ -271,7 +271,9 @@ class VoiceRejectController(
 
 /** Klika "Odrzuć" w aplikacji kurierskiej (Wolt / Pyszne / Stuart) przez Accessibility. */
 object RejectActionPerformer {
-    private val confirmDialogLabel = Regex("""(?i)^(?:odrzu[cć](?:\s+dostaw[eę])?|tak(?:,\s*odrzu[cć])?|potwierd[zź]|decline|yes|confirm|так|да)(?!\p{L})""")
+    // Tylko jawne przyciski dialogu ("Odrzuć dostawę", "Tak, odrzuć"). Sam "Odrzuć" bylby
+    // przyciskiem KOLEJNEJ oferty, ktora mogla sie juz pojawic.
+    private val confirmDialogLabel = Regex("""(?i)^(?:odrzu[cć]\s+(?:dostaw[eę]|zlecenie|zam[oó]wienie)|tak,?\s*odrzu[cć]|potwierd[zź]\s+odrzucenie|decline\s+delivery|yes,?\s*decline)$""")
 
     fun perform(service: AccessibilityService, isDeliveryPackage: (String) -> Boolean): Boolean {
         val node = findRejectNode(service, isDeliveryPackage) ?: return false

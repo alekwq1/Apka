@@ -192,6 +192,47 @@ class ActiveJobsAndWoltHistoryTest {
     }
 
     @Test
+    fun `pyszne multi pickup and multi drop offer`() {
+        val text = "38,90 zł\n15,3 km • 3 przystanki\n2 Odbiory: McDonald's Gdańsk, Chłopska\nChłopska 18, 80-309 Gdańsk\nOdbierz na 23:05\nDostawa do klienta\nObrońców Wybrzeża 6D, 80-398 Gdańsk\nDostarcz na 23:08\nDostawa do klienta\nPrezydenta Lecha Kaczyńskiego 32,c,\n80-365 Gdańsk\nDostarcz na 23:11\nSzczegóły przychodów\nStawka bazowa\n38,90 zł\nZaakceptuj zlecenie 0:32"
+        val d = PyszneOfferDetailsParser.parse(text)
+        assertEquals("McDonald's Gdańsk, Chłopska", d.restaurant)
+        assertEquals(listOf("Chłopska 18, 80-309 Gdańsk"), d.pickups)
+        assertEquals(listOf("Obrońców Wybrzeża 6D, 80-398 Gdańsk", "Prezydenta Lecha Kaczyńskiego 32,c, 80-365 Gdańsk"), d.drops)
+        assertEquals(2, d.expectedDrops)
+        assertTrue(d.complete)
+        // Zwinieta karta (widac tylko pierwsza dostawe) – niekompletna, trzeba rozwinac.
+        val collapsed = "38,90 zł\n15,3 km • 3 przystanki\n2 Odbiory: McDonald's Gdańsk, Chłopska\nChłopska 18, 80-309 Gdańsk\nOdbierz na 23:05\nDostawa do klienta\nObrońców Wybrzeża 6D, 80-398 Gdańsk\nZaakceptuj zlecenie 0:39"
+        assertEquals(false, PyszneOfferDetailsParser.parse(collapsed).complete)
+    }
+
+    @Test
+    fun `combined day adds wolt and uses work time for hourly rate`() {
+        val day = LocalDate.of(2026, 11, 14)
+        val rules = ProfitabilityCalculator.Rules()
+        val wolt = WoltDayPartCalculator.calculate(
+            date = day,
+            orders = listOf(
+                WoltOrder(day, 18 * 60 + 42, "SMASHYNSKI", 35.66, 10.13, 1),
+                WoltOrder(day, 17 * 60 + 12, "Sushi", 26.78, 8.22, 1)
+            ),
+            officialDayTotal = 62.44,
+            acceptedOffers = emptyList(),
+            rules = rules,
+            decisionBasis = DecisionBasis.MIXED,
+            zusPercent = 0.0
+        )
+        assertEquals(WoltDayPart.Source.OFFICIAL, wolt.source)
+        assertEquals(62.44, wolt.grossPln, 0.001)
+        assertEquals(2, wolt.orders)
+        val pyszne = PyszneDaySummaryCalculator.calculate(day, emptyList(), rules, DecisionBasis.MIXED, 0.0)
+        val combined = CombinedDayCalculator.combine(pyszne, wolt, workMinutes = 120)
+        assertEquals(62.44, combined.grossPln, 0.001)
+        assertEquals(2, combined.orderCount)
+        assertEquals(7200, combined.durationSeconds)
+        assertEquals(wolt.netPln / 2.0, combined.netPerHour!!, 0.01)
+    }
+
+    @Test
     fun `job stage buttons`() {
         assertTrue(JobStageButtons.isPickedUp("Zakończ odbiór"))
         assertTrue(JobStageButtons.isPickedUp("Rozpocznij odbiór"))
