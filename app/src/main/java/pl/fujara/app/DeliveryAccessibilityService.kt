@@ -57,6 +57,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
             val now = System.currentTimeMillis()
             decisionTracker.tick(now)
             persistDecisions()
+            if (::prefs.isInitialized) runCatching { updateStatusNotification(prefs.privacyAccepted && prefs.analysisEnabled) }
             handler.postDelayed(this, 5_000L)
         }
     }
@@ -72,6 +73,8 @@ class DeliveryAccessibilityService : AccessibilityService() {
     private var lastDeliveryPackage = ""
     private var lastNotificationActive: Boolean? = null
     private var lastNotificationLanguage: String? = null
+    private var lastNotificationWork: String? = null
+    private lateinit var workSessionStore: WorkSessionStore
     private var activePyszneDayDate: LocalDate? = null
     private var activePyszneDaySeenAt = 0L
     // OCR numerow z listy jest fallbackiem. Numer musi zostac zobaczony co najmniej
@@ -100,6 +103,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
         offerEventStore = OfferEventStore(this)
         woltEarningsStore = WoltEarningsStore(this)
         woltOrderStore = WoltOrderStore(this)
+        workSessionStore = WorkSessionStore(this)
         routeAdvisor = RouteAdvisor(this, prefs)
         voice = VoiceRejectController(
             service = this,
@@ -1135,9 +1139,10 @@ class DeliveryAccessibilityService : AccessibilityService() {
         if (kind == ScreenKind.ACTIVE_JOB) {
             // Ekran aktywnego zlecenia: nie jest nowa oferta. Potwierdza akceptacje
             // poprzedniej i aktualizuje "w trakcie".
-            decisionTracker.activeDeliveryScreenSeen(platform, nowMillis)
+            val previousJob = activeJobTracker.activeAt(nowMillis, platform)
+            val seenRestaurant = updateActiveJobFromScreen(platform, sourceText, offer, details, nowMillis)
+            decisionTracker.activeDeliveryScreenSeen(platform, nowMillis, seenRestaurant, previousJob?.restaurant, previousJob != null)
             persistDecisions()
-            updateActiveJobFromScreen(platform, sourceText, offer, details, nowMillis)
             onOfferGone()
             overlay.show(
                 result = result,
@@ -1289,8 +1294,9 @@ class DeliveryAccessibilityService : AccessibilityService() {
     }
 
     /** Aktualizuje aktywne zlecenie z ekranu "w trakcie" (Pyszne / Wolt / inne). */
-    private fun updateActiveJobFromScreen(platform: CourierPlatform, text: String, offer: Offer, details: OfferDetails, nowMillis: Long) {
-        when (platform) {
+    /** Zwraca nazwe lokalu widoczna na ekranie (do rozstrzygania decyzji). */
+    private fun updateActiveJobFromScreen(platform: CourierPlatform, text: String, offer: Offer, details: OfferDetails, nowMillis: Long): String? {
+        return when (platform) {
             CourierPlatform.PYSZNE -> {
                 val screen = PyszneActiveScreenParser.parse(text)
                 activeJobTracker.onActiveScreen(
@@ -1303,6 +1309,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
                     pickupAddress = screen?.pickupAddress ?: details.pickupAddress,
                     dropoffAddress = screen?.dropoffAddress ?: details.dropoffAddress
                 )
+                screen?.restaurant ?: details.restaurant
             }
             CourierPlatform.WOLT -> {
                 val active = WoltActiveDeliveryParser.parse(text)
@@ -1317,8 +1324,10 @@ class DeliveryAccessibilityService : AccessibilityService() {
                     dropoffAddress = active?.dropoffAddress,
                     etaMinutes = active?.etaMinutes
                 )
+                active?.venue ?: details.restaurant
             }
-            else -> activeJobTracker.onActiveScreen(
+            else -> {
+                activeJobTracker.onActiveScreen(
                 platform = platform,
                 nowMillis = nowMillis,
                 pickupMinute = offer.pickupTimeMinutesOfDay,
@@ -1328,6 +1337,8 @@ class DeliveryAccessibilityService : AccessibilityService() {
                 pickupAddress = details.pickupAddress,
                 dropoffAddress = details.dropoffAddress
             )
+                details.restaurant
+            }
         }
     }
 
@@ -1431,10 +1442,11 @@ class DeliveryAccessibilityService : AccessibilityService() {
     private fun noteActiveJobScreen(platform: CourierPlatform, text: String) {
         if (ScreenClassifier.classify(text) != ScreenKind.ACTIVE_JOB) return
         val now = System.currentTimeMillis()
-        decisionTracker.activeDeliveryScreenSeen(platform, now)
-        persistDecisions()
         val details = offerDetails(platform, text)
-        updateActiveJobFromScreen(platform, text, Offer(0.0, 0.0), details, now)
+        val previousJob = activeJobTracker.activeAt(now, platform)
+        val seenRestaurant = updateActiveJobFromScreen(platform, text, Offer(0.0, 0.0), details, now)
+        decisionTracker.activeDeliveryScreenSeen(platform, now, seenRestaurant, previousJob?.restaurant, previousJob != null)
+        persistDecisions()
     }
 
     private fun captureWoltData(accessibilityText: String, ocrText: String) {
@@ -1467,7 +1479,14 @@ class DeliveryAccessibilityService : AccessibilityService() {
         decisionTracker.rejectedByVoice(System.currentTimeMillis())
         persistDecisions()
         // Niektore aplikacje pytaja jeszcze raz "Odrzucić?" – potwierdzamy, bo kurier juz potwierdzil glosem.
-        handler.postDelayed({ RejectActionPerformer.confirmIfDialog(this, ::isDeliveryPackage) }, 700L)
+        handler.postDelayed({
+            val outcome = RejectActionPerformer.confirmIfDialog(this, ::isDeliveryPackage)
+            if (outcome == RejectActionPerformer.ConfirmOutcome.BLOCKED_DROP_DELIVERY) {
+                voiceHint = tr(prefs.languageCode, "To było „Odrzuć” aktywnej dostawy – cofnąłem", "That was the active delivery's decline – reverted", "Це було відхилення активної доставки – скасовано", "Это был отказ от активной доставки – отменено")
+                if (::overlay.isInitialized) overlay.updateExtras(overlay.currentExtras().copy(voiceState = VoiceState.UNAVAILABLE, voiceHint = voiceHint))
+                HapticLanguage.offer(this, ProfitabilityStatus.UNPROFITABLE)
+            }
+        }, 700L)
         handler.postDelayed({
             voice?.offerGone()
             if (::overlay.isInitialized) overlay.hide()
@@ -1629,7 +1648,11 @@ class DeliveryAccessibilityService : AccessibilityService() {
             lastNotificationLanguage = null
             return
         }
-        if (lastNotificationActive == active && lastNotificationLanguage == language) return
+        val workStore = if (::workSessionStore.isInitialized) workSessionStore else null
+        val workState = workStore?.state() ?: WorkState.STOPPED
+        val workMinutes = workStore?.todayMinutes() ?: 0
+        val workSignature = "$workState/$workMinutes"
+        if (lastNotificationActive == active && lastNotificationLanguage == language && lastNotificationWork == workSignature) return
 
         val manager = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -1665,15 +1688,38 @@ class DeliveryAccessibilityService : AccessibilityService() {
             trStatus(language, "Włącz analizę w aplikacji, aby odczytywać oferty", "Enable analysis in the app to read offers", "Увімкніть аналіз у застосунку", "Включите анализ в приложении")
         }
 
-        val notification = Notification.Builder(this, STATUS_CHANNEL_ID)
+        val workLine = when (workState) {
+            WorkState.RUNNING -> trStatus(language, "Praca: ${WorkAnalytics.formatHours(workMinutes)} · PRACUJĘ", "Work: ${WorkAnalytics.formatHours(workMinutes)} · WORKING", "Робота: ${WorkAnalytics.formatHours(workMinutes)}", "Работа: ${WorkAnalytics.formatHours(workMinutes)}")
+            WorkState.PAUSED -> trStatus(language, "Praca: ${WorkAnalytics.formatHours(workMinutes)} · PAUZA", "Work: ${WorkAnalytics.formatHours(workMinutes)} · PAUSED", "Робота: ${WorkAnalytics.formatHours(workMinutes)} · ПАУЗА", "Работа: ${WorkAnalytics.formatHours(workMinutes)} · ПАУЗА")
+            WorkState.STOPPED -> if (workMinutes > 0) trStatus(language, "Praca dziś: ${WorkAnalytics.formatHours(workMinutes)}", "Worked today: ${WorkAnalytics.formatHours(workMinutes)}", "Сьогодні: ${WorkAnalytics.formatHours(workMinutes)}", "Сегодня: ${WorkAnalytics.formatHours(workMinutes)}") else ""
+        }
+        fun action(code: Int, actionName: String, label: String): Notification.Action {
+            val intent = Intent(this, WorkShiftReceiver::class.java).setAction(actionName).setPackage(packageName)
+            val pending = PendingIntent.getBroadcast(this, code, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            return Notification.Action.Builder(android.graphics.drawable.Icon.createWithResource(this, R.drawable.ic_fujara_app), label, pending).build()
+        }
+
+        val builder = Notification.Builder(this, STATUS_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_fujara_app)
             .setContentTitle(title)
-            .setContentText(body)
+            .setContentText(if (workLine.isBlank()) body else "$body · $workLine")
+            .setStyle(Notification.BigTextStyle().bigText(if (workLine.isBlank()) body else "$body\n$workLine"))
             .setContentIntent(openApp)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setCategory(Notification.CATEGORY_SERVICE)
-            .build()
+        when (workState) {
+            WorkState.RUNNING -> {
+                builder.addAction(action(1, WorkShiftReceiver.ACTION_PAUSE, trStatus(language, "Pauza", "Pause", "Пауза", "Пауза")))
+                builder.addAction(action(2, WorkShiftReceiver.ACTION_STOP, trStatus(language, "Stop", "Stop", "Стоп", "Стоп")))
+            }
+            WorkState.PAUSED -> {
+                builder.addAction(action(3, WorkShiftReceiver.ACTION_START, trStatus(language, "Wznów", "Resume", "Продовжити", "Продолжить")))
+                builder.addAction(action(2, WorkShiftReceiver.ACTION_STOP, trStatus(language, "Stop", "Stop", "Стоп", "Стоп")))
+            }
+            WorkState.STOPPED -> builder.addAction(action(3, WorkShiftReceiver.ACTION_START, trStatus(language, "Start pracy", "Start work", "Старт", "Старт")))
+        }
+        val notification = builder.build()
 
         // Android 13+ wymaga zgody na powiadomienia. Activity prosi o nia po
         // konfiguracji; jesli user odmowi, analiza nadal dziala normalnie.
@@ -1681,6 +1727,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
             .onSuccess {
                 lastNotificationActive = active
                 lastNotificationLanguage = language
+                lastNotificationWork = workSignature
             }
     }
 

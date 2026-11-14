@@ -278,17 +278,52 @@ object RejectActionPerformer {
         return click(service, node)
     }
 
-    /** Po kliknieciu "Odrzuć" niektore aplikacje pokazuja dodatkowe potwierdzenie. */
-    fun confirmIfDialog(service: AccessibilityService, isDeliveryPackage: (String) -> Boolean): Boolean {
+    /**
+     * Po kliknieciu "Odrzuć" niektore aplikacje pokazuja dodatkowe potwierdzenie.
+     *
+     * BEZPIECZNIK: Wolt pokazuje "Na pewno chcesz odrzucić tę dostawę? Stracisz zarobki…"
+     * gdy "Odrzuć" dotyczylo JUZ PRZYJETEJ dostawy, a nie nowej oferty. Takiego dialogu
+     * nigdy nie potwierdzamy – cofamy go, zeby nie zrzucic kursu.
+     */
+    fun confirmIfDialog(service: AccessibilityService, isDeliveryPackage: (String) -> Boolean): ConfirmOutcome {
         val candidates = mutableListOf<AccessibilityNodeInfo>()
+        val texts = StringBuilder()
         for (window in service.windows) {
             val root = runCatching { window.root }.getOrNull() ?: continue
             val pkg = root.packageName?.toString().orEmpty()
             if (!isDeliveryPackage(pkg)) continue
             collect(root, candidates, predicate = { text -> confirmDialogLabel.containsMatchIn(text.trim()) && text.trim().length <= 24 })
+            collectAllText(root, texts, 0)
         }
-        val best = candidates.firstOrNull { it.isClickable } ?: candidates.firstOrNull() ?: return false
-        return click(service, best)
+        val all = texts.toString()
+        if (dropDeliveryDialog.containsMatchIn(all)) {
+            val cancel = mutableListOf<AccessibilityNodeInfo>()
+            for (window in service.windows) {
+                val root = runCatching { window.root }.getOrNull() ?: continue
+                if (!isDeliveryPackage(root.packageName?.toString().orEmpty())) continue
+                collect(root, cancel, predicate = { text -> cancelLabel.containsMatchIn(text.trim()) && text.trim().length <= 30 })
+            }
+            val cancelNode = cancel.firstOrNull { it.isClickable } ?: cancel.firstOrNull()
+            if (cancelNode != null) click(service, cancelNode) else service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+            return ConfirmOutcome.BLOCKED_DROP_DELIVERY
+        }
+        val best = candidates.firstOrNull { it.isClickable } ?: candidates.firstOrNull() ?: return ConfirmOutcome.NO_DIALOG
+        return if (click(service, best)) ConfirmOutcome.CONFIRMED else ConfirmOutcome.NO_DIALOG
+    }
+
+    enum class ConfirmOutcome { NO_DIALOG, CONFIRMED, BLOCKED_DROP_DELIVERY }
+
+    private val dropDeliveryDialog = Regex("""(?i)stracisz\s+zarobki|odrzuci[cć]\s+t[eę]\s+dostaw[eę]|lose\s+(?:your\s+)?earnings|decline\s+this\s+delivery""")
+    private val cancelLabel = Regex("""(?i)^(?:rozpocznij\s+odbi[oó]r|anuluj|wr[oó][cć]|cancel|back|zamknij|nie)$""")
+
+    private fun collectAllText(node: AccessibilityNodeInfo, out: StringBuilder, depth: Int) {
+        if (depth > 60) return
+        node.text?.let { out.append(it).append('\n') }
+        node.contentDescription?.let { out.append(it).append('\n') }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            collectAllText(child, out, depth + 1)
+        }
     }
 
     private fun findRejectNode(service: AccessibilityService, isDeliveryPackage: (String) -> Boolean): AccessibilityNodeInfo? {

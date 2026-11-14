@@ -34,3 +34,8 @@ Poprawki po testach 1.1.0 w trasie (14.11) + nowe funkcje.
 
 versionName: 1.2.0
 versionCode: 43
+
+## 1.2.1 (ten sam dzień)
+- **Bezpiecznik głosu w Wolt**: jeśli po „Odrzuć” pojawi się dialog „Na pewno chcesz odrzucić tę dostawę? Stracisz zarobki…” (to jest zrzucenie JUŻ PRZYJĘTEJ dostawy, nie nowej oferty), FUJARA go nie potwierdza – klika „Rozpocznij odbiór”/Wstecz i pokazuje ostrzeżenie w panelu.
+- **Decyzje przy aktywnym zleceniu tej samej platformy**: ekran „w trakcie” starego zlecenia (np. Wolt „Odbiór za 7 min” po wygaśnięciu nowej oferty Wolt) nie jest już liczony jako „przyjęta”; akceptacja po ekranie tylko gdy pokazuje lokal z oferty lub inny niż poprzednie zlecenie.
+- **Start / Pauza / Stop w powiadomieniu** FUJARY (przyciski + czas pracy dziś) – bez otwierania aplikacji w trasie.

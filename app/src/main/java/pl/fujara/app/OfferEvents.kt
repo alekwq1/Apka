@@ -207,15 +207,36 @@ class DecisionTracker(
         finalize(p, OfferDecision.REJECTED, nowMillis, DecisionSource.VOICE)
     }
 
-    /** Widac ekran aktywnej dostawy (Odbierz na / Nawiguj / W drodze do klienta). */
-    fun activeDeliveryScreenSeen(platform: CourierPlatform?, nowMillis: Long) {
+    /**
+     * Widac ekran aktywnej dostawy (Odbierz na / Nawiguj / Odbiór za N min).
+     *
+     * Gdy kurier mial juz aktywne zlecenie tej platformy przed pojawieniem sie oferty
+     * ([hadPreviousJob]), ekran "w trakcie" po zniknieciu oferty moze byc po prostu
+     * STARYM zleceniem – wtedy nie wolno uznac oferty za przyjeta. Przyjmujemy tylko,
+     * gdy ekran pokazuje inny lokal niz poprzednie zlecenie albo ten sam co oferta.
+     */
+    fun activeDeliveryScreenSeen(
+        platform: CourierPlatform?,
+        nowMillis: Long,
+        screenRestaurant: String? = null,
+        previousJobRestaurant: String? = null,
+        hadPreviousJob: Boolean = false
+    ) {
         val p = pending ?: return
         if (platform != null && platform != p.platform) return
         if (p.visible && nowMillis - p.shownAtMillis < 1_500L) return
         val reference = p.vanishedAtMillis ?: p.lastSeenAtMillis
-        if (nowMillis - reference <= nextScreenWindowMs) {
-            finalize(p, OfferDecision.ACCEPTED, nowMillis, DecisionSource.NEXT_SCREEN)
+        if (nowMillis - reference > nextScreenWindowMs) return
+
+        if (hadPreviousJob) {
+            val screen = screenRestaurant?.let(PyszneHistoryParser::normalizeRestaurant)?.takeIf { it.isNotBlank() }
+            val previous = previousJobRestaurant?.let(PyszneHistoryParser::normalizeRestaurant)?.takeIf { it.isNotBlank() }
+            val offerName = p.restaurant?.let(PyszneHistoryParser::normalizeRestaurant)?.takeIf { it.isNotBlank() }
+            val matchesOffer = screen != null && offerName != null && (screen.contains(offerName) || offerName.contains(screen))
+            val sameAsPrevious = screen == null || previous == null || screen == previous
+            if (!matchesOffer && sameAsPrevious) return
         }
+        finalize(p, OfferDecision.ACCEPTED, nowMillis, DecisionSource.NEXT_SCREEN)
     }
 
     /** Okresowe sprawdzenie timeoutow. */

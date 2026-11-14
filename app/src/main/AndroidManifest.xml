@@ -39,6 +39,10 @@
 
         </activity>
 
+        <receiver
+            android:name=".WorkShiftReceiver"
+            android:exported="false" />
+
         <service
             android:name=".DeliveryAccessibilityService"
             android:exported="true"

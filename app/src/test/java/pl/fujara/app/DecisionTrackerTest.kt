@@ -149,3 +149,33 @@ class DecisionTrackerTest {
         assertEquals(5, restaurants.single().shown)
     }
 }
+
+class DecisionTrackerActiveJobTest {
+    private val offer = Offer(amountPln = 30.31, distanceKm = 4.3, durationMinutes = 14)
+    private fun result() = ProfitabilityCalculator.calculate(offer, ProfitabilityCalculator.Rules(), 16 * 60, DecisionBasis.MIXED)
+
+    @Test
+    fun `old active job screen does not count as acceptance`() {
+        val tracker = DecisionTracker()
+        tracker.offerVisible(CourierPlatform.WOLT, offer, result(), 1_000L, restaurant = "McDonald's - Szczęśliwa", duringActiveJob = true)
+        tracker.offerNotVisible(5_000L)
+        // Po zniknieciu oferty widac ekran STAREGO zlecenia (KFC) – to nie akceptacja.
+        tracker.activeDeliveryScreenSeen(CourierPlatform.WOLT, 7_000L, screenRestaurant = "KFC Gdańsk Auchan", previousJobRestaurant = "KFC Gdańsk Auchan", hadPreviousJob = true)
+        assertTrue(tracker.drainFinished().isEmpty())
+        // Ekran bez nazwy lokalu ("Odbiór za 7 min") tez nie rozstrzyga.
+        tracker.activeDeliveryScreenSeen(CourierPlatform.WOLT, 8_000L, screenRestaurant = null, previousJobRestaurant = "KFC Gdańsk Auchan", hadPreviousJob = true)
+        assertTrue(tracker.drainFinished().isEmpty())
+        // Ekran z lokalem z oferty = przyjeta.
+        tracker.activeDeliveryScreenSeen(CourierPlatform.WOLT, 9_000L, screenRestaurant = "McDonald's - Szczęśliwa", previousJobRestaurant = "KFC Gdańsk Auchan", hadPreviousJob = true)
+        assertEquals(OfferDecision.ACCEPTED, tracker.drainFinished().single().decision)
+    }
+
+    @Test
+    fun `without previous job any active screen means accepted`() {
+        val tracker = DecisionTracker()
+        tracker.offerVisible(CourierPlatform.WOLT, offer, result(), 1_000L, restaurant = "McDonald's - Szczęśliwa")
+        tracker.offerNotVisible(5_000L)
+        tracker.activeDeliveryScreenSeen(CourierPlatform.WOLT, 7_000L, screenRestaurant = null, previousJobRestaurant = null, hadPreviousJob = false)
+        assertEquals(OfferDecision.ACCEPTED, tracker.drainFinished().single().decision)
+    }
+}
