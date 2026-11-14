@@ -281,7 +281,7 @@ object RejectActionPerformer {
             val root = runCatching { window.root }.getOrNull() ?: continue
             val pkg = root.packageName?.toString().orEmpty()
             if (!isDeliveryPackage(pkg)) continue
-            collect(root, candidates) { text -> confirmDialogLabel.containsMatchIn(text.trim()) && text.trim().length <= 24 }
+            collect(root, candidates, predicate = { text -> confirmDialogLabel.containsMatchIn(text.trim()) && text.trim().length <= 24 })
         }
         val best = candidates.firstOrNull { it.isClickable } ?: candidates.firstOrNull() ?: return false
         return click(service, best)
@@ -293,12 +293,12 @@ object RejectActionPerformer {
             val root = runCatching { window.root }.getOrNull() ?: continue
             val pkg = root.packageName?.toString().orEmpty()
             if (!isDeliveryPackage(pkg)) continue
-            collect(root, candidates) { text -> DecisionButtons.isRejectLabel(text) }
+            collect(root, candidates, predicate = { text -> DecisionButtons.isRejectLabel(text) })
         }
         if (candidates.isEmpty()) {
             service.rootInActiveWindow?.let { root ->
                 if (isDeliveryPackage(root.packageName?.toString().orEmpty())) {
-                    collect(root, candidates) { text -> DecisionButtons.isRejectLabel(text) }
+                    collect(root, candidates, predicate = { text -> DecisionButtons.isRejectLabel(text) })
                 }
             }
         }
