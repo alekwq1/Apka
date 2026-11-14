@@ -1343,6 +1343,8 @@ private fun WeeklyAnalysisScreen(
     val comparisonPercent = previousNet.takeIf { abs(it) > 0.01 }?.let { (net - it) / abs(it) * 100.0 }
     val chartPoints = buildAnalysisChartPoints(periodResults, periodStart, periodEnd, range, language)
 
+    var analysisMode by remember { mutableStateOf(0) }
+
     ScreenContainer(scrollable = true, includeNavigationPadding = false) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
@@ -1351,10 +1353,29 @@ private fun WeeklyAnalysisScreen(
                 fontWeight = FontWeight.Black
             )
             Text(
-                "${formatShortDate(periodStart)} – ${formatShortDate(periodEnd)}",
+                when (analysisMode) {
+                    1 -> tx(language, "Przyjęte / odrzucone / wygasłe oferty", "Accepted / declined / expired offers", "Прийняті / відхилені / минулі", "Принятые / отклонённые / истёкшие")
+                    2 -> tx(language, "Wolt – dostawy i Zarobki brutto", "Wolt – deliveries and gross earnings", "Wolt – доставки і заробіток", "Wolt – доставки и заработок")
+                    else -> "${formatShortDate(periodStart)} – ${formatShortDate(periodEnd)}"
+                },
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyLarge
             )
+        }
+
+        AnalysisModeSelector(
+            mode = analysisMode,
+            language = language.code,
+            onSelected = { analysisMode = it }
+        )
+
+        if (analysisMode == 1) {
+            DecisionsAnalysisSection(language = language.code)
+            return@ScreenContainer
+        }
+        if (analysisMode == 2) {
+            WoltAnalysisSection(language = language.code)
+            return@ScreenContainer
         }
 
         AnalysisRangeSelector(range = range, language = language, onSelected = { range = it })
@@ -4280,6 +4301,7 @@ private fun EditableNumberValue(
 private enum class SettingsCategory {
     GENERAL,
     PROFITABILITY,
+    ASSISTANT,
     LISTS,
     DATA
 }
@@ -4293,6 +4315,7 @@ private fun SettingsCategorySelector(
     val items = listOf(
         SettingsCategory.GENERAL to tx(language, "Ogólne", "General", "Загальні", "Общие"),
         SettingsCategory.PROFITABILITY to tx(language, "Opłacalność", "Profitability", "Вигідність", "Выгодность"),
+        SettingsCategory.ASSISTANT to tx(language, "Asystent", "Assistant", "Асистент", "Ассистент"),
         SettingsCategory.LISTS to tx(language, "Listy", "Lists", "Списки", "Списки"),
         SettingsCategory.DATA to tx(language, "Dane", "Data", "Дані", "Данные")
     )
@@ -5114,6 +5137,10 @@ private fun SettingsScreen(
 
         }
 
+        if (settingsCategory == SettingsCategory.ASSISTANT) {
+            AssistantSettingsSection(prefs = prefs, language = language.code)
+        }
+
         if (settingsCategory == SettingsCategory.DATA) {
         SectionCard(step = "DANE", title = tx(language, "Backup i prywatność", "Backup & privacy", "Резервна копія і приватність", "Резервная копия и приватность")) {
             Text(
@@ -5186,6 +5213,8 @@ private fun SettingsScreen(
                     if (confirmClearHistory) {
                         PyszneLogStore(context).clear()
                         PyszneResultStore(context).clear()
+                        OfferEventStore(context).clear()
+                        WoltEarningsStore(context).clear()
                         PyszneDayAdjustmentsStore(context).clearAll()
                         backupManager.clearAutoBackups()
                         runCatching { backupManager.ensureDailyBackup() }

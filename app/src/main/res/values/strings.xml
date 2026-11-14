@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">FUJARA</string>
-    <string name="accessibility_description">Analizuje widoczne karty ofert kurierskich i lokalnie oblicza opłacalność po kosztach pojazdu. Nie klika i nie akceptuje zleceń.</string>
+    <string name="accessibility_description">Analizuje widoczne karty ofert kurierskich i lokalnie oblicza opłacalność po kosztach pojazdu. Zapisuje lokalnie Twoje decyzje (przyjęte / odrzucone) do statystyk. Nigdy sama nie akceptuje zleceń; przycisk Odrzuć klika wyłącznie po Twoim głosowym potwierdzeniu, jeśli włączysz tę funkcję.</string>
 </resources>

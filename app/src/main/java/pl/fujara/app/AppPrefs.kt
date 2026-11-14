@@ -160,6 +160,95 @@ class AppPrefs(private val context: Context) {
         get() = getInt("extra_time_minutes", 0).coerceIn(0, 20)
         set(value) = prefs.edit().putInt("extra_time_minutes", value.coerceIn(0, 20)).apply()
 
+    // ---- 1.1: asystent (decyzje, auto-zapis, glos, trasy, pozycja panelu) ----
+
+    /** Zapisywanie pokazanych ofert i decyzji (przyjeta/odrzucona/wygasla) do lokalnej analityki. */
+    var decisionTrackingEnabled: Boolean
+        get() = prefs.getBoolean("decision_tracking_enabled", true)
+        set(value) = prefs.edit().putBoolean("decision_tracking_enabled", value).apply()
+
+    /** Automatyczny zapis szczegolow zakonczonego zlecenia Pyszne bez klikania ZAPISZ. */
+    var pyszneAutoSaveEnabled: Boolean
+        get() = prefs.getBoolean("pyszne_auto_save_enabled", true)
+        set(value) = prefs.edit().putBoolean("pyszne_auto_save_enabled", value).apply()
+
+    /** Odczyt ekranu Wolt "Finanse" (Zarobki brutto) i zapis snapshotow. */
+    var woltTrackingEnabled: Boolean
+        get() = prefs.getBoolean("wolt_tracking_enabled", true)
+        set(value) = prefs.edit().putBoolean("wolt_tracking_enabled", value).apply()
+
+    var voiceRejectEnabled: Boolean
+        get() = prefs.getBoolean("voice_reject_enabled", false)
+        set(value) = prefs.edit().putBoolean("voice_reject_enabled", value).apply()
+
+    /** Haslo uruchamiajace odrzucenie, np. "odrzuć". */
+    var voiceRejectKeyword: String
+        get() = prefs.getString("voice_reject_keyword", "odrzuć")?.trim()?.ifBlank { "odrzuć" } ?: "odrzuć"
+        set(value) = prefs.edit().putString("voice_reject_keyword", value.trim()).apply()
+
+    /** Slowo potwierdzajace, np. "odrzucam" (akceptowane tez "tak"). */
+    var voiceRejectConfirmWord: String
+        get() = prefs.getString("voice_reject_confirm", "odrzucam")?.trim()?.ifBlank { "odrzucam" } ?: "odrzucam"
+        set(value) = prefs.edit().putString("voice_reject_confirm", value.trim()).apply()
+
+    /** Czy FUJARA ma glosowo zapytac "Na pewno odrzucić?" (TTS). */
+    var voiceRejectSpeakPrompt: Boolean
+        get() = prefs.getBoolean("voice_reject_speak", true)
+        set(value) = prefs.edit().putBoolean("voice_reject_speak", value).apply()
+
+    var routesEnabled: Boolean
+        get() = prefs.getBoolean("routes_enabled", false)
+        set(value) = prefs.edit().putBoolean("routes_enabled", value).apply()
+
+    var routeProfile: String
+        get() = prefs.getString("route_profile", "car") ?: "car"
+        set(value) = prefs.edit().putString("route_profile", value).apply()
+
+    /** Miasto dopisywane do adresow przy geokodowaniu, np. "Gdańsk". */
+    var routeCityHint: String
+        get() = prefs.getString("route_city_hint", "") ?: ""
+        set(value) = prefs.edit().putString("route_city_hint", value.trim()).apply()
+
+    /** Opcjonalny klucz TomTom (trasa z ruchem). Bez klucza: OSRM bez ruchu. */
+    var tomtomApiKey: String
+        get() = prefs.getString("tomtom_api_key", "") ?: ""
+        set(value) = prefs.edit().putString("tomtom_api_key", value.trim()).apply()
+
+    /** Pozycja panelu: przesuniecie od gory w dp, osobno dla kazdej platformy. */
+    fun overlayTopOffsetDp(platform: CourierPlatform?): Int {
+        val key = "overlay_top_dp_${platform?.key ?: "global"}"
+        val default = when (platform) {
+            // Wolt ma przycisk "Odrzuć" w prawym gornym rogu – panel schodzi nizej.
+            CourierPlatform.WOLT -> 118
+            CourierPlatform.STUART -> 112
+            else -> 58
+        }
+        return getInt(key, default).coerceIn(0, 1400)
+    }
+
+    fun setOverlayTopOffsetDp(platform: CourierPlatform?, value: Int) {
+        prefs.edit().putInt("overlay_top_dp_${platform?.key ?: "global"}", value.coerceIn(0, 1400)).apply()
+    }
+
+    /** Strona ekranu dla panelu: "end" (prawa) albo "start" (lewa). */
+    fun overlaySide(platform: CourierPlatform?): String =
+        prefs.getString("overlay_side_${platform?.key ?: "global"}", if (platform == CourierPlatform.PYSZNE) "end" else "end") ?: "end"
+
+    fun setOverlaySide(platform: CourierPlatform?, side: String) {
+        prefs.edit().putString("overlay_side_${platform?.key ?: "global"}", side).apply()
+    }
+
+    fun resetOverlayPositions() {
+        val editor = prefs.edit()
+        prefs.all.keys.filter { it.startsWith("overlay_top_dp_") || it.startsWith("overlay_side_") }.forEach(editor::remove)
+        editor.apply()
+    }
+
+    /** Pokazuj w panelu licznik dzisiejszych decyzji (✓ / ✗). */
+    var showDecisionCounter: Boolean
+        get() = prefs.getBoolean("overlay_show_decisions", true)
+        set(value) = prefs.edit().putBoolean("overlay_show_decisions", value).apply()
+
     fun globalRules(): ProfitabilityCalculator.Rules = ProfitabilityCalculator.Rules(
         vehicleCostPerKm = vehicleCostPerKm,
         minimumNetPerKm = minimumNetPerKm,

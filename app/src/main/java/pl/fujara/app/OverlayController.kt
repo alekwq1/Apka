@@ -16,7 +16,9 @@ import android.text.SpannableString
 import android.text.TextUtils
 import android.text.style.RelativeSizeSpan
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -50,6 +52,14 @@ class OverlayController(
     private var fujaraGauge: FujaraGaugeView? = null
     private var lastHapticSignature: String? = null
     private var lastHapticAtMillis: Long = 0L
+    private var assistantText: TextView? = null
+    private var routeText: TextView? = null
+    private var voiceText: TextView? = null
+    private var decisionCounterText: TextView? = null
+    private var currentPlatform: CourierPlatform? = null
+    private var currentTopOffsetPx = 0
+    private var currentSideEnd = true
+    private var lastExtras: OverlayExtras = OverlayExtras()
 
     private val green = Color.rgb(83, 205, 115)
     private val red = Color.rgb(245, 92, 92)
@@ -65,7 +75,9 @@ class OverlayController(
         blacklistHits: BlacklistHits = BlacklistHits(),
         historyEntry: PyszneDeliveryLog? = null,
         historyAlreadySaved: Boolean = false,
-        onSaveHistory: ((PyszneDeliveryLog) -> PyszneSaveResult)? = null
+        onSaveHistory: ((PyszneDeliveryLog) -> PyszneSaveResult)? = null,
+        platform: CourierPlatform? = null,
+        extras: OverlayExtras = OverlayExtras()
     ) {
         val language = prefs.languageCode
         if (root == null || overlayLanguage != language) {
@@ -73,6 +85,13 @@ class OverlayController(
             createOverlay(language)
             overlayLanguage = language
         }
+        val resolvedPlatform = platform ?: CourierPlatform.fromDisplayName(applicationName).takeUnless { it == CourierPlatform.GLOBAL }
+        if (resolvedPlatform != currentPlatform || root?.visibility != View.VISIBLE) {
+            currentPlatform = resolvedPlatform
+            applyStoredPosition()
+        }
+        lastExtras = extras
+        applyExtras(extras, language)
 
         val profitabilityAccent = when (result.status) {
             ProfitabilityStatus.PROFITABLE -> green
@@ -301,6 +320,10 @@ class OverlayController(
         zusText = null
         blacklistText = null
         fujaraGauge = null
+        assistantText = null
+        routeText = null
+        voiceText = null
+        decisionCounterText = null
     }
 
     private fun createOverlay(language: String) {
@@ -363,6 +386,16 @@ class OverlayController(
             titleContainer,
             LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(6) }
         )
+
+        decisionCounterText = TextView(service).apply {
+            textSize = 7.2f
+            setTextColor(gray)
+            setTypeface(typeface, Typeface.BOLD)
+            maxLines = 1
+            visibility = View.GONE
+            setPadding(0, 0, dp(5), 0)
+        }
+        header.addView(decisionCounterText)
 
         status = TextView(service).apply {
             text = tr(language, "DOBRA", "GOOD", "ДОБРЕ", "ХОРОШО")
@@ -451,6 +484,48 @@ class OverlayController(
         }
         panel.addView(timeSourceText)
 
+        // 1.1: wiersze asystenta – aktywne zlecenie / trasa / glos.
+        assistantText = TextView(service).apply {
+            textSize = 8.6f
+            setTextColor(white)
+            setTypeface(typeface, Typeface.BOLD)
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+            visibility = View.GONE
+            setPadding(dp(6), dp(5), dp(6), dp(5))
+            background = pillBackground(amber)
+        }
+        panel.addView(
+            assistantText,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(5) }
+        )
+
+        routeText = TextView(service).apply {
+            textSize = 8f
+            setTextColor(white)
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+            visibility = View.GONE
+            setPadding(dp(3), dp(4), dp(3), 0)
+        }
+        panel.addView(routeText)
+
+        voiceText = TextView(service).apply {
+            textSize = 8.2f
+            setTextColor(white)
+            setTypeface(typeface, Typeface.BOLD)
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+            visibility = View.GONE
+            gravity = Gravity.CENTER
+            setPadding(dp(6), dp(5), dp(6), dp(5))
+            background = pillBackground(Color.rgb(120, 140, 255))
+        }
+        panel.addView(
+            voiceText,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(5) }
+        )
+
         val availableWidth = (service.resources.displayMetrics.widthPixels - dp(16)).coerceAtLeast(dp(220))
         val panelWidth = minOf(dp(268), availableWidth)
         val params = WindowManager.LayoutParams(
@@ -480,7 +555,7 @@ class OverlayController(
             background = pillBackground(gray)
             isClickable = true
             isFocusable = false
-            contentDescription = tr(language, "Ukryj panel", "Hide panel", "Сховати панель", "Скрыть панель")
+            contentDescription = tr(language, "Ukryj panel (przeciągnij, aby przesunąć)", "Hide panel (drag to move)", "Сховати панель (перетягни, щоб пересунути)", "Скрыть панель (перетащи, чтобы переместить)")
             setOnClickListener {
                 userCollapsed = true
                 panel.visibility = View.GONE
@@ -488,6 +563,7 @@ class OverlayController(
                 restoreRoot?.visibility = View.VISIBLE
                 saveHistoryRoot?.visibility = View.GONE
             }
+            setOnTouchListener(DragHandleTouchListener(this))
         }
         val collapseParams = WindowManager.LayoutParams(
             dp(30),
@@ -587,6 +663,145 @@ class OverlayController(
         saveHistoryRoot = saveHistory
     }
 
+    /** Pozycja panelu zapamietana dla platformy (Wolt domyslnie nizej, pod "Odrzuć"). */
+    private fun applyStoredPosition() {
+        currentTopOffsetPx = dp(prefs.overlayTopOffsetDp(currentPlatform))
+        currentSideEnd = prefs.overlaySide(currentPlatform) != "start"
+        layoutWindows()
+    }
+
+    private fun layoutWindows() {
+        val sideGravity = if (currentSideEnd) Gravity.END else Gravity.START
+        fun update(view: View?, x: Int, y: Int) {
+            val v = view ?: return
+            val params = v.layoutParams as? WindowManager.LayoutParams ?: return
+            params.gravity = Gravity.TOP or sideGravity
+            params.x = x
+            params.y = y
+            runCatching { windowManager.updateViewLayout(v, params) }
+        }
+        update(root, dp(8), currentTopOffsetPx)
+        update(restoreRoot, dp(8), currentTopOffsetPx)
+        update(collapseRoot, dp(11), currentTopOffsetPx + dp(8))
+        if (saveHistoryRoot?.visibility == View.VISIBLE) positionHistorySaveButton()
+    }
+
+    private fun persistPosition() {
+        prefs.setOverlayTopOffsetDp(currentPlatform, (currentTopOffsetPx / service.resources.displayMetrics.density).toInt())
+        prefs.setOverlaySide(currentPlatform, if (currentSideEnd) "end" else "start")
+    }
+
+    /** Przeciaganie uchwytu "−" przesuwa caly panel; samo tapniecie zwija go. */
+    private inner class DragHandleTouchListener(private val handle: View) : View.OnTouchListener {
+        private val slop = ViewConfiguration.get(service).scaledTouchSlop
+        private var downRawX = 0f
+        private var downRawY = 0f
+        private var startOffset = 0
+        private var dragging = false
+
+        override fun onTouch(v: View, event: MotionEvent): Boolean {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downRawX = event.rawX
+                    downRawY = event.rawY
+                    startOffset = currentTopOffsetPx
+                    dragging = false
+                    return true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dy = event.rawY - downRawY
+                    val dx = event.rawX - downRawX
+                    if (!dragging && (kotlin.math.abs(dy) > slop || kotlin.math.abs(dx) > slop)) dragging = true
+                    if (dragging) {
+                        val maxTop = service.resources.displayMetrics.heightPixels - dp(120)
+                        currentTopOffsetPx = (startOffset + dy.toInt()).coerceIn(0, maxTop)
+                        val screenWidth = service.resources.displayMetrics.widthPixels
+                        val newSideEnd = if (currentSideEnd) event.rawX > screenWidth * 0.42f else event.rawX > screenWidth * 0.58f
+                        currentSideEnd = newSideEnd
+                        layoutWindows()
+                    }
+                    return true
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (dragging) {
+                        persistPosition()
+                    } else {
+                        handle.performClick()
+                    }
+                    dragging = false
+                    return true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    if (dragging) persistPosition()
+                    dragging = false
+                    return true
+                }
+            }
+            return false
+        }
+    }
+
+    /** Aktualizuje tylko wiersze asystenta (np. gdy trasa przyjdzie asynchronicznie). */
+    fun updateExtras(extras: OverlayExtras) {
+        if (root == null) return
+        lastExtras = extras
+        applyExtras(extras, prefs.languageCode)
+    }
+
+    fun currentExtras(): OverlayExtras = lastExtras
+
+    private fun applyExtras(extras: OverlayExtras, language: String) {
+        assistantText?.apply {
+            val note = extras.feasibilityNote
+            if (note.isNullOrBlank()) {
+                visibility = View.GONE
+            } else {
+                val color = when (extras.feasibilityVerdict) {
+                    OfferFeasibility.Verdict.OK -> green
+                    OfferFeasibility.Verdict.TIGHT -> yellow
+                    OfferFeasibility.Verdict.CONFLICT -> red
+                    else -> amber
+                }
+                val prefix = extras.activeJobLabel?.let { "$it\n" }.orEmpty()
+                text = prefix + note
+                maxLines = if (prefix.isBlank()) 2 else 3
+                setTextColor(color)
+                background = pillBackground(color)
+                visibility = View.VISIBLE
+            }
+        }
+        routeText?.apply {
+            val route = extras.routeText
+            text = route.orEmpty()
+            setTextColor(if (extras.routePending) gray else white)
+            visibility = if (route.isNullOrBlank()) View.GONE else View.VISIBLE
+        }
+        voiceText?.apply {
+            val label = when (extras.voiceState) {
+                VoiceState.LISTENING -> tr(language, "🎙 Słucham: „${extras.voiceKeyword}”", "🎙 Listening: “${extras.voiceKeyword}”", "🎙 Слухаю: „${extras.voiceKeyword}”", "🎙 Слушаю: „${extras.voiceKeyword}”")
+                VoiceState.CONFIRMING -> "❓ " + (extras.voiceHint ?: tr(language, "Na pewno odrzucić?", "Really decline?", "Точно відхилити?", "Точно отклонить?"))
+                VoiceState.EXECUTING -> "⛔ " + (extras.voiceHint ?: tr(language, "Odrzucam…", "Declining…", "Відхиляю…", "Отклоняю…"))
+                VoiceState.UNAVAILABLE -> tr(language, "🎙 Głos niedostępny (mikrofon / rozpoznawanie)", "🎙 Voice unavailable (mic / recognizer)", "🎙 Голос недоступний", "🎙 Голос недоступен")
+                VoiceState.OFF, null -> ""
+            }
+            text = label
+            val color = when (extras.voiceState) {
+                VoiceState.CONFIRMING -> yellow
+                VoiceState.EXECUTING -> red
+                VoiceState.UNAVAILABLE -> gray
+                else -> Color.rgb(140, 160, 255)
+            }
+            setTextColor(color)
+            background = pillBackground(color)
+            visibility = if (label.isBlank()) View.GONE else View.VISIBLE
+        }
+        decisionCounterText?.apply {
+            val counter = extras.decisionCounter
+            text = counter.orEmpty()
+            visibility = if (counter.isNullOrBlank() || !prefs.showDecisionCounter) View.GONE else View.VISIBLE
+        }
+    }
+
     private fun updateHistorySaveButton(language: String) {
         val button = saveHistoryRoot ?: return
         val entry = currentHistoryEntry
@@ -621,6 +836,7 @@ class OverlayController(
                 // nie zaslania dodatkowego fragmentu Pyszne i nie pogarsza kolejnych OCR.
                 params.y = location[1] + (panel.height - button.height - dp(6)).coerceAtLeast(0)
                 params.x = dp(8)
+                params.gravity = Gravity.TOP or (if (currentSideEnd) Gravity.END else Gravity.START)
                 runCatching { windowManager.updateViewLayout(button, params) }
             }
         }
@@ -937,3 +1153,16 @@ class OverlayController(
         val rightValue: TextView
     )
 }
+
+/** Dodatkowe informacje asystenta pokazywane w panelu (1.1). */
+data class OverlayExtras(
+    val activeJobLabel: String? = null,
+    val feasibilityNote: String? = null,
+    val feasibilityVerdict: OfferFeasibility.Verdict? = null,
+    val routeText: String? = null,
+    val routePending: Boolean = false,
+    val voiceState: VoiceState? = null,
+    val voiceHint: String? = null,
+    val voiceKeyword: String = "",
+    val decisionCounter: String? = null
+)

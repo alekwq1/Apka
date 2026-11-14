@@ -1,21 +1,25 @@
-# FUJARA 1.0.2
+# FUJARA 1.1.0
 
 Android app for local courier-offer profitability analysis.
 
 ## Google Play readiness
 - applicationId / namespace: `pl.fujara.app`
 - targetSdk / compileSdk: 36
-- versionCode: 41
-- versionName: 1.0.2
+- versionCode: 42
+- versionName: 1.1.0
 - signed AAB workflow: `.github/workflows/build-play-aab.yml`
 - debug APK workflow: `.github/workflows/test-apk.yml`
 - privacy page: `docs/privacy.html`
 - reviewer demo: `Pokaż podgląd nakładki` / `Show calculation demo`
 - AccessibilityService prominent disclosure before settings
-- no `INTERNET` permission, no ads, no analytics in the current project
+- no ads, no analytics; `INTERNET` + location are used only by the opt-in Routes module, `RECORD_AUDIO` only by opt-in voice decline (see `CHANGES-1.1.0.md`)
 
 For the Play rejection dated 16.10.2026, start with `NAPRAWA-GOOGLE-PLAY-2026-10-16.md`.
 
+
+## 1.1.0 — asystent decyzji
+
+Szczegóły: `CHANGES-1.1.0.md`. Statystyki przyjętych / odrzuconych / wygasłych ofert, automatyczny zapis Pyszne, zapis Wolt (Finanse + przyjęte dostawy), ocena „czy zdążę” i trasa z ruchem, odrzucanie głosem z potwierdzeniem, przesuwany panel (Wolt: bez kolizji z „Odrzuć”).
 
 ## 1.0.1 — naprawa podsumowania Pyszne
 
