@@ -40,6 +40,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
     // 1.1: asystent decyzji
     private lateinit var offerEventStore: OfferEventStore
     private lateinit var woltEarningsStore: WoltEarningsStore
+    private lateinit var woltOrderStore: WoltOrderStore
     private lateinit var routeAdvisor: RouteAdvisor
     private var voice: VoiceRejectController? = null
     private val decisionTracker = DecisionTracker()
@@ -98,6 +99,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
         overlay = OverlayController(this)
         offerEventStore = OfferEventStore(this)
         woltEarningsStore = WoltEarningsStore(this)
+        woltOrderStore = WoltOrderStore(this)
         routeAdvisor = RouteAdvisor(this, prefs)
         voice = VoiceRejectController(
             service = this,
@@ -138,7 +140,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
         if (eventPackage == packageName) return
 
         if (event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED && isDeliveryPackage(eventPackage)) {
-            handleDeliveryClick(event)
+            handleDeliveryClick(event, platformForPackage(eventPackage))
         }
 
         val configuredPackage = prefs.targetPackage.trim()
@@ -1135,14 +1137,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
             // poprzedniej i aktualizuje "w trakcie".
             decisionTracker.activeDeliveryScreenSeen(platform, nowMillis)
             persistDecisions()
-            activeJobTracker.onActiveScreen(
-                platform = platform,
-                nowMillis = nowMillis,
-                pickupMinute = offer.pickupTimeMinutesOfDay,
-                deliveryMinute = offer.deliveryTimeMinutesOfDay,
-                restaurant = details.restaurant,
-                pickedUp = Regex("(?i)dostarcz\\s+do|w\\s+drodze\\s+do\\s+klienta|odebrano|picked\\s+up").containsMatchIn(sourceText)
-            )
+            updateActiveJobFromScreen(platform, sourceText, offer, details, nowMillis)
             onOfferGone()
             overlay.show(
                 result = result,
@@ -1152,7 +1147,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
                 platform = platform,
                 extras = OverlayExtras(
                     activeJobLabel = tr(language, "W TRAKCIE", "IN PROGRESS", "В ПРОЦЕСІ", "В ПРОЦЕССЕ"),
-                    feasibilityNote = activeJobLabel(activeJobTracker.activeAt(nowMillis), currentMinuteOfDay, language),
+                    feasibilityNote = activeJobsLabel(activeJobTracker.activeJobs(nowMillis), currentMinuteOfDay, language),
                     feasibilityVerdict = OfferFeasibility.Verdict.UNKNOWN,
                     decisionCounter = decisionCounterLabel()
                 )
@@ -1161,7 +1156,8 @@ class DeliveryAccessibilityService : AccessibilityService() {
         }
 
         // ---- karta nowej oferty ----
-        val activeJob = activeJobTracker.activeAt(nowMillis)
+        val activeJobs = activeJobTracker.activeJobs(nowMillis)
+        val activeJob = activeJobs.maxByOrNull { it.expectedFinishMinuteOfDay(currentMinuteOfDay) }
         val pending = if (prefs.decisionTrackingEnabled) {
             decisionTracker.offerVisible(
                 platform = platform,
@@ -1172,7 +1168,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
                 pickupAddress = details.pickupAddress,
                 dropoffAddress = details.dropoffAddress,
                 stops = details.stops,
-                duringActiveJob = activeJob != null,
+                duringActiveJob = activeJobs.isNotEmpty(),
                 blacklisted = blacklistHits.hasAny
             )
         } else {
@@ -1194,21 +1190,25 @@ class DeliveryAccessibilityService : AccessibilityService() {
                 restaurant = details.restaurant,
                 pickupAddress = details.pickupAddress,
                 dropoffAddress = details.dropoffAddress,
-                activeJob = activeJob
+                activeJobs = activeJobs,
+                language = language
             ) { fresh ->
                 if (lastOfferSignature == signature && ::overlay.isInitialized && overlay.isVisible()) {
                     lastRouteAdvice = fresh
                     lastRouteSignature = signature
-                    val job = activeJobTracker.activeAt(System.currentTimeMillis())
                     val minute = LocalTime.now().let { it.hour * 60 + it.minute }
+                    val job = activeJobTracker.activeJobs(System.currentTimeMillis()).maxByOrNull { it.expectedFinishMinuteOfDay(minute) }
+                    val feasibility = job?.let { OfferFeasibilityCalculator.evaluate(it, offer, minute, fresh.toPickup?.minutes, prefs.languageCode) }
                     overlay.updateExtras(
                         overlay.currentExtras().copy(
-                            routeText = RouteAdvisor.describe(fresh, prefs.languageCode),
+                            routeText = RouteAdvisor.describe(fresh, prefs.languageCode).ifBlank { null },
                             routePending = false,
-                            feasibilityNote = job?.let { OfferFeasibilityCalculator.evaluate(it, offer, minute, travelMinutes(fresh), prefs.languageCode).note }
-                                ?: overlay.currentExtras().feasibilityNote,
-                            feasibilityVerdict = job?.let { OfferFeasibilityCalculator.evaluate(it, offer, minute, travelMinutes(fresh), prefs.languageCode).verdict }
-                                ?: overlay.currentExtras().feasibilityVerdict
+                            spatialNote = fresh.spatial?.note,
+                            spatialVerdict = fresh.spatial?.verdict,
+                            mapPoints = fresh.points,
+                            mapTiles = prefs.mapTilesEnabled,
+                            feasibilityNote = feasibility?.note ?: overlay.currentExtras().feasibilityNote,
+                            feasibilityVerdict = feasibility?.verdict ?: overlay.currentExtras().feasibilityVerdict
                         )
                     )
                 }
@@ -1220,20 +1220,23 @@ class DeliveryAccessibilityService : AccessibilityService() {
         }
 
         val feasibility = activeJob?.let {
-            OfferFeasibilityCalculator.evaluate(it, offer, currentMinuteOfDay, travelMinutes(advice), language)
+            OfferFeasibilityCalculator.evaluate(it, offer, currentMinuteOfDay, advice?.toPickup?.minutes, language)
         }
 
         voice?.offerAppeared()
         val extras = OverlayExtras(
-            activeJobLabel = activeJob?.let { job ->
-                tr(language, "W TRAKCIE: ", "IN PROGRESS: ", "В ПРОЦЕСІ: ", "В ПРОЦЕССЕ: ") + (job.restaurant ?: platformLabel(job.platform)) +
-                    (job.deliveryMinuteOfDay?.let { " → ${clockLabel(it)}" } ?: job.estimatedMinutes?.let { " (~$it min)" }.orEmpty())
+            activeJobLabel = activeJobs.takeIf { it.isNotEmpty() }?.let { jobs ->
+                tr(language, "W TRAKCIE: ", "IN PROGRESS: ", "В ПРОЦЕСІ: ", "В ПРОЦЕССЕ: ") + jobs.joinToString(" · ") { job -> shortJobLabel(job, currentMinuteOfDay) }
             },
             feasibilityNote = feasibility?.note,
             feasibilityVerdict = feasibility?.verdict,
-            routeText = advice?.let { RouteAdvisor.describe(it, language) }
+            routeText = advice?.let { RouteAdvisor.describe(it, language).ifBlank { null } }
                 ?: if (routeAdvisor.enabled) tr(language, "🧭 liczę trasę…", "🧭 routing…", "🧭 рахую маршрут…", "🧭 считаю маршрут…") else null,
             routePending = advice == null,
+            spatialNote = advice?.spatial?.note,
+            spatialVerdict = advice?.spatial?.verdict,
+            mapPoints = advice?.points.orEmpty(),
+            mapTiles = prefs.mapTilesEnabled,
             voiceState = if (prefs.voiceRejectEnabled) voiceState else null,
             voiceHint = voiceHint,
             voiceKeyword = prefs.voiceRejectKeyword,
@@ -1285,10 +1288,67 @@ class DeliveryAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun travelMinutes(advice: RouteAdvice?): Int? =
-        advice?.fromCurrentJobEnd?.minutes ?: advice?.toPickup?.minutes
+    /** Aktualizuje aktywne zlecenie z ekranu "w trakcie" (Pyszne / Wolt / inne). */
+    private fun updateActiveJobFromScreen(platform: CourierPlatform, text: String, offer: Offer, details: OfferDetails, nowMillis: Long) {
+        when (platform) {
+            CourierPlatform.PYSZNE -> {
+                val screen = PyszneActiveScreenParser.parse(text)
+                activeJobTracker.onActiveScreen(
+                    platform = platform,
+                    nowMillis = nowMillis,
+                    pickupMinute = screen?.pickupMinuteOfDay ?: offer.pickupTimeMinutesOfDay,
+                    deliveryMinute = screen?.deliveryMinuteOfDay ?: offer.deliveryTimeMinutesOfDay,
+                    restaurant = screen?.restaurant ?: details.restaurant,
+                    pickedUp = screen?.pickedUp ?: false,
+                    pickupAddress = screen?.pickupAddress ?: details.pickupAddress,
+                    dropoffAddress = screen?.dropoffAddress ?: details.dropoffAddress
+                )
+            }
+            CourierPlatform.WOLT -> {
+                val active = WoltActiveDeliveryParser.parse(text)
+                activeJobTracker.onActiveScreen(
+                    platform = platform,
+                    nowMillis = nowMillis,
+                    pickupMinute = active?.pickupMinuteOfDay ?: offer.pickupTimeMinutesOfDay,
+                    deliveryMinute = active?.deliveryMinuteOfDay ?: offer.deliveryTimeMinutesOfDay,
+                    restaurant = active?.venue ?: details.restaurant,
+                    pickedUp = active?.stage == WoltActiveDelivery.Stage.TO_CUSTOMER,
+                    pickupAddress = active?.pickupAddress,
+                    dropoffAddress = active?.dropoffAddress,
+                    etaMinutes = active?.etaMinutes
+                )
+            }
+            else -> activeJobTracker.onActiveScreen(
+                platform = platform,
+                nowMillis = nowMillis,
+                pickupMinute = offer.pickupTimeMinutesOfDay,
+                deliveryMinute = offer.deliveryTimeMinutesOfDay,
+                restaurant = details.restaurant,
+                pickedUp = Regex("(?i)dostarcz\\s+do|w\\s+drodze\\s+do\\s+klienta|odebrano|picked\\s+up").containsMatchIn(text),
+                pickupAddress = details.pickupAddress,
+                dropoffAddress = details.dropoffAddress
+            )
+        }
+    }
 
-    private fun handleDeliveryClick(event: AccessibilityEvent) {
+    private fun shortJobLabel(job: ActiveJob, currentMinuteOfDay: Int): String {
+        val name = platformLabel(job.platform) + " " + job.label.take(28)
+        val stage = if (job.stage == ActiveJob.Stage.TO_CUSTOMER) "→🏠" else "→🍴"
+        val time = job.deliveryMinuteOfDay?.let { clockLabel(it) }
+            ?: job.etaMinutes?.let { "${it} min" }
+            ?: "~${clockLabel(job.expectedFinishMinuteOfDay(currentMinuteOfDay))}"
+        return "$name $stage $time"
+    }
+
+    private fun activeJobsLabel(jobs: List<ActiveJob>, currentMinuteOfDay: Int, language: String): String? {
+        if (jobs.isEmpty()) return null
+        return jobs.joinToString("\n") { job ->
+            val remaining = job.expectedFinishMinuteOfDay(currentMinuteOfDay) - currentMinuteOfDay
+            shortJobLabel(job, currentMinuteOfDay) + " (" + tr(language, "jeszcze ~$remaining min", "~$remaining min left", "ще ~$remaining хв", "ещё ~$remaining мин") + ")"
+        }
+    }
+
+    private fun handleDeliveryClick(event: AccessibilityEvent, platform: CourierPlatform?) {
         val collected = mutableListOf<String>()
         event.text?.forEach { item -> item?.toString()?.let { collected.add(it) } }
         event.contentDescription?.toString()?.let { collected.add(it) }
@@ -1300,6 +1360,16 @@ class DeliveryAccessibilityService : AccessibilityService() {
         if (texts.isEmpty()) return
 
         val now = System.currentTimeMillis()
+        // 1.2: etapy aktywnego zlecenia (Zakończ odbiór / Dostarcz zamówienie / Odrzuć dostawę).
+        if (platform != null) {
+            if (texts.any { JobStageButtons.isDelivered(it) }) {
+                activeJobTracker.onFinished(platform)
+                lastRouteSignature = null
+            } else if (texts.any { JobStageButtons.isPickedUp(it) }) {
+                activeJobTracker.onPickedUp(platform, now)
+                lastRouteSignature = null
+            }
+        }
         val pending = decisionTracker.current
         val decision = texts.firstNotNullOfOrNull { text ->
             decisionTracker.buttonClicked(text, now)?.let { it to text }
@@ -1363,18 +1433,8 @@ class DeliveryAccessibilityService : AccessibilityService() {
         val now = System.currentTimeMillis()
         decisionTracker.activeDeliveryScreenSeen(platform, now)
         persistDecisions()
-        if (platform == CourierPlatform.WOLT) {
-            WoltActiveDeliveryParser.parse(text)?.let { active ->
-                activeJobTracker.onActiveScreen(
-                    platform = platform,
-                    nowMillis = now,
-                    pickupMinute = active.pickupMinuteOfDay,
-                    deliveryMinute = active.deliveryMinuteOfDay,
-                    restaurant = active.venue,
-                    pickedUp = active.stage == WoltActiveDelivery.Stage.TO_CUSTOMER
-                )
-            }
-        }
+        val details = offerDetails(platform, text)
+        updateActiveJobFromScreen(platform, text, Offer(0.0, 0.0), details, now)
     }
 
     private fun captureWoltData(accessibilityText: String, ocrText: String) {
@@ -1383,21 +1443,18 @@ class DeliveryAccessibilityService : AccessibilityService() {
         texts.firstNotNullOfOrNull { WoltFinanceParser.parse(it) }?.let { snapshot ->
             if (woltEarningsStore.record(snapshot)) HapticLanguage.offer(this, ProfitabilityStatus.NO_TIME)
         }
+        // 1.2: oficjalne sumy dni i pojedyncze zlecenia z "Zarobki brutto".
+        texts.forEach { text ->
+            val totals = WoltHistoryParser.parseDailySummary(text)
+            if (totals.isNotEmpty() && woltOrderStore.saveDayTotals(totals) > 0) HapticLanguage.record(this)
+            WoltHistoryParser.parseDayDetails(text)?.let { day ->
+                var changed = 0
+                day.totalPln?.let { changed += woltOrderStore.saveDayTotals(listOf(WoltDayTotal(day.date, it))) }
+                changed += woltOrderStore.saveOrders(day.orders)
+                if (changed > 0) HapticLanguage.record(this)
+            }
+        }
         texts.firstOrNull()?.let { noteActiveJobScreen(CourierPlatform.WOLT, it) }
-    }
-
-    private fun activeJobLabel(job: ActiveJob?, currentMinuteOfDay: Int, language: String): String? {
-        job ?: return null
-        val finish = job.expectedFinishMinuteOfDay(currentMinuteOfDay)
-        val remaining = finish - currentMinuteOfDay
-        val name = job.restaurant ?: platformLabel(job.platform)
-        return tr(
-            language,
-            "$name · koniec ~${clockLabel(finish)} (${remaining} min)",
-            "$name · done ~${clockLabel(finish)} (${remaining} min)",
-            "$name · кінець ~${clockLabel(finish)} (${remaining} хв)",
-            "$name · конец ~${clockLabel(finish)} (${remaining} мин)"
-        )
     }
 
     private fun performVoiceReject() {
@@ -1467,6 +1524,9 @@ class DeliveryAccessibilityService : AccessibilityService() {
                 ("całkowita kwota reszty" in lower && "akceptuj" in lower) -> CourierPlatform.WOLT
             "route distance" in lower && "estimated" in lower && "accept" in lower && "pln" in lower -> CourierPlatform.WOLT
             "zaakceptuj zlecenie" in lower ||
+                "zaakceptuj" in lower ||
+                "dostawa do klienta" in lower ||
+                ("odbiór:" in lower || "odbior:" in lower) ||
                 ("odbierz na" in lower && "dostarcz na" in lower) ||
                 ("accept" in lower && ("pickup" in lower || "pick up" in lower) && "deliver" in lower) ||
                 (("czas aktywności" in lower || "czas aktywnosci" in lower || "active time" in lower) &&

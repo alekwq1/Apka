@@ -53,6 +53,8 @@ class OverlayController(
     private var lastHapticSignature: String? = null
     private var lastHapticAtMillis: Long = 0L
     private var assistantText: TextView? = null
+    private var spatialText: TextView? = null
+    private var miniMap: MiniMapView? = null
     private var routeText: TextView? = null
     private var voiceText: TextView? = null
     private var decisionCounterText: TextView? = null
@@ -321,6 +323,8 @@ class OverlayController(
         blacklistText = null
         fujaraGauge = null
         assistantText = null
+        spatialText = null
+        miniMap = null
         routeText = null
         voiceText = null
         decisionCounterText = null
@@ -498,6 +502,29 @@ class OverlayController(
         panel.addView(
             assistantText,
             LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(5) }
+        )
+
+        // 1.2: duzy, czytelny werdykt przestrzenny + mini-mapa.
+        spatialText = TextView(service).apply {
+            textSize = 11f
+            setTextColor(white)
+            setTypeface(typeface, Typeface.BOLD)
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+            gravity = Gravity.CENTER
+            visibility = View.GONE
+            setPadding(dp(8), dp(7), dp(8), dp(7))
+            background = pillBackground(green)
+        }
+        panel.addView(
+            spatialText,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) }
+        )
+
+        miniMap = MiniMapView(service).apply { visibility = View.GONE }
+        panel.addView(
+            miniMap,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(160)).apply { topMargin = dp(6) }
         )
 
         routeText = TextView(service).apply {
@@ -768,6 +795,31 @@ class OverlayController(
                 setTextColor(color)
                 background = pillBackground(color)
                 visibility = View.VISIBLE
+            }
+        }
+        spatialText?.apply {
+            val note = extras.spatialNote
+            if (note.isNullOrBlank()) {
+                visibility = View.GONE
+            } else {
+                val color = when (extras.spatialVerdict) {
+                    SpatialVerdict.Verdict.ON_THE_WAY -> green
+                    SpatialVerdict.Verdict.SMALL_DETOUR -> yellow
+                    SpatialVerdict.Verdict.OPPOSITE -> red
+                    else -> gray
+                }
+                text = note
+                setTextColor(color)
+                background = pillBackground(color)
+                visibility = View.VISIBLE
+            }
+        }
+        miniMap?.apply {
+            if (extras.mapPoints.size >= 2) {
+                setData(extras.mapPoints, extras.mapTiles)
+                visibility = View.VISIBLE
+            } else {
+                visibility = View.GONE
             }
         }
         routeText?.apply {
@@ -1161,6 +1213,10 @@ data class OverlayExtras(
     val feasibilityVerdict: OfferFeasibility.Verdict? = null,
     val routeText: String? = null,
     val routePending: Boolean = false,
+    val spatialNote: String? = null,
+    val spatialVerdict: SpatialVerdict.Verdict? = null,
+    val mapPoints: List<MapPoint> = emptyList(),
+    val mapTiles: Boolean = true,
     val voiceState: VoiceState? = null,
     val voiceHint: String? = null,
     val voiceKeyword: String = "",

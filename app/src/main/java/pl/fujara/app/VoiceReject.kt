@@ -130,8 +130,12 @@ class VoiceRejectController(
         if (hypotheses.isEmpty()) return
         when (state) {
             VoiceState.LISTENING -> {
-                if (VoiceKeywordMatcher.matches(hypotheses, prefs.voiceRejectKeyword)) enterConfirming()
-                else if (final) scheduleRestart(250L, confirmMode = false)
+                if (VoiceKeywordMatcher.matches(hypotheses, prefs.voiceRejectKeyword)) {
+                    // 1.2: domyslnie haslo = odrzucenie od razu, bez pytania o potwierdzenie.
+                    if (prefs.voiceRejectRequireConfirmation) enterConfirming() else executeReject()
+                } else if (final) {
+                    scheduleRestart(250L, confirmMode = false)
+                }
             }
             VoiceState.CONFIRMING -> {
                 when {

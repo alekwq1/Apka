@@ -46,14 +46,22 @@ object WoltFinanceParser {
 }
 
 /**
- * Ekran aktywnej dostawy Wolt: "Odbierz na 18:04" + nazwa lokalu + "Nawiguj".
- * Po odbiorze pojawia sie "Dostarcz do"/"Dostarcz na".
+ * Ekran aktywnej dostawy Wolt (kilka wariantow z realnych zrzutow):
+ *  - "Odbierz na 18:04 / KFC, Galeria Bałtycka / Nawiguj"
+ *  - "Odbiór za 7 min" (pastylka na mapie)   - "Dostawa za 24 min"
+ *  - "Odbiór z / SMASHYNSKI / Amundsena 7C, 80-288 Gdansk"
+ *  - "Dostawa do / Dominika B. / Janusza Kusocińskiego 4A, 80-288 Gdańsk"
+ *  - "Dostawa do / Piotr N. / adres / Szczegóły zamówienia / Z / SMASHYNSKI - smash burgers / #9454"
  */
 data class WoltActiveDelivery(
     val pickupMinuteOfDay: Int?,
     val deliveryMinuteOfDay: Int?,
     val venue: String?,
-    val stage: Stage
+    val stage: Stage,
+    val pickupAddress: String? = null,
+    val dropoffAddress: String? = null,
+    /** "Odbiór za 7 min" / "Dostawa za 24 min". */
+    val etaMinutes: Int? = null
 ) {
     enum class Stage { TO_PICKUP, TO_CUSTOMER, UNKNOWN }
 }
@@ -61,14 +69,22 @@ data class WoltActiveDelivery(
 object WoltActiveDeliveryParser {
     private val pickupAt = Regex("""(?i)(?:odbierz|odbi[oó]r)\s+(?:na|o|do)\s+(\d{1,2})[:.](\d{2})""")
     private val deliverAt = Regex("""(?i)(?:dostarcz|dostawa)\s+(?:na|o|do)\s+(\d{1,2})[:.](\d{2})""")
+    private val pickupEta = Regex("""(?i)odbi[oó]r\s+za\s+(-?\d{1,3})\s*min""")
+    private val deliveryEta = Regex("""(?i)dostawa\s+za\s+(-?\d{1,3})\s*min""")
+    private val pickupFrom = Regex("""(?i)^odbi[oó]r\s+z$|^pickup\s+from$""")
+    private val deliverTo = Regex("""(?i)^dostawa\s+do$|^deliver\s+to$""")
     private val navigate = Regex("""(?i)(?<!\p{L})(?:nawiguj|navigate|навігувати|навигация|маршрут)(?!\p{L})""")
     private val acceptMarker = Regex("""(?i)(?<!\p{L})(?:akceptuj|accept|zaakceptuj)(?!\p{L})""")
     private val earningsMarker = Regex("""(?i)spodziewany\s+zarobek|expected\s+earnings|szacowan\w*\s+zarob""")
-    private val pickedUp = Regex("""(?i)(?<!\p{L})(?:dostarcz\s+do|w\s+drodze\s+do\s+klienta|deliver\s+to|odebrano|picked\s+up)(?!\p{L})""")
+    private val pickedUp = Regex("""(?i)(?<!\p{L})(?:dostarcz\s+do|dostawa\s+do|dostawa\s+za|w\s+drodze\s+do\s+klienta|deliver\s+to|odebrano|picked\s+up|zam[oó]wienie\s+dostarczone)(?!\p{L})""")
+    private val venueAfterZ = Regex("""(?i)^z$""")
 
     fun isActiveDeliveryScreen(text: String): Boolean {
         if (acceptMarker.containsMatchIn(text) || earningsMarker.containsMatchIn(text)) return false
-        return navigate.containsMatchIn(text) && (pickupAt.containsMatchIn(text) || deliverAt.containsMatchIn(text) || pickedUp.containsMatchIn(text))
+        val lines = text.lines().map { it.trim() }
+        return (navigate.containsMatchIn(text) && (pickupAt.containsMatchIn(text) || deliverAt.containsMatchIn(text))) ||
+            pickupEta.containsMatchIn(text) || deliveryEta.containsMatchIn(text) ||
+            lines.any { pickupFrom.matches(it) || deliverTo.matches(it) }
     }
 
     fun parse(text: String): WoltActiveDelivery? {
@@ -76,25 +92,49 @@ object WoltActiveDeliveryParser {
         val pickup = pickupAt.find(text)?.let { it.groupValues[1].toInt() * 60 + it.groupValues[2].toInt() }?.takeIf { it in 0..1439 }
         val delivery = deliverAt.find(text)?.let { it.groupValues[1].toInt() * 60 + it.groupValues[2].toInt() }?.takeIf { it in 0..1439 }
         val lines = text.lines().map { it.trim() }.filter { it.isNotBlank() }
+
+        var venue: String? = null
+        var pickupAddress: String? = null
+        var dropoffAddress: String? = null
+
+        // Wariant "Odbierz na 18:04 / KFC, Galeria Bałtycka"
         val anchorIndex = lines.indexOfFirst { pickupAt.containsMatchIn(it) || deliverAt.containsMatchIn(it) }
-        val venue = if (anchorIndex >= 0) {
-            lines.drop(anchorIndex + 1)
-                .take(3)
-                .firstOrNull { line ->
-                    line.length in 3..60 &&
-                        !navigate.containsMatchIn(line) &&
-                        !Regex("""^\d""").containsMatchIn(line) &&
-                        !Regex("""(?i)^(?:odbierz|dostarcz)""").containsMatchIn(line)
-                }
-        } else {
-            null
+        if (anchorIndex >= 0) {
+            venue = lines.drop(anchorIndex + 1).take(3).firstOrNull { line ->
+                line.length in 3..60 && !navigate.containsMatchIn(line) && !AddressLines.isAddress(line) &&
+                    !Regex("""^\d""").containsMatchIn(line) && !Regex("""(?i)^(?:odbierz|dostarcz)""").containsMatchIn(line)
+            }
         }
+        // Wariant "Odbiór z / SMASHYNSKI / adres"
+        lines.indexOfFirst { pickupFrom.matches(it) }.takeIf { it >= 0 }?.let { idx ->
+            val after = lines.drop(idx + 1).take(3)
+            venue = venue ?: after.firstOrNull { !AddressLines.isAddress(it) && it.length in 2..60 }
+            pickupAddress = after.firstOrNull { AddressLines.isAddress(it) }
+        }
+        // Wariant "Dostawa do / Imie / adres" (+ "Szczegóły zamówienia / Z / lokal")
+        lines.indexOfFirst { deliverTo.matches(it) }.takeIf { it >= 0 }?.let { idx ->
+            dropoffAddress = lines.drop(idx + 1).take(4).firstOrNull { AddressLines.isAddress(it) }
+        }
+        lines.indexOfFirst { venueAfterZ.matches(it) }.takeIf { it >= 0 }?.let { idx ->
+            venue = venue ?: lines.getOrNull(idx + 1)?.takeIf { it.length in 2..60 && !it.startsWith("#") }
+        }
+
+        val pickupEtaMin = pickupEta.find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
+        val deliveryEtaMin = deliveryEta.find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
         val stage = when {
-            pickedUp.containsMatchIn(text) || (delivery != null && pickup == null) -> WoltActiveDelivery.Stage.TO_CUSTOMER
-            pickup != null -> WoltActiveDelivery.Stage.TO_PICKUP
+            pickupEtaMin != null || pickup != null -> WoltActiveDelivery.Stage.TO_PICKUP
+            deliveryEtaMin != null || dropoffAddress != null || pickedUp.containsMatchIn(text) || delivery != null -> WoltActiveDelivery.Stage.TO_CUSTOMER
             else -> WoltActiveDelivery.Stage.UNKNOWN
         }
-        return WoltActiveDelivery(pickupMinuteOfDay = pickup, deliveryMinuteOfDay = delivery, venue = venue, stage = stage)
+        return WoltActiveDelivery(
+            pickupMinuteOfDay = pickup,
+            deliveryMinuteOfDay = delivery,
+            venue = venue,
+            stage = stage,
+            pickupAddress = pickupAddress,
+            dropoffAddress = dropoffAddress,
+            etaMinutes = pickupEtaMin ?: deliveryEtaMin
+        )
     }
 }
 

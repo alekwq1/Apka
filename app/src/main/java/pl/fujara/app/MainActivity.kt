@@ -829,6 +829,8 @@ private fun HomeScreen(
             }
         }
 
+        WorkShiftCard(language = language.code)
+
         TodayPerformanceCard(
             summary = todaySummary,
             goal = goal,
@@ -5215,6 +5217,8 @@ private fun SettingsScreen(
                         PyszneResultStore(context).clear()
                         OfferEventStore(context).clear()
                         WoltEarningsStore(context).clear()
+                        WoltOrderStore(context).clear()
+                        WorkSessionStore(context).clear()
                         PyszneDayAdjustmentsStore(context).clearAll()
                         backupManager.clearAutoBackups()
                         runCatching { backupManager.ensureDailyBackup() }

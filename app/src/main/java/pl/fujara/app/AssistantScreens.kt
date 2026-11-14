@@ -1,6 +1,7 @@
 package pl.fujara.app
 
 import android.Manifest
+import android.content.Intent
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -19,6 +20,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -219,6 +222,127 @@ internal fun AnalysisModeSelector(mode: Int, language: String, onSelected: (Int)
 }
 
 // ---------------------------------------------------------------------------------
+// CZAS PRACY (Start / Pauza / Stop)
+// ---------------------------------------------------------------------------------
+
+@Composable
+internal fun WorkShiftCard(language: String) {
+    val context = LocalContext.current
+    val store = remember { WorkSessionStore(context) }
+    var state by remember { mutableStateOf(store.state()) }
+    var minutes by remember { mutableStateOf(store.todayMinutes()) }
+    LaunchedEffect(state) {
+        while (true) {
+            minutes = store.todayMinutes()
+            delay(if (state == WorkState.RUNNING) 15_000 else 60_000)
+        }
+    }
+    val running = state == WorkState.RUNNING
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = if (running) greenC.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface)
+    ) {
+        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(at(language, "Czas pracy dziś", "Worked today", "Час роботи сьогодні", "Время работы сегодня"), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelLarge)
+                    Text(WorkAnalytics.formatHours(minutes), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
+                }
+                Pill(
+                    when (state) {
+                        WorkState.RUNNING -> at(language, "PRACUJĘ", "WORKING", "ПРАЦЮЮ", "РАБОТАЮ")
+                        WorkState.PAUSED -> at(language, "PAUZA", "PAUSED", "ПАУЗА", "ПАУЗА")
+                        WorkState.STOPPED -> at(language, "STOP", "STOPPED", "СТОП", "СТОП")
+                    },
+                    when (state) { WorkState.RUNNING -> greenC; WorkState.PAUSED -> yellowC; WorkState.STOPPED -> Color(0xFF8A8F9A) }
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (!running) {
+                    Button(onClick = { state = store.start(); minutes = store.todayMinutes() }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp), colors = ButtonDefaults.buttonColors(containerColor = greenC)) {
+                        Text(if (state == WorkState.PAUSED) at(language, "Wznów", "Resume", "Продовжити", "Продолжить") else at(language, "Start", "Start", "Старт", "Старт"), fontWeight = FontWeight.Black)
+                    }
+                } else {
+                    Button(onClick = { state = store.pause(); minutes = store.todayMinutes() }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp), colors = ButtonDefaults.buttonColors(containerColor = yellowC)) {
+                        Text(at(language, "Pauza", "Pause", "Пауза", "Пауза"), fontWeight = FontWeight.Black)
+                    }
+                }
+                if (state != WorkState.STOPPED) {
+                    OutlinedButton(onClick = { state = store.stop(); minutes = store.todayMinutes() }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp)) {
+                        Text(at(language, "Stop", "Stop", "Стоп", "Стоп"), fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+            Text(
+                at(language, "Godzinówka z realnego czasu pracy: Analiza → Decyzje.", "Real hourly rate: Analysis → Decisions.", "Реальна погодинна: Аналіз → Рішення.", "Реальная почасовая: Анализ → Решения."),
+                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall
+            )
+        }
+    }
+}
+
+@Composable
+private fun HourlyReportCard(language: String, from: LocalDate, to: LocalDate, events: List<OfferEvent>, refresh: Int) {
+    val context = LocalContext.current
+    val workStore = remember { WorkSessionStore(context) }
+    val logStore = remember { PyszneLogStore(context) }
+    val woltOrders = remember { WoltOrderStore(context) }
+    val report = remember(refresh, from, to, events) {
+        val pyszne = logStore.all().filter { !it.cancelled }.groupBy { it.date }.mapValues { (_, list) -> list.sumOf { it.amountPln } }
+        HourlyReportCalculator.build(
+            from = from, to = to, segments = workStore.segments(), nowMillis = System.currentTimeMillis(),
+            pyszneByDate = pyszne, woltOfficialByDate = woltOrders.dayTotals(), events = events
+        )
+    }
+    AssistantCard(title = at(language, "Godzinówka (czas pracy Start/Stop)", "Hourly rate (Start/Stop time)", "Погодинна (Старт/Стоп)", "Почасовая (Старт/Стоп)")) {
+        if (report.workedMinutes < 10) {
+            Text(
+                at(language, "Brak zarejestrowanego czasu pracy w tym okresie. Klikaj Start / Pauza / Stop na ekranie Start.", "No recorded work time in this period. Use Start / Pause / Stop on the Home screen.", "Немає часу роботи. Натискай Старт / Пауза / Стоп.", "Нет времени работы. Нажимай Старт / Пауза / Стоп."),
+                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium
+            )
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                MiniMetric(Modifier.weight(1f), at(language, "Czas pracy", "Worked", "Час", "Время"), WorkAnalytics.formatHours(report.workedMinutes))
+                MiniMetric(Modifier.weight(1f), at(language, "Przychód brutto", "Gross income", "Дохід", "Доход"), money0(report.totalGrossPln), greenC)
+                MiniMetric(Modifier.weight(1f), at(language, "PLN/h realnie", "Real PLN/h", "PLN/год", "PLN/ч"), rateH(report.grossPerHour), inkC)
+            }
+            Text(
+                at(
+                    language,
+                    "Pyszne ${money0(report.pyszneGrossPln)} · Wolt ${money0(report.woltGrossPln)}${if (report.woltIsOfficial) "" else " (szacunek z ofert)"}${if (report.otherGrossPln > 0) " · inne ${money0(report.otherGrossPln)}" else ""} · ofert/h: ${report.offersPerHour?.let { String.format(plLocale, "%.1f", it) } ?: "—"} · przyjętych/h: ${report.acceptedPerHour?.let { String.format(plLocale, "%.1f", it) } ?: "—"}",
+                    "Pyszne ${money0(report.pyszneGrossPln)} · Wolt ${money0(report.woltGrossPln)}${if (report.woltIsOfficial) "" else " (offer estimate)"}${if (report.otherGrossPln > 0) " · other ${money0(report.otherGrossPln)}" else ""} · offers/h: ${report.offersPerHour?.let { String.format(plLocale, "%.1f", it) } ?: "—"} · accepted/h: ${report.acceptedPerHour?.let { String.format(plLocale, "%.1f", it) } ?: "—"}",
+                    "Pyszne ${money0(report.pyszneGrossPln)} · Wolt ${money0(report.woltGrossPln)}",
+                    "Pyszne ${money0(report.pyszneGrossPln)} · Wolt ${money0(report.woltGrossPln)}"
+                ),
+                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+}
+
+private fun exportDecisionsCsv(context: android.content.Context, events: List<OfferEvent>, language: String) {
+    val sb = StringBuilder("data;godzina;platforma;decyzja;zrodlo;kwota_pln;netto_pln;km;min;pln_h;pln_km;status;restauracja;odbior;dostawa;w_trakcie\n")
+    events.sortedBy { it.shownAtMillis }.forEach { e ->
+        fun q(v: String?): String = (v ?: "").replace(";", ",").replace("\n", " ")
+        sb.append(e.date).append(';').append(clockOf(e.shownAtMillis)).append(';').append(platformName(e.platform)).append(';')
+            .append(e.decision.key).append(';').append(e.decisionSource.key).append(';')
+            .append(String.format(Locale.ROOT, "%.2f", e.amountPln)).append(';').append(String.format(Locale.ROOT, "%.2f", e.netPln)).append(';')
+            .append(String.format(Locale.ROOT, "%.1f", e.distanceKm)).append(';').append(e.durationMinutes ?: "").append(';')
+            .append(e.netPerHour?.let { String.format(Locale.ROOT, "%.1f", it) } ?: "").append(';')
+            .append(e.netPerKm?.let { String.format(Locale.ROOT, "%.2f", it) } ?: "").append(';')
+            .append(e.status.name).append(';').append(q(e.restaurant)).append(';').append(q(e.pickupAddress)).append(';').append(q(e.dropoffAddress)).append(';')
+            .append(if (e.duringActiveJob) 1 else 0).append('\n')
+    }
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_SUBJECT, "FUJARA – decyzje ${LocalDate.now()}")
+        putExtra(Intent.EXTRA_TEXT, sb.toString())
+    }
+    runCatching { context.startActivity(Intent.createChooser(intent, at(language, "Eksport CSV", "Export CSV", "Експорт CSV", "Экспорт CSV")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+}
+
+// ---------------------------------------------------------------------------------
 // DECYZJE
 // ---------------------------------------------------------------------------------
 
@@ -245,8 +369,16 @@ internal fun DecisionsAnalysisSection(language: String) {
     val events = remember(all, rangeIndex) { DecisionAnalytics.between(all, from, today) }
     val stats = remember(events) { DecisionAnalytics.stats(events) }
     var platformFilter by remember { mutableStateOf<CourierPlatform?>(null) }
+    var decisionFilter by remember { mutableStateOf<OfferDecision?>(null) }
     val filtered = remember(events, platformFilter) { platformFilter?.let { p -> events.filter { it.platform == p } } ?: events }
     val filteredStats = remember(filtered) { DecisionAnalytics.stats(filtered) }
+    val listed = remember(filtered, decisionFilter) {
+        when (decisionFilter) {
+            null -> filtered
+            OfferDecision.REJECTED -> filtered.filter { it.decision == OfferDecision.REJECTED || it.decision == OfferDecision.EXPIRED }
+            else -> filtered.filter { it.decision == decisionFilter }
+        }
+    }
 
     ChipRow(
         items = listOf(
@@ -291,6 +423,8 @@ internal fun DecisionsAnalysisSection(language: String) {
             }
         }
     }
+
+    HourlyReportCard(language = language, from = if (rangeIndex == 3) (all.minOfOrNull { it.date } ?: today) else from, to = today, events = filtered, refresh = refresh)
 
     // Platform filter
     val platforms = remember(events) { DecisionAnalytics.byPlatform(events) }
@@ -408,14 +542,44 @@ internal fun DecisionsAnalysisSection(language: String) {
         }
     }
 
-    // Recent list
-    AssistantCard(title = at(language, "Ostatnie oferty", "Recent offers", "Останні пропозиції", "Последние предложения")) {
-        filtered.sortedByDescending { it.shownAtMillis }.take(25).forEach { event ->
+    // Raport odrzuconych: ile, kiedy, za ile
+    val rejectedAll = remember(filtered) { filtered.filter { it.decision == OfferDecision.REJECTED || it.decision == OfferDecision.EXPIRED } }
+    if (rejectedAll.isNotEmpty()) {
+        AssistantCard(title = at(language, "Raport odrzuconych", "Declined report", "Звіт відхилених", "Отчёт отклонённых")) {
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                MiniMetric(Modifier.weight(1f), at(language, "Odrzucone + wygasłe", "Declined + expired", "Відхилені", "Отклонённые"), "${rejectedAll.size}", redC)
+                MiniMetric(Modifier.weight(1f), at(language, "Suma kwot", "Total amount", "Сума", "Сумма"), money0(rejectedAll.sumOf { it.amountPln }))
+                MiniMetric(Modifier.weight(1f), at(language, "Śr. PLN/h", "Avg PLN/h", "Сер. PLN/год", "Ср. PLN/ч"), rateH(rejectedAll.mapNotNull { it.netPerHour }.takeIf { it.isNotEmpty() }?.average()))
+            }
+            val byDay = rejectedAll.groupBy { it.date }.toSortedMap(compareByDescending { it })
+            byDay.entries.take(10).forEach { (day, list) ->
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    Text(shortDate(day), modifier = Modifier.width(56.dp), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                    Text(
+                        at(language, "${list.size} szt. · ${money0(list.sumOf { it.amountPln })} · godz. ${list.map { it.hourOfDay }.distinct().sorted().joinToString(",")}", "${list.size} pcs · ${money0(list.sumOf { it.amountPln })} · hours ${list.map { it.hourOfDay }.distinct().sorted().joinToString(",")}", "${list.size} · ${money0(list.sumOf { it.amountPln })}", "${list.size} · ${money0(list.sumOf { it.amountPln })}"),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        }
+    }
+
+    // Lista ofert z filtrem decyzji + eksport
+    AssistantCard(title = at(language, "Lista ofert", "Offer list", "Список пропозицій", "Список предложений")) {
+        ChipRow(
+            items = listOf(
+                at(language, "Wszystkie", "All", "Усі", "Все") to (decisionFilter == null),
+                "✓ " + at(language, "Przyjęte", "Accepted", "Прийняті", "Принятые") to (decisionFilter == OfferDecision.ACCEPTED),
+                "✗ " + at(language, "Odrzucone", "Declined", "Відхилені", "Отклонённые") to (decisionFilter == OfferDecision.REJECTED)
+            ),
+            onClick = { decisionFilter = when (it) { 1 -> OfferDecision.ACCEPTED; 2 -> OfferDecision.REJECTED; else -> null } }
+        )
+        listed.sortedByDescending { it.shownAtMillis }.take(40).forEach { event ->
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Box(Modifier.size(10.dp).clip(RoundedCornerShape(99.dp)).background(statusColor(event.status)))
                 Column(Modifier.weight(1f)) {
                     Text(
-                        "${clockOf(event.shownAtMillis)} · ${platformName(event.platform)}" + (event.restaurant?.let { " · $it" } ?: ""),
+                        "${shortDate(event.date)} ${clockOf(event.shownAtMillis)} · ${platformName(event.platform)}" + (event.restaurant?.let { " · $it" } ?: ""),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1
@@ -431,6 +595,9 @@ internal fun DecisionsAnalysisSection(language: String) {
                 Pill(decisionLabel(event.decision, language), decisionColor(event.decision))
             }
         }
+        OutlinedButton(onClick = { exportDecisionsCsv(context, listed, language) }, shape = RoundedCornerShape(14.dp)) {
+            Text(at(language, "Eksportuj CSV (${listed.size})", "Export CSV (${listed.size})", "Експорт CSV (${listed.size})", "Экспорт CSV (${listed.size})"))
+        }
     }
 }
 
@@ -443,6 +610,7 @@ internal fun WoltAnalysisSection(language: String) {
     val context = LocalContext.current
     val eventStore = remember { OfferEventStore(context) }
     val earningsStore = remember { WoltEarningsStore(context) }
+    val orderStore = remember { WoltOrderStore(context) }
     var refresh by remember { mutableStateOf(0) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -456,6 +624,9 @@ internal fun WoltAnalysisSection(language: String) {
     val summary = remember(events, snapshots, date) { WoltDaySummaryCalculator.calculate(date, events, earningsStore) }
     val daySnapshots = remember(snapshots, date) { snapshots.filter { it.date == date } }
     val dayAccepted = remember(events, date) { events.filter { it.date == date && it.decision == OfferDecision.ACCEPTED }.sortedBy { it.shownAtMillis } }
+    val officialTotal = remember(refresh, date) { orderStore.dayTotal(date) }
+    val officialOrders = remember(refresh, date) { orderStore.ordersForDate(date) }
+    val officialTotals = remember(refresh) { orderStore.dayTotals() }
 
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         TextButton(onClick = { date = date.minusDays(1) }) { Text("‹", style = MaterialTheme.typography.headlineSmall) }
@@ -469,7 +640,7 @@ internal fun WoltAnalysisSection(language: String) {
         TextButton(onClick = { date = date.plusDays(1) }, enabled = date < LocalDate.now()) { Text("›", style = MaterialTheme.typography.headlineSmall) }
     }
 
-    if (summary.acceptedOrders == 0 && daySnapshots.isEmpty() && summary.shownOffers == 0) {
+    if (summary.acceptedOrders == 0 && daySnapshots.isEmpty() && summary.shownOffers == 0 && officialTotal == null && officialOrders.isEmpty()) {
         AssistantCard(title = at(language, "Brak danych Wolt tego dnia", "No Wolt data this day", "Немає даних Wolt", "Нет данных Wolt")) {
             Text(
                 at(
@@ -495,6 +666,33 @@ internal fun WoltAnalysisSection(language: String) {
                 MiniMetric(Modifier.weight(1f), at(language, "Po kosztach", "Net", "Після витрат", "После расходов"), money0(summary.estimatedNetPln), greenC)
                 MiniMetric(Modifier.weight(1f), "PLN/h", rateH(summary.netPerHour), Color.White, supporting = "${summary.estimatedMinutes} min")
             }
+        }
+    }
+
+    if (officialTotal != null || officialOrders.isNotEmpty()) {
+        AssistantCard(title = at(language, "Oficjalnie z Wolt (Zarobki brutto → dzień)", "Official from Wolt (gross → day)", "Офіційно з Wolt", "Официально из Wolt")) {
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                MiniMetric(Modifier.weight(1f), at(language, "Suma dnia wg Wolt", "Day total per Wolt", "Сума дня", "Сумма дня"), officialTotal?.let { money(it) } ?: money(officialOrders.sumOf { it.grossPln }), greenC)
+                MiniMetric(Modifier.weight(1f), at(language, "Zlecenia", "Orders", "Замовлення", "Заказы"), "${officialOrders.size}", supporting = officialOrders.mapNotNull { it.distanceKm }.sum().takeIf { it > 0 }?.let { String.format(plLocale, "%.1f km", it) })
+                MiniMetric(Modifier.weight(1f), at(language, "Różnica vs szacunek", "Diff vs estimate", "Різниця", "Разница"), officialTotal?.let { String.format(plLocale, "%+.2f zł", it - summary.estimatedGrossPln) } ?: "—")
+            }
+            if (officialOrders.isNotEmpty()) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                officialOrders.sortedByDescending { it.minuteOfDay }.forEach { order ->
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(DecisionAnalytics.minuteOfDayLabel(order.minuteOfDay), modifier = Modifier.width(48.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                        Column(Modifier.weight(1f)) {
+                            Text(order.venue + (if (order.stops > 1) " · ${order.stops}×" else ""), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, maxLines = 1)
+                            order.distanceKm?.let { Text(String.format(plLocale, "%.2f km · %.2f zł/km", it, order.grossPln / it), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
+                        }
+                        Text(money(order.grossPln), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Black)
+                    }
+                }
+            }
+            Text(
+                at(language, "Otwieraj w Wolt: Zarobki brutto → Podsumowanie dzienne → dzień. FUJARA zapisze sumy dni i pojedyncze zlecenia.", "Open in Wolt: Gross earnings → Daily summary → day. FUJARA stores day totals and single orders.", "Відкривай у Wolt: Заробіток → Підсумок дня.", "Открывай в Wolt: Заработок → Сводка дня."),
+                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall
+            )
         }
     }
 
@@ -551,14 +749,14 @@ internal fun WoltAnalysisSection(language: String) {
     }
 
     // 7-day series
-    val week = remember(events, date) {
+    val week = remember(events, date, officialTotals) {
         (6 downTo 0).map { back ->
             val d = date.minusDays(back.toLong())
-            d to events.filter { it.date == d && it.decision == OfferDecision.ACCEPTED }.sumOf { it.amountPln }
+            d to (officialTotals[d] ?: events.filter { it.date == d && it.decision == OfferDecision.ACCEPTED }.sumOf { it.amountPln })
         }
     }
     if (week.any { it.second > 0.0 }) {
-        AssistantCard(title = at(language, "Ostatnie 7 dni (szacunek)", "Last 7 days (estimate)", "Останні 7 днів", "Последние 7 дней")) {
+        AssistantCard(title = at(language, "Ostatnie 7 dni (oficjalne lub szacunek)", "Last 7 days (official or estimate)", "Останні 7 днів", "Последние 7 дней")) {
             PairedBarChart(
                 labels = week.map { shortDate(it.first) },
                 totals = week.map { it.second.toInt() },
@@ -687,9 +885,23 @@ internal fun AssistantSettingsSection(prefs: AppPrefs, language: String) {
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
+        var voiceConfirmRequired by remember { mutableStateOf(prefs.voiceRejectRequireConfirmation) }
+        AssistantSwitch(at(language, "Pytaj o potwierdzenie (domyślnie: hasło = odrzucenie od razu)", "Ask for confirmation (default: keyword declines immediately)", "Питати підтвердження", "Спрашивать подтверждение"), voiceConfirmRequired) {
+            voiceConfirmRequired = it; prefs.voiceRejectRequireConfirmation = it
+        }
         AssistantSwitch(at(language, "Pytaj głosem (TTS)", "Ask aloud (TTS)", "Питати голосом", "Спрашивать голосом"), voiceSpeak) {
             voiceSpeak = it; prefs.voiceRejectSpeakPrompt = it
         }
+        Text(
+            at(
+                language,
+                "Radio: systemowy rozpoznawacz mowy Androida przejmuje mikrofon i tzw. audio focus, więc na czas nasłuchu odtwarzacz/radio jest wyciszane lub pauzowane – tego nie da się wyłączyć z poziomu aplikacji. Nasłuch trwa tylko, gdy widać kartę oferty, więc przerwa jest krótka. Pełne nasłuchiwanie w tle bez przerywania muzyki wymagałoby własnego silnika słów-kluczy (offline), to osobna, większa funkcja.",
+                "Radio: Android's system speech recognizer takes the mic and audio focus, so media is ducked/paused while listening – apps cannot turn this off. Listening runs only while an offer card is visible, so the interruption is short.",
+                "Радіо: системний розпізнавач бере аудіофокус, тому музика ставиться на паузу під час прослуховування.",
+                "Радио: системный распознаватель берёт аудиофокус, поэтому музыка ставится на паузу во время прослушивания."
+            ),
+            color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall
+        )
         if (!micGranted) {
             Text(at(language, "Brak zgody na mikrofon.", "Microphone permission missing.", "Немає дозволу на мікрофон.", "Нет разрешения на микрофон."), color = redC, style = MaterialTheme.typography.labelMedium)
         }
@@ -731,6 +943,20 @@ internal fun AssistantSettingsSection(prefs: AppPrefs, language: String) {
                 )
             }
         }
+        var mapTiles by remember { mutableStateOf(prefs.mapTilesEnabled) }
+        AssistantSwitch(at(language, "Mini-mapa w panelu z podkładem OpenStreetMap", "Mini-map in panel with OpenStreetMap tiles", "Міні-мапа з OSM", "Мини-карта с OSM"), mapTiles) {
+            mapTiles = it; prefs.mapTilesEnabled = it
+        }
+        Text(
+            at(
+                language,
+                "Przy nowej ofercie panel pokazuje duży werdykt PO DRODZE / MAŁY OBJAZD / W PRZECIWNĄ STRONĘ (objazd w km liczony względem WSZYSTKICH aktywnych zleceń – Pyszne i Wolt naraz) oraz mapę: niebieski = Ty, pomarańczowe A/B = odbiór/dostawa bieżącego, zielone 1/2 = odbiór/dostawa nowej oferty.",
+                "On a new offer the panel shows a big ON THE WAY / SMALL DETOUR / WRONG DIRECTION verdict (detour km vs ALL active jobs – Pyszne and Wolt together) plus a map: blue = you, orange A/B = current pickup/drop, green 1/2 = new pickup/drop.",
+                "Панель показує великий вердикт ПО ДОРОЗІ / ОБ'ЇЗД / ПРОТИЛЕЖНИЙ БІК та мапу.",
+                "Панель показывает крупный вердикт ПО ПУТИ / ОБЪЕЗД / В ДРУГУЮ СТОРОНУ и карту."
+            ),
+            color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall
+        )
         OutlinedTextField(
             value = cityHint,
             onValueChange = { cityHint = it; prefs.routeCityHint = it },
@@ -792,6 +1018,7 @@ internal fun AssistantSettingsSection(prefs: AppPrefs, language: String) {
                 OutlinedButton(onClick = {
                     OfferEventStore(context).clear()
                     WoltEarningsStore(context).clear()
+                    WoltOrderStore(context).clear()
                     confirmClear = false
                     Toast.makeText(context, at(language, "Usunięto", "Deleted", "Видалено", "Удалено"), Toast.LENGTH_SHORT).show()
                 }, shape = RoundedCornerShape(14.dp)) { Text(at(language, "Tak, usuń", "Yes, delete", "Так, видалити", "Да, удалить")) }

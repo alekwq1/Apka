@@ -221,6 +221,8 @@ class AppPrefs(private val context: Context) {
             // Wolt ma przycisk "Odrzuć" w prawym gornym rogu – panel schodzi nizej.
             CourierPlatform.WOLT -> 118
             CourierPlatform.STUART -> 112
+            // Pyszne: "X Odrzuć" w lewym gornym rogu – panel na calej szerokosci go zaslanial.
+            CourierPlatform.PYSZNE -> 112
             else -> 58
         }
         return getInt(key, default).coerceIn(0, 1400)
@@ -243,6 +245,16 @@ class AppPrefs(private val context: Context) {
         prefs.all.keys.filter { it.startsWith("overlay_top_dp_") || it.startsWith("overlay_side_") }.forEach(editor::remove)
         editor.apply()
     }
+
+    /** Mini-mapa w panelu z podkladem OpenStreetMap (wymaga internetu). */
+    var mapTilesEnabled: Boolean
+        get() = prefs.getBoolean("map_tiles_enabled", true)
+        set(value) = prefs.edit().putBoolean("map_tiles_enabled", value).apply()
+
+    /** Odrzucanie glosem bez pytania o potwierdzenie (haslo = odrzucenie). */
+    var voiceRejectRequireConfirmation: Boolean
+        get() = prefs.getBoolean("voice_reject_require_confirmation", false)
+        set(value) = prefs.edit().putBoolean("voice_reject_require_confirmation", value).apply()
 
     /** Pokazuj w panelu licznik dzisiejszych decyzji (✓ / ✗). */
     var showDecisionCounter: Boolean

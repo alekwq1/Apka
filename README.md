@@ -1,12 +1,12 @@
-# FUJARA 1.1.0
+# FUJARA 1.2.0
 
 Android app for local courier-offer profitability analysis.
 
 ## Google Play readiness
 - applicationId / namespace: `pl.fujara.app`
 - targetSdk / compileSdk: 36
-- versionCode: 42
-- versionName: 1.1.0
+- versionCode: 43
+- versionName: 1.2.0
 - signed AAB workflow: `.github/workflows/build-play-aab.yml`
 - debug APK workflow: `.github/workflows/test-apk.yml`
 - privacy page: `docs/privacy.html`
@@ -16,6 +16,10 @@ Android app for local courier-offer profitability analysis.
 
 For the Play rejection dated 16.10.2026, start with `NAPRAWA-GOOGLE-PLAY-2026-10-16.md`.
 
+
+## 1.2.0 — mapa, Wolt na serio, czas pracy
+
+Szczegóły: `CHANGES-1.2.0.md`. Duży werdykt PO DRODZE / OBJAZD / W PRZECIWNĄ STRONĘ + mini-mapa w panelu (ja, bieżące A/B, nowa 1/2) liczony względem wszystkich aktywnych zleceń (Pyszne i Wolt naraz); oficjalne kwoty Wolt z „Zarobki brutto” (sumy dni + zlecenia); Start/Pauza/Stop i realna godzinówka; raport odrzuconych + CSV; głos bez potwierdzenia.
 
 ## 1.1.0 — asystent decyzji
 

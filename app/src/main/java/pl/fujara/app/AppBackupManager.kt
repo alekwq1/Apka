@@ -25,7 +25,7 @@ class AppBackupManager(private val context: Context) {
     fun exportJson(): String {
         val root = JSONObject()
             .put("format", "fujara-backup")
-            .put("formatVersion", 2)
+            .put("formatVersion", 3)
             .put("createdAtMillis", System.currentTimeMillis())
 
         val stores = JSONObject()
@@ -37,6 +37,8 @@ class AppBackupManager(private val context: Context) {
         // 1.1: zbior decyzji i snapshoty Wolt (pliki JSONL w filesDir).
         root.put("offerEvents", OfferEventStore(context).exportJsonArray())
         root.put("woltEarnings", WoltEarningsStore(context).exportJsonArray())
+        root.put("woltHistory", WoltOrderStore(context).exportJson())
+        root.put("workSegments", WorkSessionStore(context).exportJsonArray())
         return root.toString(2)
     }
 
@@ -50,6 +52,8 @@ class AppBackupManager(private val context: Context) {
         }
         root.optJSONArray("offerEvents")?.let { OfferEventStore(context).importJsonArray(it) }
         root.optJSONArray("woltEarnings")?.let { WoltEarningsStore(context).importJsonArray(it) }
+        root.optJSONObject("woltHistory")?.let { WoltOrderStore(context).importJson(it) }
+        root.optJSONArray("workSegments")?.let { WorkSessionStore(context).importJsonArray(it) }
     }
 
     /** Jeden automatyczny snapshot na dzien. Trzymamy maksymalnie 14 ostatnich. */

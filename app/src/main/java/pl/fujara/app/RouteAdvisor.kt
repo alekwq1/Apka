@@ -17,45 +17,20 @@ import java.net.URLEncoder
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
-import kotlin.math.atan2
-import kotlin.math.cos
 import kotlin.math.roundToInt
-import kotlin.math.sin
-import kotlin.math.sqrt
 
-data class GeoPoint(val lat: Double, val lon: Double)
-
-data class RouteLeg(
-    val distanceKm: Double,
-    val minutes: Int,
-    /** Opoznienie z powodu ruchu (tylko dostawcy z danymi o ruchu, np. TomTom). */
-    val trafficDelayMinutes: Int?,
-    val provider: String
-)
-
-/** Wynik analizy trasy dla nowej oferty. */
+/** Wynik analizy trasy dla nowej oferty (1.2: analiza przestrzenna + punkty do mapy). */
 data class RouteAdvice(
-    /** Z aktualnej pozycji do odbioru nowej oferty. */
+    /** Z aktualnej pozycji do odbioru nowej oferty (OSRM/TomTom – minuty z ruchem, gdy klucz). */
     val toPickup: RouteLeg?,
-    /** Z odbioru do klienta nowej oferty (gdy znamy oba adresy). */
-    val pickupToDrop: RouteLeg?,
-    /** Z miejsca zakonczenia biezacego zlecenia do nowego odbioru. */
-    val fromCurrentJobEnd: RouteLeg?,
-    val pickupPoint: GeoPoint?,
+    /** Po drodze / maly objazd / w przeciwna strone – wzgledem wszystkich aktywnych zlecen. */
+    val spatial: SpatialVerdict?,
+    /** Punkty do mini-mapy: ja, odbior/dostawa biezacych, odbior/dostawa nowej. */
+    val points: List<MapPoint>,
     val computedAtMillis: Long
 ) {
     val hasAnything: Boolean
-        get() = toPickup != null || pickupToDrop != null || fromCurrentJobEnd != null
-}
-
-enum class RouteProfile(val key: String, val osrm: String, val tomtom: String, val avgKmh: Double) {
-    CAR("car", "driving", "car", 28.0),
-    SCOOTER("scooter", "driving", "motorcycle", 26.0),
-    BIKE("bike", "cycling", "bicycle", 15.0);
-
-    companion object {
-        fun fromKey(key: String?): RouteProfile = entries.firstOrNull { it.key == key } ?: CAR
-    }
+        get() = toPickup != null || spatial != null || points.size >= 2
 }
 
 /**
@@ -131,13 +106,17 @@ class RouteAdvisor(private val context: Context, private val prefs: AppPrefs) {
     /**
      * Liczy porade dla oferty. Wynik przychodzi asynchronicznie przez [onResult] na watku
      * glownym; dla tej samej sygnatury zwraca od razu wartosc z cache.
+     *
+     * Kolejnosc: geokodowanie (system → Nominatim) → analiza przestrzenna po prostej
+     * (natychmiast, bez API tras) → opcjonalnie czas dojazdu z OSRM/TomTom.
      */
     fun advise(
         signature: String,
         restaurant: String?,
         pickupAddress: String?,
         dropoffAddress: String?,
-        activeJob: ActiveJob?,
+        activeJobs: List<ActiveJob>,
+        language: String,
         onResult: (RouteAdvice) -> Unit
     ): RouteAdvice? {
         if (!enabled) return null
@@ -149,18 +128,35 @@ class RouteAdvisor(private val context: Context, private val prefs: AppPrefs) {
         executor.execute {
             val advice = runCatching {
                 val cityHint = prefs.routeCityHint.trim()
-                val pickupPoint = geocodeFirst(listOfNotNull(pickupAddress, restaurant), origin, cityHint)
-                val dropPoint = dropoffAddress?.let { geocodeFirst(listOf(it), origin, cityHint) }
-                val jobEndPoint = activeJob?.let { job ->
-                    val target = if (job.stage == ActiveJob.Stage.TO_PICKUP) job.dropoffAddress ?: job.pickupAddress else job.dropoffAddress
-                    target?.let { geocodeFirst(listOf(it), origin, cityHint) }
+                val newPickup = geocodeFirst(listOfNotNull(pickupAddress, restaurant), origin, cityHint)
+                val newDrop = dropoffAddress?.let { geocodeFirst(listOf(it), origin, cityHint) }
+
+                val points = mutableListOf<MapPoint>()
+                origin?.let { points += MapPoint(it, tr(language, "Ja", "Me", "Я", "Я"), MapPoint.Kind.ME) }
+                val activePoints = mutableListOf<GeoPoint>()
+                activeJobs.forEach { job ->
+                    job.remainingAddresses().forEach { (address, isPickup) ->
+                        geocodeFirst(listOf(address), origin, cityHint)?.let { pt ->
+                            activePoints += pt
+                            val tag = platformShort(job.platform)
+                            points += MapPoint(
+                                pt,
+                                if (isPickup) "$tag ${tr(language, "odbiór", "pickup", "забір", "забор")}" else "$tag ${tr(language, "dostawa", "drop", "доставка", "доставка")}",
+                                if (isPickup) MapPoint.Kind.ACTIVE_PICKUP else MapPoint.Kind.ACTIVE_DROP
+                            )
+                        }
+                    }
                 }
+                newPickup?.let { points += MapPoint(it, tr(language, "NOWY odbiór", "NEW pickup", "НОВИЙ забір", "НОВЫЙ забор"), MapPoint.Kind.NEW_PICKUP) }
+                newDrop?.let { points += MapPoint(it, tr(language, "NOWA dostawa", "NEW drop", "НОВА доставка", "НОВАЯ доставка"), MapPoint.Kind.NEW_DROP) }
+
+                val spatial = newPickup?.let { SpatialAdvisor.evaluate(origin, activePoints, it, newDrop, language) }
+                val toPickup = if (origin != null && newPickup != null) route(origin, newPickup, profile) else null
 
                 RouteAdvice(
-                    toPickup = if (origin != null && pickupPoint != null) route(origin, pickupPoint, profile) else null,
-                    pickupToDrop = if (pickupPoint != null && dropPoint != null) route(pickupPoint, dropPoint, profile) else null,
-                    fromCurrentJobEnd = if (jobEndPoint != null && pickupPoint != null) route(jobEndPoint, pickupPoint, profile) else null,
-                    pickupPoint = pickupPoint,
+                    toPickup = toPickup,
+                    spatial = spatial,
+                    points = points,
                     computedAtMillis = System.currentTimeMillis()
                 )
             }.getOrNull()
@@ -172,6 +168,18 @@ class RouteAdvisor(private val context: Context, private val prefs: AppPrefs) {
             }
         }
         return null
+    }
+
+    private fun tr(language: String, pl: String, en: String, uk: String, ru: String): String = Companion.tr(language, pl, en, uk, ru)
+
+    private fun platformShort(platform: CourierPlatform): String = when (platform) {
+        CourierPlatform.PYSZNE -> "Pyszne"
+        CourierPlatform.WOLT -> "Wolt"
+        CourierPlatform.STUART -> "Stuart"
+        CourierPlatform.UBER -> "Uber"
+        CourierPlatform.GLOVO -> "Glovo"
+        CourierPlatform.BOLT -> "Bolt"
+        CourierPlatform.GLOBAL -> ""
     }
 
     fun shutdown() {
@@ -293,27 +301,21 @@ class RouteAdvisor(private val context: Context, private val prefs: AppPrefs) {
     }
 
     companion object {
-        private const val USER_AGENT = "FUJARA/1.1 (Android courier assistant; local use)"
+        const val USER_AGENT = "FUJARA/1.1 (Android courier assistant; local use)"
         /** OSRM liczy czas bez ruchu; w miescie realny czas jest zwykle ~25% dluzszy. */
         private const val OSRM_CITY_FACTOR = 1.25
 
-        fun haversineKm(a: GeoPoint, b: GeoPoint): Double {
-            val r = 6371.0
-            val dLat = Math.toRadians(b.lat - a.lat)
-            val dLon = Math.toRadians(b.lon - a.lon)
-            val h = sin(dLat / 2) * sin(dLat / 2) + cos(Math.toRadians(a.lat)) * cos(Math.toRadians(b.lat)) * sin(dLon / 2) * sin(dLon / 2)
-            return 2 * r * atan2(sqrt(h), sqrt(1 - h))
-        }
+        fun haversineKm(a: GeoPoint, b: GeoPoint): Double = Geo.haversineKm(a, b)
 
         fun describe(advice: RouteAdvice, language: String): String {
-            fun leg(prefix: String, leg: RouteLeg): String {
-                val traffic = leg.trafficDelayMinutes?.takeIf { it >= 2 }?.let { " (+$it ${tr(language, "ruch", "traffic", "рух", "трафик")})" }.orEmpty()
-                return "$prefix ${String.format(Locale.forLanguageTag("pl-PL"), "%.1f", leg.distanceKm)} km · ${leg.minutes} min$traffic"
-            }
             val parts = buildList {
-                advice.toPickup?.let { add(leg(tr(language, "do odbioru", "to pickup", "до забору", "до забора"), it)) }
-                advice.fromCurrentJobEnd?.let { add(leg(tr(language, "po bieżącym", "after current", "після поточного", "после текущего"), it)) }
-                advice.pickupToDrop?.let { add(leg(tr(language, "do klienta", "to customer", "до клієнта", "до клиента"), it)) }
+                advice.toPickup?.let { leg ->
+                    val traffic = leg.trafficDelayMinutes?.takeIf { it >= 2 }?.let { " (+$it ${tr(language, "ruch", "traffic", "рух", "трафик")})" }.orEmpty()
+                    add("${tr(language, "do odbioru", "to pickup", "до забору", "до забора")} ${String.format(Locale.forLanguageTag("pl-PL"), "%.1f", leg.distanceKm)} km · ${leg.minutes} min$traffic")
+                }
+                advice.spatial?.fromActiveEndKm?.let { km ->
+                    add("${tr(language, "od końca bieżącego", "from current end", "від кінця поточного", "от конца текущего")} ${String.format(Locale.forLanguageTag("pl-PL"), "%.1f", km)} km")
+                }
             }
             return parts.joinToString("  •  ")
         }
