@@ -128,7 +128,9 @@ class DecisionTracker(
         val duringActiveJob: Boolean,
         val blacklisted: Boolean,
         var visible: Boolean = true,
-        var vanishedAtMillis: Long? = null
+        var vanishedAtMillis: Long? = null,
+        var extraPickups: List<String> = emptyList(),
+        var extraDropoffs: List<String> = emptyList()
     )
 
     private var pending: Pending? = null

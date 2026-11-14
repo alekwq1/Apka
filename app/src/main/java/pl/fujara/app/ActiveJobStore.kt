@@ -31,13 +31,20 @@ class ActiveJobStore(context: Context) {
                     .put("lastSeen", j.lastSeenAtMillis)
                     .put("eta", j.etaMinutes ?: JSONObject.NULL)
                     .put("pickedUpAt", j.pickedUpAtMillis ?: JSONObject.NULL)
+                    .put("confirmed", j.confirmed)
+                    .put("extraPickups", JSONArray(j.extraPickups))
+                    .put("extraDropoffs", JSONArray(j.extraDropoffs))
             )
         }
-        prefs.edit().putString("jobs", array.toString()).apply()
+        prefs.edit().putString("jobs_v3", array.toString()).apply()
+    }
+
+    fun clear() {
+        prefs.edit().clear().apply()
     }
 
     fun load(): List<ActiveJob> {
-        val raw = prefs.getString("jobs", null) ?: return emptyList()
+        val raw = prefs.getString("jobs_v3", null) ?: return emptyList()
         val array = runCatching { JSONArray(raw) }.getOrNull() ?: return emptyList()
         val out = mutableListOf<ActiveJob>()
         for (i in 0 until array.length()) {
@@ -58,7 +65,10 @@ class ActiveJobStore(context: Context) {
                     stage = runCatching { ActiveJob.Stage.valueOf(o.optString("stage")) }.getOrDefault(ActiveJob.Stage.TO_PICKUP),
                     lastSeenAtMillis = o.optLong("lastSeen", o.getLong("acceptedAt")),
                     etaMinutes = if (o.isNull("eta")) null else o.optInt("eta"),
-                    pickedUpAtMillis = if (o.isNull("pickedUpAt")) null else o.optLong("pickedUpAt")
+                    pickedUpAtMillis = if (o.isNull("pickedUpAt")) null else o.optLong("pickedUpAt"),
+                    confirmed = o.optBoolean("confirmed", false),
+                    extraPickups = o.optJSONArray("extraPickups")?.let { a -> (0 until a.length()).map { a.optString(it) } }.orEmpty(),
+                    extraDropoffs = o.optJSONArray("extraDropoffs")?.let { a -> (0 until a.length()).map { a.optString(it) } }.orEmpty()
                 ).let(out::add)
             }
         }

@@ -113,8 +113,8 @@ class RouteAdvisor(private val context: Context, private val prefs: AppPrefs) {
     fun advise(
         signature: String,
         restaurant: String?,
-        pickupAddress: String?,
-        dropoffAddress: String?,
+        pickups: List<String>,
+        drops: List<String>,
         activeJobs: List<ActiveJob>,
         language: String,
         onResult: (RouteAdvice) -> Unit
@@ -128,30 +128,45 @@ class RouteAdvisor(private val context: Context, private val prefs: AppPrefs) {
         executor.execute {
             val advice = runCatching {
                 val cityHint = prefs.routeCityHint.trim()
-                val newPickup = geocodeFirst(listOfNotNull(pickupAddress, restaurant), origin, cityHint)
-                val newDrop = dropoffAddress?.let { geocodeFirst(listOf(it), origin, cityHint) }
+                val anchor = origin ?: cityCenter(cityHint)
+                fun geo(query: String): GeoPoint? = geocodeFirst(listOf(query), origin, cityHint)?.takeIf { sane(it, anchor) }
+
+                // Adres ma pierwszenstwo; sama nazwa lokalu tylko gdy adresu brak.
+                val pickupQueries = pickups.ifEmpty { listOfNotNull(restaurant) }
+                val newPickups = pickupQueries.mapNotNull { q -> geo(q) }
+                val newDrops = drops.mapNotNull { q -> geo(q) }
 
                 val points = mutableListOf<MapPoint>()
                 origin?.let { points += MapPoint(it, tr(language, "Ja", "Me", "Я", "Я"), MapPoint.Kind.ME) }
                 val activePoints = mutableListOf<GeoPoint>()
                 activeJobs.forEach { job ->
+                    var pickupNo = 0
+                    var dropNo = 0
                     job.remainingAddresses().forEach { (address, isPickup) ->
-                        geocodeFirst(listOf(address), origin, cityHint)?.let { pt ->
+                        geo(address)?.let { pt ->
                             activePoints += pt
                             val tag = platformShort(job.platform)
-                            points += MapPoint(
-                                pt,
-                                if (isPickup) "$tag ${tr(language, "odbiór", "pickup", "забір", "забор")}" else "$tag ${tr(language, "dostawa", "drop", "доставка", "доставка")}",
-                                if (isPickup) MapPoint.Kind.ACTIVE_PICKUP else MapPoint.Kind.ACTIVE_DROP
-                            )
+                            val label = if (isPickup) {
+                                pickupNo++
+                                "$tag ${tr(language, "odbiór", "pickup", "забір", "забор")}" + if (pickupNo > 1) " $pickupNo" else ""
+                            } else {
+                                dropNo++
+                                "$tag ${tr(language, "dostawa", "drop", "доставка", "доставка")}" + if (dropNo > 1) " $dropNo" else ""
+                            }
+                            points += MapPoint(pt, label, if (isPickup) MapPoint.Kind.ACTIVE_PICKUP else MapPoint.Kind.ACTIVE_DROP)
                         }
                     }
                 }
-                newPickup?.let { points += MapPoint(it, tr(language, "NOWY odbiór", "NEW pickup", "НОВИЙ забір", "НОВЫЙ забор"), MapPoint.Kind.NEW_PICKUP) }
-                newDrop?.let { points += MapPoint(it, tr(language, "NOWA dostawa", "NEW drop", "НОВА доставка", "НОВАЯ доставка"), MapPoint.Kind.NEW_DROP) }
+                newPickups.forEachIndexed { i, pt ->
+                    points += MapPoint(pt, tr(language, "NOWY odbiór", "NEW pickup", "НОВИЙ забір", "НОВЫЙ забор") + if (newPickups.size > 1) " ${i + 1}" else "", MapPoint.Kind.NEW_PICKUP)
+                }
+                newDrops.forEachIndexed { i, pt ->
+                    points += MapPoint(pt, tr(language, "NOWA dostawa", "NEW drop", "НОВА доставка", "НОВАЯ доставка") + if (newDrops.size > 1) " ${i + 1}" else "", MapPoint.Kind.NEW_DROP)
+                }
 
-                val spatial = newPickup?.let { SpatialAdvisor.evaluate(origin, activePoints, it, newDrop, language) }
-                val toPickup = if (origin != null && newPickup != null) route(origin, newPickup, profile) else null
+                val newLeg = newPickups + newDrops
+                val spatial = if (newPickups.isNotEmpty()) SpatialAdvisor.evaluateLeg(origin, activePoints, newLeg, language) else null
+                val toPickup = if (origin != null && newPickups.isNotEmpty()) route(origin, newPickups.first(), profile) else null
 
                 RouteAdvice(
                     toPickup = toPickup,
@@ -168,6 +183,21 @@ class RouteAdvisor(private val context: Context, private val prefs: AppPrefs) {
             }
         }
         return null
+    }
+
+    /** Odrzucamy punkty dalej niz 40 km od pozycji / miasta – to blad geokodowania. */
+    private fun sane(point: GeoPoint, anchor: GeoPoint?): Boolean = anchor == null || Geo.haversineKm(point, anchor) <= 40.0
+
+    private fun cityCenter(city: String): GeoPoint? = when (VoiceKeywordMatcher.normalize(city)) {
+        "gdansk" -> GeoPoint(54.352, 18.646)
+        "gdynia" -> GeoPoint(54.518, 18.531)
+        "sopot" -> GeoPoint(54.441, 18.560)
+        "warszawa" -> GeoPoint(52.230, 21.011)
+        "krakow" -> GeoPoint(50.062, 19.937)
+        "wroclaw" -> GeoPoint(51.108, 17.039)
+        "poznan" -> GeoPoint(52.406, 16.925)
+        "lodz" -> GeoPoint(51.759, 19.457)
+        else -> null
     }
 
     private fun tr(language: String, pl: String, en: String, uk: String, ru: String): String = Companion.tr(language, pl, en, uk, ru)

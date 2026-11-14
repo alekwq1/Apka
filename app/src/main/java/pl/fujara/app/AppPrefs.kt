@@ -178,7 +178,7 @@ class AppPrefs(private val context: Context) {
         set(value) = prefs.edit().putBoolean("wolt_tracking_enabled", value).apply()
 
     var voiceRejectEnabled: Boolean
-        get() = prefs.getBoolean("voice_reject_enabled", false)
+        get() = prefs.getBoolean("voice_reject_enabled", true)
         set(value) = prefs.edit().putBoolean("voice_reject_enabled", value).apply()
 
     /** Haslo uruchamiajace odrzucenie, np. "odrzuć". */
@@ -197,7 +197,7 @@ class AppPrefs(private val context: Context) {
         set(value) = prefs.edit().putBoolean("voice_reject_speak", value).apply()
 
     var routesEnabled: Boolean
-        get() = prefs.getBoolean("routes_enabled", false)
+        get() = prefs.getBoolean("routes_enabled", true)
         set(value) = prefs.edit().putBoolean("routes_enabled", value).apply()
 
     var routeProfile: String
@@ -206,7 +206,7 @@ class AppPrefs(private val context: Context) {
 
     /** Miasto dopisywane do adresow przy geokodowaniu, np. "Gdańsk". */
     var routeCityHint: String
-        get() = prefs.getString("route_city_hint", "") ?: ""
+        get() = prefs.getString("route_city_hint", "Gdańsk")?.ifBlank { "Gdańsk" } ?: "Gdańsk"
         set(value) = prefs.edit().putString("route_city_hint", value.trim()).apply()
 
     /** Opcjonalny klucz TomTom (trasa z ruchem). Bez klucza: OSRM bez ruchu. */
@@ -245,6 +245,21 @@ class AppPrefs(private val context: Context) {
         prefs.all.keys.filter { it.startsWith("overlay_top_dp_") || it.startsWith("overlay_side_") }.forEach(editor::remove)
         editor.apply()
     }
+
+    /** Znacznik czasu prosby o wyczyszczenie aktywnych zlecen (z ustawien). */
+    var activeJobsResetRequestedAt: Long
+        get() = prefs.getLong("active_jobs_reset_at", 0L)
+        set(value) = prefs.edit().putLong("active_jobs_reset_at", value).apply()
+
+    /** Pokazuj mini-mape w panelu oferty. */
+    var showMiniMap: Boolean
+        get() = prefs.getBoolean("show_mini_map", true)
+        set(value) = prefs.edit().putBoolean("show_mini_map", value).apply()
+
+    /** Czy aplikacja juz raz poprosila o mikrofon i lokalizacje przy starcie. */
+    var assistantPermissionsAsked: Int
+        get() = prefs.getInt("assistant_permissions_asked", 0)
+        set(value) = prefs.edit().putInt("assistant_permissions_asked", value).apply()
 
     /** Mini-mapa w panelu z podkladem OpenStreetMap (wymaga internetu). */
     var mapTilesEnabled: Boolean

@@ -8,3 +8,6 @@ local.properties
 keystore.properties
 upload-key*.txt
 *.base64.txt
+
+# Staly, publiczny klucz debug (nie upload!) – patrz app/build.gradle.kts
+!signing/fujara-debug.p12

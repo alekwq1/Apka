@@ -171,15 +171,13 @@ class MiniMapView(context: Context) : View(context) {
             }
             canvas.drawPath(path, activeLine)
         }
-        val newPickup = points.firstOrNull { it.kind == MapPoint.Kind.NEW_PICKUP }
-        val newDrop = points.firstOrNull { it.kind == MapPoint.Kind.NEW_DROP }
-        if (newPickup != null) {
+        val newPoints = points.filter { it.kind == MapPoint.Kind.NEW_PICKUP } + points.filter { it.kind == MapPoint.Kind.NEW_DROP }
+        if (newPoints.isNotEmpty()) {
             val path = Path()
-            val (sx, sy) = toScreen((me ?: newPickup).point)
+            val start = me ?: newPoints.first()
+            val (sx, sy) = toScreen(start.point)
             path.moveTo(sx, sy)
-            val (px, py) = toScreen(newPickup.point)
-            path.lineTo(px, py)
-            newDrop?.let { val (dx, dy) = toScreen(it.point); path.lineTo(dx, dy) }
+            newPoints.forEach { mp -> val (x, y) = toScreen(mp.point); path.lineTo(x, y) }
             canvas.drawPath(path, newLine)
         }
 

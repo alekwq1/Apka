@@ -31,8 +31,9 @@ data class WoltOrder(
     val acceptedAtMillis: Long? = null,
     val deliveredAtMillis: Long? = null
 ) {
+    /** Data + minuta + kwota: nazwa lokalu bywa rozne odczytana (OCR / dostepnosc), wiec nie wchodzi do klucza. */
     val key: String
-        get() = "${date}|$minuteOfDay|${venue.lowercase(Locale.ROOT)}|${String.format(Locale.ROOT, "%.2f", grossPln)}"
+        get() = "$source|${date}|$minuteOfDay|${String.format(Locale.ROOT, "%.2f", grossPln)}"
 
     /** Klucz do laczenia wpisu "live" z oficjalnym: ta sama data, kwota i podobny lokal. */
     val matchKey: String
@@ -69,34 +70,73 @@ object WoltHistoryParser {
         return "$whole.${match.groupValues[2]}".toDoubleOrNull()
     }
 
-    /** "Podsumowanie dzienne": pary data → kwota. */
+    /**
+     * "Podsumowanie dzienne": pary data → kwota.
+     *
+     * BLAD 1.3: w drzewie dostepnosci Wolt kwota wiersza moze byc PRZED data
+     * ("62,44 zł / 14.11.2026 / 243,28 zł / 13.11.2026"). Parowanie "data, potem kwota"
+     * przesuwalo kwoty o jeden dzien (14.11 = 243,28 zł). Teraz sprawdzamy oba uklady
+     * i wybieramy ten, ktory zgadza sie z suma "Zrealizowane zamówienia" / "Następna wypłata".
+     * Gdy nie da sie tego potwierdzic, zapisujemy tylko pary z tej samej linii.
+     */
     fun parseDailySummary(text: String): List<WoltDayTotal> {
         if (!isDailySummaryScreen(text)) return emptyList()
         val lines = text.lines().map { it.trim() }.filter { it.isNotBlank() }
         val startIndex = lines.indexOfFirst { Regex("""(?i)podsumowanie\s+dzienne|daily\s+summary""").containsMatchIn(it) }.coerceAtLeast(0)
-        val out = mutableListOf<WoltDayTotal>()
-        var pendingDate: LocalDate? = null
-        for (line in lines.drop(startIndex)) {
-            val dateMatch = dottedDate.find(line)
-            if (dateMatch != null) {
-                pendingDate = runCatching {
-                    LocalDate.of(dateMatch.groupValues[3].toInt(), dateMatch.groupValues[2].toInt(), dateMatch.groupValues[1].toInt())
-                }.getOrNull()
-                // kwota moze byc w tej samej linii
-                val sameLine = amount.find(line.substring(dateMatch.range.last + 1))
-                if (sameLine != null && pendingDate != null) {
-                    money(sameLine)?.let { out += WoltDayTotal(pendingDate!!, it) }
-                    pendingDate = null
-                }
-                continue
+
+        data class Tok(val date: LocalDate?, val amount: Double?, val line: Int)
+        val tokens = mutableListOf<Tok>()
+        val sameLine = mutableListOf<WoltDayTotal>()
+        lines.drop(startIndex + 1).forEachIndexed { idx, line ->
+            val d = dottedDate.find(line)?.let { m ->
+                runCatching { LocalDate.of(m.groupValues[3].toInt(), m.groupValues[2].toInt(), m.groupValues[1].toInt()) }.getOrNull()
             }
-            if (pendingDate != null) {
-                val m = amount.find(line) ?: continue
-                money(m)?.let { out += WoltDayTotal(pendingDate!!, it) }
-                pendingDate = null
-            }
+            val a = amount.find(line)?.let(::money)
+            if (d != null && a != null) sameLine += WoltDayTotal(d, a)
+            if (d != null) tokens += Tok(d, null, idx)
+            if (a != null) tokens += Tok(null, a, idx)
         }
-        return out.distinctBy { it.date }
+        if (sameLine.isNotEmpty() && sameLine.size == tokens.count { it.date != null }) return sameLine.distinctBy { it.date }
+
+        val dates = tokens.filter { it.date != null }
+        val amounts = tokens.filter { it.amount != null }
+        fun pairAfter(): List<WoltDayTotal> = dates.mapNotNull { d ->
+            val nextDate = dates.firstOrNull { it.line > d.line }?.line ?: Int.MAX_VALUE
+            amounts.firstOrNull { it.line >= d.line && it.line < nextDate }?.let { WoltDayTotal(d.date!!, it.amount!!) }
+        }
+        fun pairBefore(): List<WoltDayTotal> = dates.mapNotNull { d ->
+            val prevDate = dates.lastOrNull { it.line < d.line }?.line ?: Int.MIN_VALUE
+            amounts.lastOrNull { it.line <= d.line && it.line > prevDate }?.let { WoltDayTotal(d.date!!, it.amount!!) }
+        }
+        val after = pairAfter().distinctBy { it.date }
+        val before = pairBefore().distinctBy { it.date }
+
+        val periodTotal = periodTotal(text)
+        fun matches(list: List<WoltDayTotal>) =
+            list.size == dates.size && periodTotal != null && kotlin.math.abs(list.sumOf { it.grossPln } - periodTotal) < 0.06
+        return when {
+            matches(after) && !matches(before) -> after
+            matches(before) && !matches(after) -> before
+            matches(after) && matches(before) -> if (tokens.firstOrNull()?.date != null) after else before
+            // Brak sumy kontrolnej: ufamy tylko jednoznacznemu ukladowi (pierwszy token wyznacza kolejnosc).
+            periodTotal == null && tokens.firstOrNull()?.date != null && after.size == dates.size -> after
+            periodTotal == null && tokens.firstOrNull()?.amount != null && before.size == dates.size -> before
+            else -> emptyList()
+        }
+    }
+
+    /** Suma okresu: "Zrealizowane zamówienia 625,10 zł" albo "Następna wypłata … 625,10 zł". */
+    fun periodTotal(text: String): Double? {
+        val lines = text.lines().map { it.trim() }.filter { it.isNotBlank() }
+        val summaryIdx = lines.indexOfFirst { Regex("""(?i)^podsumowanie$|^summary$""").matches(it) }
+        if (summaryIdx >= 0) {
+            lines.drop(summaryIdx + 1).take(4).firstNotNullOfOrNull { amount.find(it)?.let(::money) }?.let { return it }
+        }
+        val payoutIdx = lines.indexOfFirst { Regex("""(?i)nast[eę]pna\s+wyp[lł]ata|next\s+payout""").containsMatchIn(it) }
+        if (payoutIdx >= 0) {
+            lines.drop(payoutIdx).take(3).firstNotNullOfOrNull { amount.find(it)?.let(::money) }?.let { return it }
+        }
+        return null
     }
 
     /** Ekran jednego dnia: naglowek z data i suma oraz lista zlecen. */
@@ -119,43 +159,42 @@ object WoltHistoryParser {
         var km: Double? = null
         var stops = 1
         fun flush(amountPln: Double) {
-            val v = venue ?: return
+            val v = venue?.replace(bundle, "")?.replace(Regex("""\s+"""), " ")?.trim()?.takeIf { it.isNotBlank() } ?: return
             val m = minute ?: return
             orders += WoltOrder(date, m, v, amountPln, km, stops)
             venue = null; minute = null; km = null; stops = 1
         }
+        fun addVenueText(text: String) {
+            bundle.find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()?.let { stops = it }
+            val clean = text.replace(bundle, "").trim()
+            if (clean.isBlank()) return
+            // Nazwa lokalu potrafi zajac dwie linie ("SMASHYNSKI, SMASHYNSKI - smash" / "burgers").
+            venue = if (venue == null) clean else "$venue $clean"
+        }
         for (raw in body) {
             val line = raw.trim()
-            timeOnly.find(line)?.let { t ->
+            if (timeOnly.matches(line)) {
+                val t = timeOnly.find(line)!!
                 minute = t.groupValues[1].toInt() * 60 + t.groupValues[2].toInt()
+                continue
             }
-            if (timeOnly.matches(line)) continue
-            // "Lokal 17:12" w jednej linii
             val trailingTime = Regex("""^(.*\S)\s+(\d{1,2}):(\d{2})$""").find(line)
-            if (trailingTime != null && !paymentLine.containsMatchIn(line)) {
-                venue = trailingTime.groupValues[1]
+            if (trailingTime != null && !paymentLine.containsMatchIn(line) && amount.find(line) == null) {
+                addVenueText(trailingTime.groupValues[1])
                 minute = trailingTime.groupValues[2].toInt() * 60 + trailingTime.groupValues[3].toInt()
-                stops = bundle.find(venue!!)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1
-                venue = venue!!.replace(bundle, "").trim()
                 continue
             }
             if (paymentLine.containsMatchIn(line) || distance.containsMatchIn(line)) {
-                km = distance.find(line)?.groupValues?.getOrNull(1)?.replace(',', '.')?.toDoubleOrNull()
+                km = distance.find(line)?.groupValues?.getOrNull(1)?.replace(',', '.')?.toDoubleOrNull() ?: km
                 amount.find(line)?.let(::money)?.let { flush(it) }
                 continue
             }
             val m = amount.find(line)
-            if (m != null && venue != null && minute != null) {
-                money(m)?.let { flush(it) }
+            if (m != null) {
+                if (venue != null && minute != null) money(m)?.let { flush(it) }
                 continue
             }
-            if (m == null && line.length in 2..80 && !line.startsWith("(")) {
-                // Kolejny lokal.
-                venue = line.replace(bundle, "").trim()
-                stops = bundle.find(line)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1
-            } else if (line.startsWith("(") && venue != null) {
-                bundle.find(line)?.groupValues?.getOrNull(1)?.toIntOrNull()?.let { stops = it }
-            }
+            if (line.length in 1..80) addVenueText(line)
         }
         return WoltDayDetails(date, total, orders.distinctBy { it.key })
     }
@@ -163,6 +202,7 @@ object WoltHistoryParser {
 
 /** Oficjalne kwoty Wolt (sumy dni + zlecenia) – JSONL w filesDir. */
 class WoltOrderStore(context: Context) {
+    private val migrationPrefs = context.getSharedPreferences("fujara_wolt_migrations", Context.MODE_PRIVATE)
     private val ordersFile = File(context.filesDir, ORDERS_FILE)
     private val totalsFile = File(context.filesDir, TOTALS_FILE)
     private val lock = Any()
@@ -173,16 +213,39 @@ class WoltOrderStore(context: Context) {
     fun saveOrders(orders: List<WoltOrder>): Int {
         synchronized(lock) {
             val list = loadOrdersLocked()
-            val known = list.map { it.key }.toMutableSet()
-            var added = 0
+            var changed = 0
             orders.forEach { order ->
-                if (known.add(order.key)) {
+                val idx = list.indexOfFirst { it.key == order.key }
+                if (idx < 0) {
                     list += order
-                    added++
-                    runCatching { ordersFile.appendText(encodeOrder(order).toString() + "\n") }
+                    changed++
+                } else {
+                    val better = richer(list[idx], order)
+                    if (better != list[idx]) {
+                        list[idx] = better
+                        changed++
+                    }
                 }
             }
-            return added
+            if (changed > 0) rewriteOrdersLocked(list)
+            return changed
+        }
+    }
+
+    /** Z dwoch odczytow tego samego zlecenia bierzemy pelniejszy (dystans, dluzsza nazwa, pomiar czasu). */
+    private fun richer(a: WoltOrder, b: WoltOrder): WoltOrder = a.copy(
+        venue = if (b.venue.length > a.venue.length) b.venue else a.venue,
+        distanceKm = a.distanceKm ?: b.distanceKm,
+        stops = maxOf(a.stops, b.stops),
+        durationMinutes = a.durationMinutes ?: b.durationMinutes,
+        acceptedAtMillis = a.acceptedAtMillis ?: b.acceptedAtMillis,
+        deliveredAtMillis = a.deliveredAtMillis ?: b.deliveredAtMillis
+    )
+
+    private fun rewriteOrdersLocked(list: List<WoltOrder>) {
+        ordersCache = list.toMutableList()
+        runCatching {
+            ordersFile.bufferedWriter().use { w -> list.forEach { w.write(encodeOrder(it).toString()); w.newLine() } }
         }
     }
 
@@ -253,12 +316,25 @@ class WoltOrderStore(context: Context) {
                 if (line.isNotBlank()) runCatching { JSONObject(line) }.getOrNull()?.let(::decodeOrder)?.let(list::add)
             }
         }
-        ordersCache = list
-        return list
+        // Deduplikacja starych wpisow (1.3 zapisywal ten sam kurs kilka razy z roznie odczytana nazwa).
+        val deduped = mutableListOf<WoltOrder>()
+        list.forEach { o ->
+            val idx = deduped.indexOfFirst { it.key == o.key }
+            if (idx < 0) deduped += o else deduped[idx] = richer(deduped[idx], o)
+        }
+        ordersCache = deduped
+        if (deduped.size != list.size) rewriteOrdersLocked(deduped)
+        return deduped
     }
 
     private fun loadTotalsLocked(): MutableMap<LocalDate, Double> {
         totalsCache?.let { return it }
+        // Migracja 1.4: sumy dni zapisane przez 1.3 mogly byc przesuniete o jeden dzien – kasujemy je;
+        // odtworza sie po ponownym otwarciu Wolt → Zarobki brutto.
+        if (!migrationPrefs.getBoolean("totals_v2", false)) {
+            runCatching { totalsFile.delete() }
+            migrationPrefs.edit().putBoolean("totals_v2", true).apply()
+        }
         val map = mutableMapOf<LocalDate, Double>()
         if (totalsFile.exists()) runCatching {
             totalsFile.forEachLine { line ->

@@ -22,12 +22,14 @@ object ScreenClassifier {
     private val scheduleMarker = Regex("""(?i)(?:odbierz|dostarcz|pickup|deliver)\w*\s+(?:na|by|at|do)\s+\d{1,2}[:.]\d{2}""")
     private val etaMarker = Regex("""(?i)(?:odbi[oó]r|dostawa|pickup|delivery)\s+(?:za|in)\s+-?\d{1,3}\s*min""")
     private val historyMarker = Regex("""(?i)szczeg[oó][lł]y\s+zlecenia|order\s+details|zlecenie\s+dostarczone|zlecenie\s+anulowane|czas\s+aktywno[sś]ci""")
-    private val inProgressMarker = Regex("""(?i)zako[nń]cz\s+odbi[oó]r|dostarcz\s+zam[oó]wienie|odbi[oó]r\s+z(?!\p{L})|dostawa\s+do(?!\p{L})|zam[oó]wienie\s+dostarczone|w\s+drodze|rozpocznij\s+odbi[oó]r|zad[zź]wo[nń]\s+do\s+klienta""")
+    private val inProgressMarker = Regex("""(?im)zako[nń]cz\s+odbi[oó]r|dostarcz\s+zam[oó]wienie|^odbi[oó]r\s+z$|^dostawa\s+do$|zam[oó]wienie\s+dostarczone|odbierz\s+zam[oó]wieni[ea]|zad[zź]wo[nń]\s+do\s+klienta|problemy\s+z\s+dostaw""")
     private val offerOnlyMarker = Regex("""(?i)spodziewany\s+zarobek|szac\.?\s*zarobki|szacowany\s+zarobek|expected\s+earnings""")
 
     private val pickupSchedule = Regex("""(?i)odbierz\s+na\s+\d{1,2}[:.]\d{2}""")
     private val deliverySchedule = Regex("""(?i)dostarcz\s+na\s+\d{1,2}[:.]\d{2}""")
     private val rejectMarker = Regex("""(?i)(?<!\p{L})odrzu[cć](?!\p{L})""")
+    private val standaloneReject = Regex("""(?im)^\s*(?:[x×✕]\s*)?odrzu[cć]\s*$""")
+    private val rejectConfirmDialog = Regex("""(?i)na\s+pewno\s+chcesz\s+odrzuci[cć]|stracisz\s+zarobki""")
     private val pyszneOfferMarker = Regex("""(?i)dostawa\s+do\s+klienta|przystank|odbi[oó]r\s*:""")
 
     fun classify(text: String): ScreenKind {
@@ -39,10 +41,14 @@ object ScreenClassifier {
         // karty bez przycisku "Zaakceptuj" nie moze tworzyc widmowego aktywnego zlecenia.
         if (pickupSchedule.containsMatchIn(text) && deliverySchedule.containsMatchIn(text)) return ScreenKind.OFFER_CARD
         if (rejectMarker.containsMatchIn(text) && pyszneOfferMarker.containsMatchIn(text)) return ScreenKind.OFFER_CARD
-        val activeSignal = scheduleMarker.containsMatchIn(text) || etaMarker.containsMatchIn(text) || inProgressMarker.containsMatchIn(text)
-        if (activeSignal && (navigateMarker.containsMatchIn(text) || etaMarker.containsMatchIn(text) || inProgressMarker.containsMatchIn(text))) {
-            return ScreenKind.ACTIVE_JOB
-        }
+        // Samodzielny przycisk "Odrzuć" (nie "Odrzuć dostawę") jest tylko na karcie NOWEJ oferty
+        // (Wolt w prawym gornym rogu, Pyszne "X Odrzuć"). Ekran aktywnego zlecenia go nie ma.
+        if (standaloneReject.containsMatchIn(text)) return ScreenKind.OFFER_CARD
+        if (rejectConfirmDialog.containsMatchIn(text)) return ScreenKind.OFFER_CARD
+        // BLAD 1.3: dymek "Odbiór za 1 min" Wolt pokazuje tez przy PODGLADZIE oferty – sam w sobie
+        // nie oznacza aktywnego zlecenia. Wymagamy mocnego sygnalu.
+        val strongSchedule = scheduleMarker.containsMatchIn(text) && navigateMarker.containsMatchIn(text)
+        if (strongSchedule || inProgressMarker.containsMatchIn(text)) return ScreenKind.ACTIVE_JOB
         return ScreenKind.OTHER
     }
 }
@@ -187,7 +193,16 @@ data class ActiveJob(
     /** "Odbiór za 7 min" / "Dostawa za 24 min" z Wolt – ETA w minutach od [lastSeenAtMillis]. */
     val etaMinutes: Int? = null,
     /** Moment odebrania (klikniecie "Zakończ odbiór" / "Rozpocznij odbiór"). */
-    val pickedUpAtMillis: Long? = null
+    val pickedUpAtMillis: Long? = null,
+    /**
+     * Potwierdzone = zaakceptowane kliknieciem / decyzja albo widziane na ekranie aktywnego
+     * zlecenia co najmniej dwa razy w odstepie >= 3 s. Tylko potwierdzone sa pokazywane
+     * w panelu, na mapie i w ocenie "czy brac".
+     */
+    val confirmed: Boolean = true,
+    /** Kolejne odbiory / dostawy (paczki Wolt "2 dostaw(y) od"). */
+    val extraPickups: List<String> = emptyList(),
+    val extraDropoffs: List<String> = emptyList()
 ) {
     enum class Stage { TO_PICKUP, TO_CUSTOMER }
 
@@ -210,9 +225,17 @@ data class ActiveJob(
 
     /** Punkty, ktore jeszcze musze odwiedzic (adres, czyOdbior) w kolejnosci. */
     fun remainingAddresses(): List<Pair<String, Boolean>> = buildList {
-        if (stage == Stage.TO_PICKUP) (pickupAddress ?: restaurant)?.let { add(it to true) }
+        if (stage == Stage.TO_PICKUP) {
+            (pickupAddress ?: restaurant)?.let { add(it to true) }
+            extraPickups.forEach { add(it to true) }
+        }
         dropoffAddress?.let { add(it to false) }
+        extraDropoffs.forEach { add(it to false) }
     }
+
+    /** Czy wiadomo cokolwiek konkretnego o zleceniu (bez tego nie pokazujemy go jako aktywnego). */
+    val hasIdentity: Boolean
+        get() = !restaurant.isNullOrBlank() || !pickupAddress.isNullOrBlank() || !dropoffAddress.isNullOrBlank()
 
     val label: String
         get() = restaurant ?: pickupAddress ?: platform.key.replaceFirstChar { it.uppercase() }
@@ -224,6 +247,10 @@ class ActiveJobTracker(
     /** Po tylu minutach bez sygnalu zlecenie uznajemy za zakonczone. */
     private val staleAfterMs: Long = 35 * 60_000L
 ) {
+    companion object {
+        const val CONFIRM_AFTER_MS = 3_000L
+    }
+
     private val jobs = java.util.concurrent.ConcurrentHashMap<CourierPlatform, ActiveJob>()
 
     fun onAccepted(
@@ -233,7 +260,9 @@ class ActiveJobTracker(
         restaurant: String?,
         pickupAddress: String?,
         dropoffAddress: String?,
-        stops: Int
+        stops: Int,
+        extraPickups: List<String> = emptyList(),
+        extraDropoffs: List<String> = emptyList()
     ) {
         jobs[platform] = ActiveJob(
             platform = platform,
@@ -246,7 +275,10 @@ class ActiveJobTracker(
             estimatedMinutes = offer.durationMinutes,
             distanceKm = offer.distanceKm,
             amountPln = offer.amountPln,
-            stops = stops
+            stops = stops,
+            confirmed = true,
+            extraPickups = extraPickups,
+            extraDropoffs = extraDropoffs
         )
     }
 
@@ -282,7 +314,8 @@ class ActiveJobTracker(
                 amountPln = 0.0,
                 stage = if (pickedUp) ActiveJob.Stage.TO_CUSTOMER else ActiveJob.Stage.TO_PICKUP,
                 lastSeenAtMillis = nowMillis,
-                etaMinutes = etaMinutes
+                etaMinutes = etaMinutes,
+                confirmed = false
             )
             return
         }
@@ -294,7 +327,8 @@ class ActiveJobTracker(
             dropoffAddress = existing.dropoffAddress ?: dropoffAddress,
             stage = if (pickedUp) ActiveJob.Stage.TO_CUSTOMER else existing.stage,
             lastSeenAtMillis = nowMillis,
-            etaMinutes = etaMinutes ?: existing.etaMinutes
+            etaMinutes = etaMinutes ?: existing.etaMinutes,
+            confirmed = existing.confirmed || nowMillis - existing.acceptedAtMillis >= CONFIRM_AFTER_MS
         )
     }
 
@@ -320,14 +354,20 @@ class ActiveJobTracker(
             pickupMinuteOfDay = job.pickupMinuteOfDay ?: event.pickupMinuteOfDay,
             deliveryMinuteOfDay = job.deliveryMinuteOfDay ?: event.deliveryMinuteOfDay,
             stops = maxOf(job.stops, event.stops),
-            acceptedAtMillis = minOf(job.acceptedAtMillis, event.decidedAtMillis ?: job.acceptedAtMillis)
+            acceptedAtMillis = minOf(job.acceptedAtMillis, event.decidedAtMillis ?: job.acceptedAtMillis),
+            confirmed = true
         )
     }
 
     /** Przywrocenie po restarcie uslugi (znaczniki czasu zapisane trwale). */
     fun restore(saved: List<ActiveJob>, nowMillis: Long) {
-        saved.filter { nowMillis - it.lastSeenAtMillis <= staleAfterMs }.forEach { jobs[it.platform] = it }
+        saved.filter { it.confirmed && it.hasIdentity && nowMillis - it.lastSeenAtMillis <= staleAfterMs }.forEach { jobs[it.platform] = it }
     }
+
+    /** Zlecenia do pokazania kurierowi: tylko potwierdzone i z konkretnymi danymi. */
+    fun displayJobs(nowMillis: Long): List<ActiveJob> = activeJobs(nowMillis).filter { it.confirmed && it.hasIdentity }
+
+    fun hasJob(platform: CourierPlatform, nowMillis: Long): Boolean = activeJobs(nowMillis).any { it.platform == platform }
 
     fun snapshot(): List<ActiveJob> = jobs.values.toList()
 
@@ -399,8 +439,8 @@ object OfferFeasibilityCalculator {
                     "На межі: ~${clock(finish)}, забір ${clock(newPickup)} (${slack} хв)",
                     "Впритык: ~${clock(finish)}, забор ${clock(newPickup)} (${slack} мин)")
                 else -> tr(language,
-                    "Odbiór ${clock(newPickup)} wypada przed końcem bieżącego ~${clock(finish)} (${slack} min)",
-                    "Pickup ${clock(newPickup)} falls before current ends ~${clock(finish)} (${slack} min)",
+                    "Nie zdążysz na ${clock(newPickup)}: koniec bieżącego ~${clock(finish)} + dojazd $travel min (${slack} min)",
+                    "Won't make ${clock(newPickup)}: current ends ~${clock(finish)} + $travel min drive (${slack} min)",
                     "Забір ${clock(newPickup)} до кінця поточного ~${clock(finish)}",
                     "Забор ${clock(newPickup)} до конца текущего ~${clock(finish)}")
             }
@@ -492,10 +532,18 @@ object SpatialAdvisor {
         newPickup: GeoPoint,
         newDrop: GeoPoint?,
         language: String = "pl"
+    ): SpatialVerdict = evaluateLeg(me, activeRemaining, listOfNotNull(newPickup, newDrop), language)
+
+    /** Nowa oferta moze miec kilka odbiorow i kilka dostaw – [newLeg] to wszystkie w kolejnosci. */
+    fun evaluateLeg(
+        me: GeoPoint?,
+        activeRemaining: List<GeoPoint>,
+        newLeg: List<GeoPoint>,
+        language: String = "pl"
     ): SpatialVerdict {
+        val newPickup = newLeg.first()
         val start = me ?: activeRemaining.firstOrNull() ?: newPickup
         val base = pathKm(listOf(start) + activeRemaining)
-        val newLeg = listOfNotNull(newPickup, newDrop)
         val toNewPickup = me?.let { km(it, newPickup) }
         val fromActiveEnd = activeRemaining.lastOrNull()?.let { km(it, newPickup) }
 
@@ -513,7 +561,7 @@ object SpatialAdvisor {
             best = minOf(best, pathKm(seq))
         }
         val detour = (best - base).coerceAtLeast(0.0)
-        val newOwnKm = if (newLeg.size == 2) pathKm(newLeg) else 0.0
+        val newOwnKm = if (newLeg.size >= 2) pathKm(newLeg) else 0.0
         val extra = (detour - newOwnKm).coerceAtLeast(0.0)
         val verdict = when {
             extra <= 1.5 -> SpatialVerdict.Verdict.ON_THE_WAY

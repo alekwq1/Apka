@@ -1011,6 +1011,10 @@ internal fun AssistantSettingsSection(prefs: AppPrefs, language: String) {
         AssistantSwitch(at(language, "Po odrzuceniu głosem zamknij pozostały arkusz gestem", "After voice decline, swipe away leftover sheet", "Після відхилення закрити аркуш жестом", "После отказа закрыть лист жестом"), autoDismiss) {
             autoDismiss = it; prefs.autoDismissAfterReject = it
         }
+        var showMap by remember { mutableStateOf(prefs.showMiniMap) }
+        AssistantSwitch(at(language, "Pokazuj mini-mapę w panelu", "Show mini-map in panel", "Показувати міні-мапу", "Показывать мини-карту"), showMap) {
+            showMap = it; prefs.showMiniMap = it
+        }
         var mapTiles by remember { mutableStateOf(prefs.mapTilesEnabled) }
         AssistantSwitch(at(language, "Mini-mapa w panelu z podkładem OpenStreetMap", "Mini-map in panel with OpenStreetMap tiles", "Міні-мапа з OSM", "Мини-карта с OSM"), mapTiles) {
             mapTiles = it; prefs.mapTilesEnabled = it
@@ -1041,6 +1045,26 @@ internal fun AssistantSettingsSection(prefs: AppPrefs, language: String) {
         )
         if (!locationGranted) {
             Text(at(language, "Brak zgody na lokalizację.", "Location permission missing.", "Немає дозволу на локацію.", "Нет разрешения на геолокацию."), color = redC, style = MaterialTheme.typography.labelMedium)
+        }
+    }
+
+    AssistantCard(title = at(language, "Aktywne zlecenia", "Active jobs", "Активні замовлення", "Активные заказы")) {
+        Text(
+            at(
+                language,
+                "Panel pokazuje „W TRAKCIE” tylko dla zleceń potwierdzonych: przyjętych przyciskiem/głosem albo widzianych na ekranie aktywnej dostawy co najmniej 3 s. Jeśli mimo to coś zostało, wyczyść ręcznie.",
+                "The panel shows “IN PROGRESS” only for confirmed jobs (accepted by tap/voice or seen on the active-delivery screen for 3+ s). Clear manually if something is stuck.",
+                "Панель показує лише підтверджені замовлення.",
+                "Панель показывает только подтверждённые заказы."
+            ),
+            color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall
+        )
+        OutlinedButton(onClick = {
+            prefs.activeJobsResetRequestedAt = System.currentTimeMillis()
+            ActiveJobStore(context).clear()
+            Toast.makeText(context, at(language, "Wyczyszczono aktywne zlecenia", "Active jobs cleared", "Очищено", "Очищено"), Toast.LENGTH_SHORT).show()
+        }, shape = RoundedCornerShape(14.dp)) {
+            Text(at(language, "Wyczyść aktywne zlecenia", "Clear active jobs", "Очистити активні", "Очистить активные"))
         }
     }
 

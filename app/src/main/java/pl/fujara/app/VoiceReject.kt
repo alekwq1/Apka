@@ -317,6 +317,7 @@ object RejectActionPerformer {
     fun residualOfferSheetVisible(service: AccessibilityService, isDeliveryPackage: (String) -> Boolean): Boolean {
         val text = allDeliveryText(service, isDeliveryPackage)
         if (offerCardVisible(service, isDeliveryPackage)) return false
+        if (Regex("""(?i)na\s+pewno\s+chcesz|stracisz\s+zarobki""").containsMatchIn(text)) return false
         return Regex("""(?i)spodziewany\s+zarobek|dostaw\w*\s+od\b|odleg[lł]o[sś][cć]\s*\n?\s*\d""").containsMatchIn(text)
     }
 
@@ -331,9 +332,9 @@ object RejectActionPerformer {
     }
 
     /** Przesuniecie arkusza (swipe) – do rozwiniecia szczegolow oferty Wolt lub zamkniecia ogona. */
-    fun swipe(service: AccessibilityService, fromYFraction: Float, toYFraction: Float, durationMs: Long = 320L): Boolean {
+    fun swipe(service: AccessibilityService, fromYFraction: Float, toYFraction: Float, durationMs: Long = 320L, xFraction: Float = 0.5f): Boolean {
         val metrics = service.resources.displayMetrics
-        val x = metrics.widthPixels / 2f
+        val x = metrics.widthPixels * xFraction
         val path = Path().apply {
             moveTo(x, metrics.heightPixels * fromYFraction)
             lineTo(x, metrics.heightPixels * toYFraction)

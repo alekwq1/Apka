@@ -352,9 +352,36 @@ class MainActivity : ComponentActivity() {
         if (::prefs.isInitialized) {
             refreshSystemState()
             if (prefs.onboardingCompleted && serviceEnabled) {
+                val notificationDialogPending = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                    checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED &&
+                    !prefs.notificationPermissionRequested
                 requestNotificationPermissionIfNeeded()
+                // Jedno okno systemowe naraz: o mikrofon/lokalizacje pytamy przy kolejnym onResume.
+                if (!notificationDialogPending) requestAssistantPermissionsIfNeeded()
             }
         }
+    }
+
+    /**
+     * Glos (haslo "odrzuć") i trasy/mapa sa domyslnie wlaczone, wiec przy starcie prosimy
+     * o mikrofon i lokalizacje. Android sam przestaje pokazywac okno po 2 odmowach, a my
+     * pytamy maksymalnie 3 razy, zeby nie meczyc.
+     */
+    private fun requestAssistantPermissionsIfNeeded() {
+        val missing = buildList {
+            if (prefs.voiceRejectEnabled && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                add(Manifest.permission.RECORD_AUDIO)
+            }
+            if (prefs.routesEnabled && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
+                checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED
+            ) {
+                add(Manifest.permission.ACCESS_FINE_LOCATION)
+                add(Manifest.permission.ACCESS_COARSE_LOCATION)
+            }
+        }
+        if (missing.isEmpty() || prefs.assistantPermissionsAsked >= 3) return
+        prefs.assistantPermissionsAsked = prefs.assistantPermissionsAsked + 1
+        requestPermissions(missing.toTypedArray(), 7812)
     }
 
     private fun requestNotificationPermissionIfNeeded() {

@@ -79,12 +79,10 @@ object WoltActiveDeliveryParser {
     private val pickedUp = Regex("""(?i)(?<!\p{L})(?:dostarcz\s+do|dostawa\s+do|dostawa\s+za|w\s+drodze\s+do\s+klienta|deliver\s+to|odebrano|picked\s+up|zam[oó]wienie\s+dostarczone)(?!\p{L})""")
     private val venueAfterZ = Regex("""(?i)^z$""")
 
+    /** Tylko ekrany z mocnym sygnalem (dymek "Odbiór za N min" pojawia sie tez przy podgladzie oferty). */
     fun isActiveDeliveryScreen(text: String): Boolean {
         if (acceptMarker.containsMatchIn(text) || earningsMarker.containsMatchIn(text)) return false
-        val lines = text.lines().map { it.trim() }
-        return (navigate.containsMatchIn(text) && (pickupAt.containsMatchIn(text) || deliverAt.containsMatchIn(text))) ||
-            pickupEta.containsMatchIn(text) || deliveryEta.containsMatchIn(text) ||
-            lines.any { pickupFrom.matches(it) || deliverTo.matches(it) }
+        return ScreenClassifier.classify(text) == ScreenKind.ACTIVE_JOB
     }
 
     fun parse(text: String): WoltActiveDelivery? {
@@ -159,12 +157,51 @@ object WoltOfferDetailsParser {
     private val pickupLabel = Regex("""(?i)^(?:odbi[oó]r|odbi[oó]r\s+z|pickup|restauracja|lokal)\s*:?$""")
     private val dropLabel = Regex("""(?i)^(?:dostawa|dostawa\s+do|klient|delivery|drop-?off)\s*:?$""")
 
+    data class Stop(val name: String, val address: String, val isPickup: Boolean)
+
+    private val statusLine = Regex("""(?i)^(?:gotowe|ready|teraz|now|-?\d{1,3}\s*min|\d{1,2}|\d{1,2}:\d{2})$""")
+    private val customerName = Regex("""^\p{Lu}[\p{L}'\-]+(?:\s+\p{Lu}[\p{L}'\-]+)?\s+\p{Lu}\.?$""")
+
+    /**
+     * Rozwinieta karta Wolt: "Ramy czasowe" → lokal(e) z adresem, potem klienci z adresem
+     * ("Kamila D." / "Myśliwskie Wzgórze 8c, 80-283 Gdańsk"). Paczka moze miec kilka odbiorow
+     * i kilka dostaw. Klient = "Imie I." albo kazdy wpis po pierwszym, gdy nie da sie rozpoznac.
+     */
+    fun stopsFromTimeline(text: String): List<Stop> {
+        val lines = text.lines().map { it.trim() }.filter { it.isNotBlank() }
+        val start = lines.indexOfFirst { Regex("""(?i)^ramy\s+czasowe|^timeline|^trasa$""").containsMatchIn(it) }
+        if (start < 0) return emptyList()
+        val out = mutableListOf<Stop>()
+        var name: String? = null
+        for (line in lines.drop(start + 1)) {
+            if (Regex("""(?i)^(?:akceptuj|accept|odrzu[cć])$""").matches(line)) break
+            if (statusLine.matches(line)) continue
+            if (AddressLines.isAddress(line)) {
+                val n = name ?: continue
+                out += Stop(n, AddressLines.clean(line), isPickup = !customerName.matches(n))
+                name = null
+                continue
+            }
+            name = line.trimEnd('…').trim()
+        }
+        if (out.isNotEmpty() && out.none { it.isPickup }) out[0] = out[0].copy(isPickup = true)
+        if (out.size >= 2 && out.none { !it.isPickup }) {
+            // Nie rozpoznano klientow – pierwszy to odbior, reszta to dostawy.
+            for (i in 1 until out.size) out[i] = out[i].copy(isPickup = false)
+        }
+        return out
+    }
+
     /**
      * Adresy z rozwinietej karty oferty Wolt (po przesunieciu arkusza w gore).
      * Nie znamy dokladnego ukladu, wiec: etykiety Odbiór/Dostawa jesli sa, inaczej
      * pierwsza linia adresowa = odbior, druga = dostawa.
      */
     fun addresses(text: String): Pair<String?, String?> {
+        val timeline = stopsFromTimeline(text)
+        if (timeline.isNotEmpty()) {
+            return timeline.firstOrNull { it.isPickup }?.address to timeline.firstOrNull { !it.isPickup }?.address
+        }
         val lines = text.lines().map { it.trim() }.filter { it.isNotBlank() }
         var pickup: String? = null
         var drop: String? = null

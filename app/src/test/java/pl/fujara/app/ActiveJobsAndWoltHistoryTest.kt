@@ -45,6 +45,51 @@ class ActiveJobsAndWoltHistoryTest {
     """.trimIndent()
 
     @Test
+    fun `wolt daily summary when amount precedes date in accessibility tree`() {
+        // Uklad z drzewa dostepnosci: kwota wiersza PRZED data – 1.3 przypisal 243,28 zł do 14.11.
+        val text = "Zarobki brutto\nNASTĘPNA WYPŁATA PO 15 LIS\n625,10 zł\nPodsumowanie\nZrealizowane zamówienia\n625,10 zł\nPodsumowanie dzienne\n62,44 zł\n14.11.2026\n243,28 zł\n13.11.2026\n319,38 zł\n11.11.2026"
+        val totals = WoltHistoryParser.parseDailySummary(text).associate { it.date to it.grossPln }
+        assertEquals(62.44, totals[LocalDate.of(2026, 11, 14)]!!, 0.001)
+        assertEquals(243.28, totals[LocalDate.of(2026, 11, 13)]!!, 0.001)
+        assertEquals(319.38, totals[LocalDate.of(2026, 11, 11)]!!, 0.001)
+        // Ten sam ekran w ukladzie "data, kwota" tez daje poprawny wynik.
+        val normal = WoltHistoryParser.parseDailySummary(woltDailySummary).associate { it.date to it.grossPln }
+        assertEquals(26.78, normal[LocalDate.of(2026, 11, 14)]!!, 0.001)
+    }
+
+    @Test
+    fun `wolt day details with venue split across lines`() {
+        val text = "14 LIS 2026\n62,44 zł\nZrealizowane zamówienia\nSMASHYNSKI, SMASHYNSKI - smash\nburgers\n18:42\nPełna płatność (w tym dystans: 10.13 km)\n35,66 zł\nSushi Dla Mnie Galeria Bałtycka\n17:12\nPełna płatność (w tym dystans: 8.22 km)\n26,78 zł"
+        val d = WoltHistoryParser.parseDayDetails(text)!!
+        assertEquals(2, d.orders.size)
+        assertEquals("SMASHYNSKI, SMASHYNSKI - smash burgers", d.orders[0].venue)
+        assertEquals(10.13, d.orders[0].distanceKm!!, 0.001)
+        // Ten sam kurs odczytany inaczej (OCR) ma ten sam klucz – brak duplikatu.
+        assertEquals(d.orders[0].key, d.orders[0].copy(venue = "burgers").key)
+    }
+
+    @Test
+    fun `wolt expanded timeline with several drops`() {
+        val text = "25,76 zł\nSpodziewany zarobek za pełną dostawę\n2 dostaw(y) od\nKebab DRWAL - Warneńska (Morena)\nOdległość\n11.1 km\nSzacowany\n31 - 34 min\nRamy czasowe\n2\nKebab DRWAL - Warneńsk…\nGotowe\nWarneńska 8C, 80-288 Gdansk\nKamila D.\n-30 min\nMyśliwskie Wzgórze 8c, 80-283 Gdańsk\nAdam S.\n41 min\nJanusza Kusocińskiego 5/106, 80-288 Gdańsk\nAkceptuj"
+        val stops = WoltOfferDetailsParser.stopsFromTimeline(text)
+        assertEquals(3, stops.size)
+        assertEquals(listOf(true, false, false), stops.map { it.isPickup })
+        assertEquals("Warneńska 8C, 80-288 Gdansk", stops[0].address)
+        assertEquals("Janusza Kusocińskiego 5/106, 80-288 Gdańsk", stops[2].address)
+        val single = "30,70 zł\nSpodziewany zarobek\nDostawa od\nKFC Gdańsk Orlen Elblaska\nRamy czasowe\nKFC Gdańsk Orlen Elblaska\n1 min\nMiałki Szlak 2, 80-717 Gdańsk\nHanna S\nPasieczna 4, 80-180 Gdańsk\nAkceptuj"
+        val s2 = WoltOfferDetailsParser.stopsFromTimeline(single)
+        assertEquals(listOf(true, false), s2.map { it.isPickup })
+        assertEquals("Miałki Szlak 2, 80-717 Gdańsk", s2[0].address)
+    }
+
+    @Test
+    fun `reject confirm dialog and standalone reject are offer screens`() {
+        assertEquals(ScreenKind.OFFER_CARD, ScreenClassifier.classify("Na pewno chcesz odrzucić tę dostawę?\nStracisz zarobki\nOdrzuć dostawę\nRozpocznij odbiór"))
+        assertEquals(ScreenKind.OFFER_CARD, ScreenClassifier.classify("X Odrzuć\nNawiguj\nOdbierz na 22:27\nHolyBurgerGdansk"))
+        assertEquals(ScreenKind.ACTIVE_JOB, ScreenClassifier.classify("Dostawa do\nPiotr Nowicki\nMarii Skłodowskiej-Curie 3A, 80-214 Gdańsk\nProblemy z dostawą?\nZamówienie dostarczone"))
+    }
+
+    @Test
     fun `wolt daily summary totals`() {
         assertTrue(WoltHistoryParser.isDailySummaryScreen(woltDailySummary))
         val totals = WoltHistoryParser.parseDailySummary(woltDailySummary)
@@ -75,11 +120,11 @@ class ActiveJobsAndWoltHistoryTest {
 
     @Test
     fun `wolt active screens from real app`() {
+        // Dymek "Odbiór za 7 min" + "Odrzuć" to PODGLAD OFERTY, nie aktywne zlecenie (blad 1.3).
         val eta = "Odbiór za 7 min\nOdrzuć\nWolt"
-        assertEquals(ScreenKind.ACTIVE_JOB, ScreenClassifier.classify(eta))
-        val parsedEta = WoltActiveDeliveryParser.parse(eta)!!
-        assertEquals(7, parsedEta.etaMinutes)
-        assertEquals(WoltActiveDelivery.Stage.TO_PICKUP, parsedEta.stage)
+        assertEquals(ScreenKind.OFFER_CARD, ScreenClassifier.classify(eta))
+        assertNull(WoltActiveDeliveryParser.parse(eta))
+        assertEquals(ScreenKind.OTHER, ScreenClassifier.classify("Odbiór za 1 min\nGdańsk"))
 
         val pickupFrom = "Odbiór za 10 min\nOdbiór z\nSMASHYNSKI\nAmundsena 7C, 80-288 Gdansk"
         val p = WoltActiveDeliveryParser.parse(pickupFrom)!!
@@ -163,15 +208,24 @@ class ActiveJobsAndWoltHistoryTest {
         tracker.onAccepted(CourierPlatform.PYSZNE, Offer(19.61, 6.4, pickupTimeMinutesOfDay = 15 * 60 + 48, deliveryTimeMinutesOfDay = 15 * 60 + 54), 0L, "Kebab Lamh", "Kazimierza Wielkiego 34", "Niepołomicka 26A", 2)
         tracker.onActiveScreen(CourierPlatform.WOLT, 1_000L, null, null, "KFC Gdańsk Auchan", pickedUp = false, etaMinutes = 7)
         assertEquals(2, tracker.activeJobs(2_000L).size)
+        // Wolt widziany tylko raz na ekranie – jeszcze niepotwierdzony, nie pokazujemy go.
+        assertEquals(1, tracker.displayJobs(2_000L).size)
+        tracker.onActiveScreen(CourierPlatform.WOLT, 4_500L, null, null, "KFC Gdańsk Auchan", pickedUp = false)
+        assertEquals(2, tracker.displayJobs(4_500L).size)
         tracker.onPickedUp(CourierPlatform.PYSZNE, 3_000L)
         assertEquals(ActiveJob.Stage.TO_CUSTOMER, tracker.activeAt(3_000L, CourierPlatform.PYSZNE)!!.stage)
         assertEquals(listOf("Niepołomicka 26A" to false), tracker.activeAt(3_000L, CourierPlatform.PYSZNE)!!.remainingAddresses())
         tracker.onFinished(CourierPlatform.PYSZNE)
-        assertNull(tracker.activeAt(4_000L, CourierPlatform.PYSZNE))
-        assertNotNull(tracker.activeAt(4_000L, CourierPlatform.WOLT))
+        assertNull(tracker.activeAt(5_000L, CourierPlatform.PYSZNE))
+        assertNotNull(tracker.activeAt(5_000L, CourierPlatform.WOLT))
         // Inna restauracja na ekranie aktywnego zlecenia tej samej platformy = nowe zlecenie.
-        tracker.onActiveScreen(CourierPlatform.WOLT, 5_000L, null, null, "McDonald's - Szczęśliwa", false)
-        assertEquals("McDonald's - Szczęśliwa", tracker.activeAt(5_000L, CourierPlatform.WOLT)!!.restaurant)
+        tracker.onActiveScreen(CourierPlatform.WOLT, 6_000L, null, null, "McDonald's - Szczęśliwa", false)
+        assertEquals("McDonald's - Szczęśliwa", tracker.activeAt(6_000L, CourierPlatform.WOLT)!!.restaurant)
+        // Zlecenie bez nazwy i adresu nigdy nie jest pokazywane ("W TRAKCIE: Wolt Wolt").
+        val ghost = ActiveJobTracker()
+        ghost.onActiveScreen(CourierPlatform.WOLT, 0L, null, null, null, false)
+        ghost.onActiveScreen(CourierPlatform.WOLT, 10_000L, null, null, null, false)
+        assertTrue(ghost.displayJobs(10_000L).isEmpty())
     }
 
     @Test

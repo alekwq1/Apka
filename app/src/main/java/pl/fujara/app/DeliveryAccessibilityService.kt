@@ -57,6 +57,13 @@ class DeliveryAccessibilityService : AccessibilityService() {
             val now = System.currentTimeMillis()
             decisionTracker.tick(now)
             persistDecisions()
+            if (::prefs.isInitialized && prefs.activeJobsResetRequestedAt > lastHandledResetAt) {
+                lastHandledResetAt = prefs.activeJobsResetRequestedAt
+                activeJobTracker.clear()
+                persistActiveJobs()
+                lastRouteAdvice = null
+                lastRouteSignature = null
+            }
             if (::prefs.isInitialized) runCatching { updateStatusNotification(prefs.privacyAccepted && prefs.analysisEnabled) }
             handler.postDelayed(this, 5_000L)
         }
@@ -76,7 +83,13 @@ class DeliveryAccessibilityService : AccessibilityService() {
     private var lastNotificationWork: String? = null
     private lateinit var workSessionStore: WorkSessionStore
     private lateinit var activeJobStore: ActiveJobStore
-    private var expandedOfferSignature: String? = null
+    private val woltExpandStartedAt = java.util.LinkedHashMap<String, Long>()
+    private val woltCollapsedSignatures = java.util.LinkedHashSet<String>()
+    private val woltDetailsBySignature = object : java.util.LinkedHashMap<String, OfferDetails>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, OfferDetails>?): Boolean = size > 30
+    }
+    private var lastOfferDecisionAt = 0L
+    private var lastHandledResetAt = 0L
     private var activePyszneDayDate: LocalDate? = null
     private var activePyszneDaySeenAt = 0L
     // OCR numerow z listy jest fallbackiem. Numer musi zostac zobaczony co najmniej
@@ -108,6 +121,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
         workSessionStore = WorkSessionStore(this)
         activeJobStore = ActiveJobStore(this)
         activeJobTracker.restore(activeJobStore.load(), System.currentTimeMillis())
+        lastHandledResetAt = prefs.activeJobsResetRequestedAt
         routeAdvisor = RouteAdvisor(this, prefs)
         voice = VoiceRejectController(
             service = this,
@@ -1053,12 +1067,24 @@ class DeliveryAccessibilityService : AccessibilityService() {
     }
 
     private fun showOffer(
-        offer: Offer,
+        rawOffer: Offer,
         applicationName: String,
         packageName: String = "",
         sourceText: String = ""
     ) {
         val rules = prefs.rulesForCourier(applicationName)
+        // Po rozwinieciu arkusza Wolt "Szacowany 23-26 min" bywa zasloniety – bierzemy czas
+        // z wczesniejszego odczytu TEJ SAMEJ oferty, zamiast pokazywac "BRAK CZASU".
+        val offer = decisionTracker.current
+            ?.takeIf { it.signature == OfferSignature.of(CourierPlatform.fromDisplayName(applicationName), rawOffer) }
+            ?.offer
+            ?.let { prev ->
+                rawOffer.copy(
+                    durationMinutes = rawOffer.durationMinutes ?: prev.durationMinutes,
+                    pickupTimeMinutesOfDay = rawOffer.pickupTimeMinutesOfDay ?: prev.pickupTimeMinutesOfDay,
+                    deliveryTimeMinutesOfDay = rawOffer.deliveryTimeMinutesOfDay ?: prev.deliveryTimeMinutesOfDay
+                )
+            } ?: rawOffer
 
         val now = LocalTime.now()
         val currentMinuteOfDay = now.hour * 60 + now.minute
@@ -1160,7 +1186,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
                 platform = platform,
                 extras = OverlayExtras(
                     activeJobLabel = tr(language, "W TRAKCIE", "IN PROGRESS", "В ПРОЦЕСІ", "В ПРОЦЕССЕ"),
-                    feasibilityNote = activeJobsLabel(activeJobTracker.activeJobs(nowMillis), currentMinuteOfDay, language),
+                    feasibilityNote = activeJobsLabel(activeJobTracker.displayJobs(nowMillis), currentMinuteOfDay, language),
                     feasibilityVerdict = OfferFeasibility.Verdict.UNKNOWN,
                     decisionCounter = decisionCounterLabel()
                 )
@@ -1169,7 +1195,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
         }
 
         // ---- karta nowej oferty ----
-        val activeJobs = activeJobTracker.activeJobs(nowMillis)
+        val activeJobs = activeJobTracker.displayJobs(nowMillis)
         val activeJob = activeJobs.maxByOrNull { it.expectedFinishMinuteOfDay(currentMinuteOfDay) }
         val pending = if (prefs.decisionTrackingEnabled) {
             decisionTracker.offerVisible(
@@ -1183,7 +1209,10 @@ class DeliveryAccessibilityService : AccessibilityService() {
                 stops = details.stops,
                 duringActiveJob = activeJobs.isNotEmpty(),
                 blacklisted = blacklistHits.hasAny
-            )
+            ).also { p ->
+                if (details.pickups.size > 1) p.extraPickups = details.pickups.drop(1)
+                if (details.drops.size > 1) p.extraDropoffs = details.drops.drop(1)
+            }
         } else {
             null
         }
@@ -1195,29 +1224,42 @@ class DeliveryAccessibilityService : AccessibilityService() {
             lastRouteSignature = null
         }
 
-        if (platform == CourierPlatform.WOLT) maybeExpandWoltOffer(signature, details)
-        // Adresy Wolt dochodza po rozwinieciu – trasa musi byc policzona jeszcze raz.
-        if (details.pickupAddress != null && lastRouteSignature == signature && lastRouteAdvice?.points?.none { it.kind == MapPoint.Kind.NEW_DROP } == true && details.dropoffAddress != null) {
+        // Wolt: adresy sa dopiero po rozwinieciu arkusza. Zapamietujemy je dla tej oferty,
+        // bo po zwinieciu arkusza znikaja z ekranu.
+        val routeDetails = if (platform == CourierPlatform.WOLT) {
+            if (details.fromTimeline) woltDetailsBySignature[signature] = details
+            maybeExpandWoltOffer(signature, details)
+            maybeCollapseWoltOffer(signature, sourceText, details)
+            woltDetailsBySignature[signature] ?: details
+        } else {
+            details
+        }
+        val routeKey = signature + "|" + routeDetails.pickups.joinToString("/") + "|" + routeDetails.drops.joinToString("/")
+        if (lastRouteSignature != null && lastRouteSignature != routeKey && lastRouteSignature!!.startsWith(signature)) {
             lastRouteAdvice = null
             lastRouteSignature = null
         }
+        // Weryfikacja przed mapa: dla Wolt czekamy na adresy z rozwinietej karty (max ~4 s),
+        // zeby nie geokodowac samej nazwy lokalu (dawalo zle punkty, np. KFC pod Pruszczem).
+        val woltAwaitingAddresses = platform == CourierPlatform.WOLT && prefs.woltAutoExpandOffer &&
+            !routeDetails.fromTimeline && nowMillis - (woltExpandStartedAt[signature] ?: nowMillis) < 4_000L
 
-        var advice = lastRouteAdvice?.takeIf { lastRouteSignature == signature }
-        if (advice == null && routeAdvisor.enabled) {
+        var advice = lastRouteAdvice?.takeIf { lastRouteSignature == routeKey }
+        if (advice == null && routeAdvisor.enabled && !woltAwaitingAddresses) {
             routeAdvisor.startLocationUpdates()
             advice = routeAdvisor.advise(
-                signature = signature + "|" + (details.pickupAddress?.hashCode() ?: 0) + "|" + (details.dropoffAddress?.hashCode() ?: 0),
-                restaurant = details.restaurant,
-                pickupAddress = details.pickupAddress,
-                dropoffAddress = details.dropoffAddress,
+                signature = routeKey + "|" + activeJobs.joinToString(";") { it.platform.key + it.stage.name + it.remainingAddresses().size },
+                restaurant = routeDetails.restaurant,
+                pickups = routeDetails.pickups,
+                drops = routeDetails.drops,
                 activeJobs = activeJobs,
                 language = language
             ) { fresh ->
                 if (lastOfferSignature == signature && ::overlay.isInitialized && overlay.isVisible()) {
                     lastRouteAdvice = fresh
-                    lastRouteSignature = signature
+                    lastRouteSignature = routeKey
                     val minute = LocalTime.now().let { it.hour * 60 + it.minute }
-                    val job = activeJobTracker.activeJobs(System.currentTimeMillis()).maxByOrNull { it.expectedFinishMinuteOfDay(minute) }
+                    val job = activeJobTracker.displayJobs(System.currentTimeMillis()).maxByOrNull { it.expectedFinishMinuteOfDay(minute) }
                     val feasibility = job?.let { OfferFeasibilityCalculator.evaluate(it, offer, minute, fresh.toPickup?.minutes, prefs.languageCode) }
                     overlay.updateExtras(
                         overlay.currentExtras().copy(
@@ -1225,7 +1267,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
                             routePending = false,
                             spatialNote = fresh.spatial?.note,
                             spatialVerdict = fresh.spatial?.verdict,
-                            mapPoints = fresh.points,
+                            mapPoints = if (prefs.showMiniMap) fresh.points else emptyList(),
                             mapTiles = prefs.mapTilesEnabled,
                             feasibilityNote = feasibility?.note ?: overlay.currentExtras().feasibilityNote,
                             feasibilityVerdict = feasibility?.verdict ?: overlay.currentExtras().feasibilityVerdict
@@ -1235,7 +1277,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
             }
             if (advice != null) {
                 lastRouteAdvice = advice
-                lastRouteSignature = signature
+                lastRouteSignature = routeKey
             }
         }
 
@@ -1251,11 +1293,15 @@ class DeliveryAccessibilityService : AccessibilityService() {
             feasibilityNote = feasibility?.note,
             feasibilityVerdict = feasibility?.verdict,
             routeText = advice?.let { RouteAdvisor.describe(it, language).ifBlank { null } }
-                ?: if (routeAdvisor.enabled) tr(language, "🧭 liczę trasę…", "🧭 routing…", "🧭 рахую маршрут…", "🧭 считаю маршрут…") else null,
+                ?: when {
+                    woltAwaitingAddresses -> tr(language, "🧭 czytam adresy Wolt…", "🧭 reading Wolt addresses…", "🧭 читаю адреси…", "🧭 читаю адреса…")
+                    routeAdvisor.enabled -> tr(language, "🧭 liczę trasę…", "🧭 routing…", "🧭 рахую маршрут…", "🧭 считаю маршрут…")
+                    else -> null
+                },
             routePending = advice == null,
             spatialNote = advice?.spatial?.note,
             spatialVerdict = advice?.spatial?.verdict,
-            mapPoints = advice?.points.orEmpty(),
+            mapPoints = if (prefs.showMiniMap) advice?.points.orEmpty() else emptyList(),
             mapTiles = prefs.mapTilesEnabled,
             voiceState = if (prefs.voiceRejectEnabled) voiceState else null,
             voiceHint = voiceHint,
@@ -1282,7 +1328,11 @@ class DeliveryAccessibilityService : AccessibilityService() {
         val restaurant: String?,
         val pickupAddress: String?,
         val dropoffAddress: String?,
-        val stops: Int
+        val stops: Int,
+        val pickups: List<String> = listOfNotNull(pickupAddress),
+        val drops: List<String> = listOfNotNull(dropoffAddress),
+        /** Czy adresy pochodza z rozwinietej karty ("Ramy czasowe"). */
+        val fromTimeline: Boolean = false
     )
 
     private fun offerDetails(platform: CourierPlatform, sourceText: String): OfferDetails = when (platform) {
@@ -1290,13 +1340,28 @@ class DeliveryAccessibilityService : AccessibilityService() {
             OfferDetails(it.restaurant, it.pickupAddress, it.dropoffAddress, it.stops)
         }
         CourierPlatform.WOLT -> {
-            val (pickup, drop) = WoltOfferDetailsParser.addresses(sourceText)
-            OfferDetails(
-                restaurant = WoltOfferDetailsParser.restaurant(sourceText),
-                pickupAddress = pickup,
-                dropoffAddress = drop,
-                stops = WoltOfferDetailsParser.stops(sourceText)
-            )
+            val timeline = WoltOfferDetailsParser.stopsFromTimeline(sourceText)
+            if (timeline.isNotEmpty()) {
+                val pickups = timeline.filter { it.isPickup }.map { it.address }.distinct()
+                val drops = timeline.filter { !it.isPickup }.map { it.address }.distinct()
+                OfferDetails(
+                    restaurant = WoltOfferDetailsParser.restaurant(sourceText) ?: timeline.firstOrNull { it.isPickup }?.name,
+                    pickupAddress = pickups.firstOrNull(),
+                    dropoffAddress = drops.firstOrNull(),
+                    stops = maxOf(WoltOfferDetailsParser.stops(sourceText), drops.size),
+                    pickups = pickups,
+                    drops = drops,
+                    fromTimeline = true
+                )
+            } else {
+                val (pickup, drop) = WoltOfferDetailsParser.addresses(sourceText)
+                OfferDetails(
+                    restaurant = WoltOfferDetailsParser.restaurant(sourceText),
+                    pickupAddress = pickup,
+                    dropoffAddress = drop,
+                    stops = WoltOfferDetailsParser.stops(sourceText)
+                )
+            }
         }
         else -> {
             // Stuart / Uber: adresy sa czesto w tekscie jako "Nazwa - ulica 1, 80-000 Miasto".
@@ -1314,6 +1379,15 @@ class DeliveryAccessibilityService : AccessibilityService() {
     /** Aktualizuje aktywne zlecenie z ekranu "w trakcie" (Pyszne / Wolt / inne). */
     /** Zwraca nazwe lokalu widoczna na ekranie (do rozstrzygania decyzji). */
     private fun updateActiveJobFromScreen(platform: CourierPlatform, text: String, offer: Offer, details: OfferDetails, nowMillis: Long): String? {
+        // Weryfikacja: gdy przed chwila byla widoczna oferta tej platformy i nie mamy jeszcze
+        // zlecenia, nie tworzymy "aktywnego" z ekranu – to najczesciej resztka karty oferty.
+        val pendingNow = decisionTracker.current
+        if (!activeJobTracker.hasJob(platform, nowMillis) && pendingNow != null && pendingNow.platform == platform &&
+            nowMillis - pendingNow.lastSeenAtMillis < 2_500L
+        ) {
+            return null
+        }
+        if (ScreenClassifier.classify(text) != ScreenKind.ACTIVE_JOB) return null
         return when (platform) {
             CourierPlatform.PYSZNE -> {
                 val screen = PyszneActiveScreenParser.parse(text)
@@ -1396,26 +1470,55 @@ class DeliveryAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** Gesty startuja po przeciwnej stronie niz panel FUJARY, zeby nie trafic w nakladke. */
+    private fun gestureX(platform: CourierPlatform): Float = if (prefs.overlaySide(platform) == "start") 0.82f else 0.18f
+
     /** Wolt: karta oferty nie pokazuje adresow, dopoki arkusz nie zostanie przesuniety w gore. */
     private fun maybeExpandWoltOffer(signature: String, details: OfferDetails) {
-        if (!prefs.woltAutoExpandOffer || expandedOfferSignature == signature) return
-        if (details.pickupAddress != null && details.dropoffAddress != null) return
-        expandedOfferSignature = signature
+        if (!prefs.woltAutoExpandOffer || woltExpandStartedAt.containsKey(signature)) return
+        if (details.fromTimeline) {
+            // Kurier sam rozwinal karte – nic nie robimy, ale zapamietujemy oferte.
+            woltExpandStartedAt[signature] = System.currentTimeMillis()
+            woltCollapsedSignatures += signature
+            return
+        }
+        woltExpandStartedAt[signature] = System.currentTimeMillis()
+        if (woltExpandStartedAt.size > 40) woltExpandStartedAt.keys.take(20).forEach { woltExpandStartedAt.remove(it) }
         handler.postDelayed({
             if (lastOfferSignature != signature) return@postDelayed
             if (!RejectActionPerformer.offerCardVisible(this, ::isDeliveryPackage)) return@postDelayed
-            // Start gestu w obszarze tekstu "Spodziewany zarobek" (nie na przycisku Akceptuj).
-            RejectActionPerformer.swipe(this, fromYFraction = 0.70f, toYFraction = 0.28f)
-            scheduleThrottledScan(650L)
-        }, 600L)
+            // Start gestu na tekscie "Spodziewany zarobek" (nie na przycisku Akceptuj), w gore.
+            RejectActionPerformer.swipe(this, fromYFraction = 0.70f, toYFraction = 0.25f, xFraction = gestureX(CourierPlatform.WOLT))
+            scheduleThrottledScan(700L)
+        }, 500L)
     }
 
-    /** Po odrzuceniu: jesli Wolt zostawil arkusz bez przycisku Akceptuj, zamykamy go gestem w gore. */
+    /** Po odczytaniu adresow zwijamy arkusz z powrotem, zeby kurier widzial mape Wolta. */
+    private fun maybeCollapseWoltOffer(signature: String, sourceText: String, details: OfferDetails) {
+        if (!prefs.woltAutoExpandOffer || signature in woltCollapsedSignatures) return
+        val startedAt = woltExpandStartedAt[signature] ?: return
+        val expanded = Regex("(?i)ramy\\s+czasowe").containsMatchIn(sourceText)
+        val elapsed = System.currentTimeMillis() - startedAt
+        if (!(details.fromTimeline || (expanded && elapsed > 2_500L))) return
+        woltCollapsedSignatures += signature
+        if (woltCollapsedSignatures.size > 40) woltCollapsedSignatures.remove(woltCollapsedSignatures.first())
+        handler.postDelayed({
+            if (lastOfferSignature != signature) return@postDelayed
+            if (!RejectActionPerformer.offerCardVisible(this, ::isDeliveryPackage)) return@postDelayed
+            // Arkusz rozwiniety: gora arkusza ~10% ekranu. Ciagniemy w dol na wysokosc mapy.
+            RejectActionPerformer.swipe(this, fromYFraction = 0.13f, toYFraction = 0.66f, xFraction = gestureX(CourierPlatform.WOLT))
+        }, 350L)
+    }
+
+    /**
+     * Po odrzuceniu: jesli Wolt zostawil arkusz oferty na dole (bez przycisku Akceptuj),
+     * zsuwamy go W DOL. Nigdy przy widocznym przycisku akceptacji ani przy dialogu "Na pewno…".
+     */
     private fun dismissResidualSheetIfAny() {
         if (!prefs.autoDismissAfterReject) return
         if (RejectActionPerformer.offerCardVisible(this, ::isDeliveryPackage)) return
         if (!RejectActionPerformer.residualOfferSheetVisible(this, ::isDeliveryPackage)) return
-        RejectActionPerformer.swipe(this, fromYFraction = 0.60f, toYFraction = 0.12f)
+        RejectActionPerformer.swipe(this, fromYFraction = 0.66f, toYFraction = 0.98f, xFraction = gestureX(CourierPlatform.WOLT))
     }
 
     private fun shortJobLabel(job: ActiveJob, currentMinuteOfDay: Int): String {
@@ -1448,7 +1551,11 @@ class DeliveryAccessibilityService : AccessibilityService() {
 
         val now = System.currentTimeMillis()
         // 1.2: etapy aktywnego zlecenia (Zakończ odbiór / Dostarcz zamówienie / Odrzuć dostawę).
-        if (platform != null) {
+        // "Odrzuć dostawę" / "Rozpocznij odbiór" w dialogu Wolt dotycza NOWEJ oferty – gdy przed
+        // chwila byla oferta lub decyzja, nie ruszamy aktywnych zlecen.
+        val offerContext = decisionTracker.current?.let { now - it.lastSeenAtMillis < 30_000L } == true ||
+            now - lastOfferDecisionAt < 20_000L
+        if (platform != null && !offerContext) {
             when {
                 texts.any { JobStageButtons.isCancelled(it) } -> {
                     activeJobTracker.onFinished(platform)
@@ -1471,6 +1578,12 @@ class DeliveryAccessibilityService : AccessibilityService() {
         val decision = texts.firstNotNullOfOrNull { text ->
             decisionTracker.buttonClicked(text, now)?.let { it to text }
         }?.first ?: return
+        lastOfferDecisionAt = now
+        if (decision == OfferDecision.REJECTED && platform == CourierPlatform.WOLT) {
+            // Reczne odrzucenie w Wolt: jesli zostanie arkusz na dole, zsuwamy go w dol.
+            handler.postDelayed({ dismissResidualSheetIfAny() }, 1_500L)
+            handler.postDelayed({ dismissResidualSheetIfAny() }, 3_000L)
+        }
 
         if (decision == OfferDecision.ACCEPTED && pending != null) {
             activeJobTracker.onAccepted(
@@ -1480,7 +1593,9 @@ class DeliveryAccessibilityService : AccessibilityService() {
                 restaurant = pending.restaurant,
                 pickupAddress = pending.pickupAddress,
                 dropoffAddress = pending.dropoffAddress,
-                stops = pending.stops
+                stops = pending.stops,
+                extraPickups = pending.extraPickups,
+                extraDropoffs = pending.extraDropoffs
             )
             persistActiveJobs()
         }
@@ -1567,6 +1682,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
             return
         }
         decisionTracker.rejectedByVoice(System.currentTimeMillis())
+        lastOfferDecisionAt = System.currentTimeMillis()
         persistDecisions()
         // Niektore aplikacje pytaja jeszcze raz "Odrzucić?" – potwierdzamy, bo kurier juz potwierdzil glosem.
         handler.postDelayed({ RejectActionPerformer.confirmIfDialog(this, ::isDeliveryPackage) }, 700L)

@@ -14,8 +14,8 @@ android {
         applicationId = "pl.fujara.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 45
-        versionName = "1.3.0"
+        versionCode = 46
+        versionName = "1.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -26,6 +26,16 @@ android {
     val uploadKeyPassword = System.getenv("FUJARA_UPLOAD_KEY_PASSWORD")
 
     signingConfigs {
+        // Staly klucz debug w repo: kazdy build z GitHub Actions ma ten sam podpis,
+        // wiec aktualizacja instaluje sie NA istniejaca wersje bez kasowania danych.
+        // (Klucz debug nie jest tajny – wersja Google Play uzywa osobnego klucza upload.)
+        getByName("debug") {
+            storeFile = rootProject.file("signing/fujara-debug.p12")
+            storePassword = "android"
+            keyAlias = "fujaradebug"
+            keyPassword = "android"
+            storeType = "pkcs12"
+        }
         create("release") {
             if (!uploadStoreFile.isNullOrBlank()) {
                 storeFile = file(uploadStoreFile)
@@ -38,6 +48,9 @@ android {
     }
 
     buildTypes {
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("debug")
+        }
         getByName("release") {
             isMinifyEnabled = false
 
