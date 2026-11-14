@@ -460,7 +460,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
                         }
 
                         showOffer(
-                            offer = candidate.offer,
+                            rawOffer = candidate.offer,
                             applicationName = recognizedName,
                             sourceText = candidate.sourceText,
                             packageName = if (
@@ -508,7 +508,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
                     )
 
                     showOffer(
-                        offer = offer,
+                        rawOffer = offer,
                         applicationName = recognizedName,
                         sourceText = if (platform == CourierPlatform.PYSZNE) pyszneSourceText else (resolved?.text ?: recognitionText),
                         packageName = if (
@@ -730,7 +730,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
         if (selected != null) {
             misses = 0
             showOffer(
-                offer = selected.offer,
+                rawOffer = selected.offer,
                 applicationName = selected.applicationName,
                 packageName = selected.packageName,
                 sourceText = selected.sourceText
@@ -765,7 +765,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
                     if (offer != null) {
                         misses = 0
                         showOffer(
-                            offer = offer,
+                            rawOffer = offer,
                             applicationName = applicationName ?: appLabel(pkg),
                             packageName = pkg,
                             sourceText = text
