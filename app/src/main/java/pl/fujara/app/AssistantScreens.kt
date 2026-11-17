@@ -843,6 +843,54 @@ internal fun WoltDayCard(language: String, date: LocalDate, refresh: Int, compac
     }
 }
 
+/**
+ * 1.6: suma wybranego dnia Pyszne + Wolt i PLN/h z czasu pracy tego dnia (Start/Pauza,
+ * a bez nich z aktywnosci – przerwy > 25 min nie sa liczone). Dla dzisiaj odswieza sie na zywo.
+ */
+@Composable
+internal fun CombinedDayTotalCard(language: String, prefs: AppPrefs, date: LocalDate, pyszne: PyszneDaySummary, refresh: Int) {
+    val context = LocalContext.current
+    val orderStore = remember { WoltOrderStore(context) }
+    val eventStore = remember { OfferEventStore(context) }
+    val workStore = remember { WorkSessionStore(context) }
+    val bucket = refresh / 20
+    val events = remember(bucket, date) { eventStore.forDate(date) }
+    val wolt = remember(bucket, date) {
+        WoltDayPartCalculator.calculate(
+            date = date,
+            orders = orderStore.mergedForDate(date),
+            officialDayTotal = orderStore.dayTotal(date),
+            acceptedOffers = events,
+            rules = prefs.rulesForPlatform(CourierPlatform.WOLT),
+            decisionBasis = prefs.decisionBasis,
+            zusPercent = if (prefs.zusEnabled) prefs.zusPercent else 0.0
+        )
+    }
+    val workMinutes = remember(bucket, date) {
+        val now = System.currentTimeMillis()
+        val activity = events.flatMap { listOfNotNull(it.shownAtMillis, it.decidedAtMillis) }
+        val shift = workStore.minutesForDate(date, now)
+        if (shift > 0) shift else if (date == LocalDate.now()) ActivityWorkTime.minutes(activity, now) else ActivityWorkTime.minutes(activity, activity.maxOrNull() ?: now)
+    }
+    if (wolt.orders == 0 && wolt.grossPln <= 0.0) return
+    val combined = CombinedDayCalculator.combine(pyszne, wolt, workMinutes)
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f))) {
+        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(at(language, "RAZEM DZIEŃ · Pyszne + Wolt", "DAY TOTAL · Pyszne + Wolt", "РАЗОМ ДЕНЬ", "ИТОГО ДЕНЬ"), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelLarge)
+            Text(money(combined.netPln) + at(language, " netto", " net", " нетто", " нетто"), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
+            Text(
+                listOfNotNull(
+                    at(language, "${combined.orderCount} dostaw", "${combined.orderCount} deliveries", "${combined.orderCount} доставок", "${combined.orderCount} доставок"),
+                    money(combined.grossPln) + at(language, " brutto", " gross", " брутто", " брутто"),
+                    if (workMinutes > 0) WorkAnalytics.formatHours(workMinutes) else null,
+                    combined.netPerHour?.let { String.format(plLocale, "%.0f zł/h", it) }
+                ).joinToString(" · "),
+                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium
+            )
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------------
 // USTAWIENIA ASYSTENTA
 // ---------------------------------------------------------------------------------

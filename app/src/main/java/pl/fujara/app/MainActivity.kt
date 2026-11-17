@@ -814,7 +814,12 @@ private fun HomeScreen(
             zusPercent = if (prefs.zusEnabled) prefs.zusPercent else 0.0
         )
     }
-    val workMinutesToday = remember(refreshToken / 20) { workStore.todayMinutes() }
+    // 1.6: PLN/h na zywo – czas pracy z Start/Pauza, a bez niego z aktywnosci dnia (przerwy > 25 min odpadaja).
+    val workMinutesToday = remember(refreshToken / 20) {
+        val now = System.currentTimeMillis()
+        val activity = offerEventStore.forDate(today).flatMap { listOfNotNull(it.shownAtMillis, it.decidedAtMillis) }
+        ActivityWorkTime.effective(workStore.todayMinutes(now), activity, now)
+    }
     val todaySummary = CombinedDayCalculator.combine(pyszneSummary, woltToday, workMinutesToday)
     val active = serviceEnabled && analysisEnabled
     val goal = prefs.dailyGoalNetPln.coerceAtLeast(0.0)
@@ -1794,6 +1799,7 @@ private fun PyszneSummaryScreen(
         }
 
         WoltDayCard(language = language.code, date = selectedDate, refresh = refreshToken)
+        CombinedDayTotalCard(language = language.code, prefs = prefs, date = selectedDate, pyszne = summary, refresh = refreshToken)
 
         Surface(
             modifier = Modifier.fillMaxWidth().clickable { verificationExpanded = !verificationExpanded },

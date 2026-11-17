@@ -91,3 +91,26 @@ object CombinedDayCalculator {
         )
     }
 }
+
+/**
+ * 1.6: czas pracy dnia, gdy kurier nie uzywa Start/Pauza. Liczymy od pierwszej do ostatniej
+ * aktywnosci (oferty, decyzje, zlecenia), a przerwy dluzsze niz [breakAfterMinutes] bez
+ * zadnej aktywnosci nie wliczaja sie. Trwajacy dzien liczy sie do "teraz", jesli ostatnia
+ * aktywnosc byla niedawno.
+ */
+object ActivityWorkTime {
+    fun minutes(activityMillis: List<Long>, nowMillis: Long, breakAfterMinutes: Int = 25): Int {
+        val sorted = activityMillis.filter { it in 1..nowMillis }.sorted()
+        if (sorted.isEmpty()) return 0
+        val limit = breakAfterMinutes * 60_000L
+        var total = 0L
+        sorted.zipWithNext().forEach { (a, b) -> if (b - a <= limit) total += b - a }
+        val tail = nowMillis - sorted.last()
+        if (tail <= limit) total += tail
+        return (total / 60_000L).toInt()
+    }
+
+    /** Czas pracy: z Start/Pauza, a gdy go brak – z aktywnosci. */
+    fun effective(shiftMinutes: Int, activityMillis: List<Long>, nowMillis: Long): Int =
+        if (shiftMinutes > 0) shiftMinutes else minutes(activityMillis, nowMillis)
+}

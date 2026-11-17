@@ -34,7 +34,15 @@ data class RouteAdvice(
      * werdykt i mape.
      */
     val verified: Boolean = true,
-    val missing: List<String> = emptyList()
+    val missing: List<String> = emptyList(),
+    /** 1.6: plan na trasach (zamiast godzin z ekranu). */
+    val plan: OfferPlan? = null,
+    /** Geometria: trasa samych zlecen w trakcie (zielona) i trasa z nowa oferta. */
+    val activeRoute: List<GeoPoint> = emptyList(),
+    val newRoute: List<GeoPoint> = emptyList(),
+    /** Ile jeszcze do konca zlecen w trakcie (trasa z lokalizacji). */
+    val activeRemainingKm: Double? = null,
+    val activeRemainingMinutes: Int? = null
 ) {
     val hasAnything: Boolean
         get() = true
@@ -166,19 +174,24 @@ class RouteAdvisor(private val context: Context, private val prefs: AppPrefs) {
 
                 // Adres ma pierwszenstwo; sama nazwa lokalu tylko gdy adresu brak.
                 val pickupQueries = pickups.ifEmpty { listOfNotNull(restaurant) }
-                val newPickups = pickupQueries.mapNotNull { q -> geo(q) }
+                // Sama nazwa lokalu: tylko punkt w promieniu 12 km od kuriera (nie "KFC pod Pruszczem").
+                val newPickups = if (pickups.isEmpty()) {
+                    pickupQueries.mapNotNull { q -> geo(q)?.takeIf { pt -> anchor == null || Geo.haversineKm(pt, anchor) <= 12.0 } }
+                } else pickupQueries.mapNotNull { q -> geo(q) }
                 val newDrops = drops.mapNotNull { q -> geo(q) }
                 val missing = mutableListOf<String>()
-                if (origin == null) missing += tr(language, "Twoja lokalizacja", "your location", "твоя локація", "твоя геолокация")
-                if (pickups.isEmpty()) missing += tr(language, "adres odbioru", "pickup address", "адреса забору", "адрес забора")
-                else if (newPickups.size < pickups.size) missing += tr(language, "punkt odbioru na mapie", "pickup on map", "забір на мапі", "забор на карте")
-                if (drops.isEmpty()) missing += tr(language, "adres dostawy", "drop-off address", "адреса доставки", "адрес доставки")
-                else if (newDrops.size < drops.size) missing += tr(language, "punkt dostawy na mapie", "drop-off on map", "доставка на мапі", "доставка на карте")
+                if (origin == null) missing += tr(language, "Twojej lokalizacji", "your location", "твоя локація", "твоя геолокация")
+                // 1.6: Wolt czesto pokazuje tylko nazwe lokalu – gdy znaleziona blisko (sane), wystarcza.
+                if (pickups.isEmpty() && newPickups.isEmpty()) missing += tr(language, "adresu odbioru", "pickup address", "адреса забору", "адрес забора")
+                else if (newPickups.size < pickups.size) missing += tr(language, "punktu odbioru na mapie", "pickup on map", "забір на мапі", "забор на карте")
+                if (drops.isEmpty()) missing += tr(language, "adresu dostawy", "drop-off address", "адреса доставки", "адрес доставки")
+                else if (newDrops.size < drops.size) missing += tr(language, "punktu dostawy na mapie", "drop-off on map", "доставка на мапі", "доставка на карте")
                 var expectedActive = 0
 
                 val points = mutableListOf<MapPoint>()
                 origin?.let { points += MapPoint(it, tr(language, "Ja", "Me", "Я", "Я"), MapPoint.Kind.ME) }
                 val activePoints = mutableListOf<GeoPoint>()
+                val activeStopsOrdered = mutableListOf<Pair<GeoPoint, Boolean>>()
                 activeJobs.forEach { job ->
                     var pickupNo = 0
                     var dropNo = 0
@@ -186,6 +199,7 @@ class RouteAdvisor(private val context: Context, private val prefs: AppPrefs) {
                         expectedActive++
                         geo(address)?.let { pt ->
                             activePoints += pt
+                            activeStopsOrdered += pt to isPickup
                             val tag = platformShort(job.platform)
                             val label = if (isPickup) {
                                 pickupNo++
@@ -205,18 +219,30 @@ class RouteAdvisor(private val context: Context, private val prefs: AppPrefs) {
                     points += MapPoint(pt, tr(language, "NOWA dostawa", "NEW drop", "НОВА доставка", "НОВАЯ доставка") + if (newDrops.size > 1) " ${i + 1}" else "", MapPoint.Kind.NEW_DROP)
                 }
 
+                if (activePoints.size < expectedActive) missing += tr(language, "adresu zlecenia w trakcie", "active job address", "адреси поточного", "адреса текущего")
+
+                // Plan na trasach: najlepsze wplecenie nowej oferty w trase biezacych zlecen.
+                val activeStops = activeStopsOrdered.map { (pt, isPickup) -> PlanStop(pt, isPickup, false, "") }
+                val newStops = newPickups.map { PlanStop(it, true, true, "") } + newDrops.map { PlanStop(it, false, true, "") }
+                val plan = if (origin != null && newStops.isNotEmpty()) {
+                    RoutePlanner.plan(origin, activeStops, newStops) { pts -> routeMulti(pts, profile) }
+                } else null
                 val newLeg = newPickups + newDrops
                 val spatial = if (newPickups.isNotEmpty()) SpatialAdvisor.evaluateLeg(origin, activePoints, newLeg, language) else null
                 val toPickup = if (origin != null && newPickups.isNotEmpty()) route(origin, newPickups.first(), profile) else null
 
-                if (activePoints.size < expectedActive) missing += tr(language, "adres zlecenia w trakcie", "active job address", "адреса поточного", "адрес текущего")
                 RouteAdvice(
                     toPickup = toPickup,
                     spatial = spatial,
                     points = points,
                     computedAtMillis = System.currentTimeMillis(),
                     verified = missing.isEmpty(),
-                    missing = missing
+                    missing = missing,
+                    plan = plan,
+                    activeRoute = plan?.base?.geometry.orEmpty(),
+                    newRoute = plan?.combined?.geometry.orEmpty(),
+                    activeRemainingKm = plan?.base?.distanceKm,
+                    activeRemainingMinutes = plan?.base?.minutes
                 )
             }.getOrNull()
             inFlight.remove(signature)
@@ -229,6 +255,141 @@ class RouteAdvisor(private val context: Context, private val prefs: AppPrefs) {
         }
         return null
     }
+
+    /**
+     * Widok samych zlecen w trakcie (bez nowej oferty): trasa z lokalizacji przez pozostale
+     * punkty – odbior znika po odebraniu, zostaje dostawa.
+     */
+    fun adviseActive(signature: String, activeJobs: List<ActiveJob>, language: String, onResult: (RouteAdvice) -> Unit): RouteAdvice? {
+        if (!enabled || activeJobs.isEmpty()) return null
+        adviceCache[signature]?.let { return it }
+        if (!inFlight.add(signature)) return null
+        requestFreshLocation()
+        val profile = RouteProfile.fromKey(prefs.routeProfile)
+        executor.execute {
+            var waited = 0
+            while (currentPoint() == null && waited < 3_000 && hasLocationPermission()) { Thread.sleep(200); waited += 200 }
+            val origin = currentPoint()
+            val advice = runCatching {
+                val cityHint = prefs.routeCityHint.trim()
+                val anchor = origin ?: cityCenter(cityHint)
+                val points = mutableListOf<MapPoint>()
+                origin?.let { points += MapPoint(it, tr(language, "Ja", "Me", "Я", "Я"), MapPoint.Kind.ME) }
+                val stops = mutableListOf<GeoPoint>()
+                var expected = 0
+                activeJobs.forEach { job ->
+                    job.remainingAddresses().forEach { (address, isPickup) ->
+                        expected++
+                        geocodeFirst(listOf(address), origin, cityHint)?.takeIf { sane(it, anchor) }?.let { pt ->
+                            stops += pt
+                            val tag = platformShort(job.platform)
+                            points += MapPoint(pt, if (isPickup) "$tag ${tr(language, "odbiór", "pickup", "забір", "забор")}" else "$tag ${tr(language, "dostawa", "drop", "доставка", "доставка")}",
+                                if (isPickup) MapPoint.Kind.ACTIVE_PICKUP else MapPoint.Kind.ACTIVE_DROP)
+                        }
+                    }
+                }
+                val missing = mutableListOf<String>()
+                if (origin == null) missing += tr(language, "Twojej lokalizacji", "your location", "твоєї локації", "геолокации")
+                if (stops.size < expected) missing += tr(language, "adresu zlecenia w trakcie", "active job address", "адреси поточного", "адреса текущего")
+                val route = if (origin != null && stops.isNotEmpty()) routeMulti(listOf(origin) + stops, profile) else null
+                RouteAdvice(
+                    toPickup = null,
+                    spatial = null,
+                    points = points,
+                    computedAtMillis = System.currentTimeMillis(),
+                    verified = missing.isEmpty(),
+                    missing = missing,
+                    activeRoute = route?.geometry.orEmpty(),
+                    activeRemainingKm = route?.distanceKm,
+                    activeRemainingMinutes = route?.minutes
+                )
+            }.getOrNull()
+            inFlight.remove(signature)
+            if (advice != null) {
+                if (advice.verified) adviceCache[signature] = advice
+                main.post { onResult(advice) }
+            }
+        }
+        return null
+    }
+
+    /** Punkt z cache geokodowania (bez sieci); gdy brak – zleca geokodowanie w tle. */
+    fun cachedPoint(address: String?): GeoPoint? {
+        val a = address?.trim()?.takeIf { it.length >= 3 } ?: return null
+        val key = a.lowercase(Locale.ROOT)
+        if (geocodeCache.containsKey(key)) return geocodeCache[key]
+        if (enabled) executor.execute { runCatching { geocodeFirst(listOf(a), currentPoint(), prefs.routeCityHint.trim()) } }
+        return null
+    }
+
+    /**
+     * Trasa przez kilka punktow z geometria: TomTom (z ruchem, gdy jest klucz) → OSRM → szacunek.
+     * Cache 2 min na zestaw punktow.
+     */
+    fun routeMulti(points: List<GeoPoint>, profile: RouteProfile): MultiRoute {
+        if (points.size < 2) return RoutePlanner.estimate(points)
+        val key = points.joinToString(";") { String.format(Locale.ROOT, "%.4f,%.4f", it.lat, it.lon) } + "|" + profile.key
+        multiCache[key]?.let { (at, r) -> if (System.currentTimeMillis() - at < 120_000L) return r }
+        val r = prefs.tomtomApiKey.trim().takeIf { it.isNotBlank() }?.let { tomtomMulti(points, profile, it) }
+            ?: osrmMulti(points, profile)
+            ?: RoutePlanner.estimate(points)
+        multiCache[key] = System.currentTimeMillis() to r
+        if (multiCache.size > 200) multiCache.keys.take(60).forEach { multiCache.remove(it) }
+        return r
+    }
+
+    private val multiCache = ConcurrentHashMap<String, Pair<Long, MultiRoute>>()
+
+    private fun osrmMulti(points: List<GeoPoint>, profile: RouteProfile): MultiRoute? = runCatching {
+        val coords = points.joinToString(";") { String.format(Locale.ROOT, "%.6f,%.6f", it.lon, it.lat) }
+        val url = "https://router.project-osrm.org/route/v1/${profile.osrm}/$coords?overview=full&geometries=polyline&steps=false"
+        val body = httpGet(url, mapOf("User-Agent" to USER_AGENT)) ?: return null
+        val route = JSONObject(body).getJSONArray("routes").getJSONObject(0)
+        val legs = route.getJSONArray("legs")
+        val arrivals = mutableListOf<Int>()
+        var acc = 0.0
+        for (i in 0 until legs.length()) {
+            // OSRM bez ruchu: +25% w miescie i 2 min na kazdy postoj.
+            acc += legs.getJSONObject(i).getDouble("duration") / 60.0 * OSRM_CITY_FACTOR + 2.0
+            arrivals += acc.roundToInt()
+        }
+        MultiRoute(
+            distanceKm = route.getDouble("distance") / 1000.0,
+            minutes = acc.roundToInt(),
+            arrivalMinutes = arrivals,
+            geometry = Polyline.decode(route.getString("geometry")),
+            provider = "OSRM"
+        )
+    }.getOrNull()
+
+    private fun tomtomMulti(points: List<GeoPoint>, profile: RouteProfile, key: String): MultiRoute? = runCatching {
+        val coords = points.joinToString(":") { String.format(Locale.ROOT, "%.6f,%.6f", it.lat, it.lon) }
+        val url = "https://api.tomtom.com/routing/1/calculateRoute/$coords/json?traffic=true&travelMode=${profile.tomtom}&routeType=fastest&key=" +
+            URLEncoder.encode(key, "UTF-8")
+        val body = httpGet(url, emptyMap()) ?: return null
+        val routeObj = JSONObject(body).getJSONArray("routes").getJSONObject(0)
+        val legs = routeObj.getJSONArray("legs")
+        val arrivals = mutableListOf<Int>()
+        val geometry = mutableListOf<GeoPoint>()
+        var acc = 0.0
+        for (i in 0 until legs.length()) {
+            val leg = legs.getJSONObject(i)
+            acc += leg.getJSONObject("summary").getDouble("travelTimeInSeconds") / 60.0 + 2.0
+            arrivals += acc.roundToInt()
+            val pts = leg.getJSONArray("points")
+            for (j in 0 until pts.length()) {
+                val p = pts.getJSONObject(j)
+                geometry += GeoPoint(p.getDouble("latitude"), p.getDouble("longitude"))
+            }
+        }
+        MultiRoute(
+            distanceKm = routeObj.getJSONObject("summary").getDouble("lengthInMeters") / 1000.0,
+            minutes = acc.roundToInt(),
+            arrivalMinutes = arrivals,
+            geometry = geometry,
+            provider = "TomTom"
+        )
+    }.getOrNull()
 
     /** Odrzucamy punkty dalej niz 40 km od pozycji / miasta – to blad geokodowania. */
     private fun sane(point: GeoPoint, anchor: GeoPoint?): Boolean = anchor == null || Geo.haversineKm(point, anchor) <= 40.0
@@ -275,15 +436,18 @@ class RouteAdvisor(private val context: Context, private val prefs: AppPrefs) {
     private fun geocode(query: String, near: GeoPoint?, cityHint: String): GeoPoint? {
         val key = query.lowercase(Locale.ROOT)
         if (geocodeCache.containsKey(key)) return geocodeCache[key]
-        val withCity = if (cityHint.isNotBlank() && !key.contains(cityHint.lowercase(Locale.ROOT))) "$query, $cityHint" else query
-        val result = geocodeSystem(withCity, near) ?: geocodeNominatim(withCity, near)
+        val withCity = if (cityHint.isNotBlank() && !key.contains(cityHint.lowercase(Locale.ROOT)) && AddressKey.postalCode(query) == null) "$query, $cityHint" else query
+        // Kod pocztowy z adresu jest kontrola: wynik z innym kodem to inna ulica o tej samej nazwie.
+        val postal = AddressKey.postalCode(query)
+        val result = geocodeSystem(withCity, near, postal) ?: geocodeNominatim(withCity, near, postal)
+            ?: postal?.let { geocodeSystem(withCity, near, null) ?: geocodeNominatim(withCity, near, null) }
         geocodeCache[key] = result
         if (geocodeCache.size > 400) geocodeCache.keys.take(100).forEach { geocodeCache.remove(it) }
         return result
     }
 
     @Suppress("DEPRECATION")
-    private fun geocodeSystem(query: String, near: GeoPoint?): GeoPoint? {
+    private fun geocodeSystem(query: String, near: GeoPoint?, postal: String?): GeoPoint? {
         if (!Geocoder.isPresent()) return null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             // Na API 33 synchroniczna wersja nadal dziala, a asynchroniczna wymagalaby
@@ -292,23 +456,31 @@ class RouteAdvisor(private val context: Context, private val prefs: AppPrefs) {
         return runCatching {
             val geocoder = Geocoder(context, Locale("pl", "PL"))
             val results = if (near != null) {
-                geocoder.getFromLocationName(query, 3, near.lat - 0.35, near.lon - 0.5, near.lat + 0.35, near.lon + 0.5)
+                geocoder.getFromLocationName(query, 5, near.lat - 0.35, near.lon - 0.5, near.lat + 0.35, near.lon + 0.5)
             } else {
-                geocoder.getFromLocationName(query, 3)
+                geocoder.getFromLocationName(query, 5)
             }
-            results?.firstOrNull { it.hasLatitude() && it.hasLongitude() }?.let { GeoPoint(it.latitude, it.longitude) }
+            results?.filter { it.hasLatitude() && it.hasLongitude() }
+                ?.firstOrNull { postal == null || it.postalCode == null || it.postalCode == postal }
+                ?.let { GeoPoint(it.latitude, it.longitude) }
         }.getOrNull()
     }
 
-    private fun geocodeNominatim(query: String, near: GeoPoint?): GeoPoint? = runCatching {
+    private fun geocodeNominatim(query: String, near: GeoPoint?, postal: String?): GeoPoint? = runCatching {
         val viewbox = near?.let { "&viewbox=${it.lon - 0.5},${it.lat + 0.35},${it.lon + 0.5},${it.lat - 0.35}&bounded=0" }.orEmpty()
-        val url = "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=pl&q=" +
+        val url = "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&addressdetails=1&countrycodes=pl&q=" +
             URLEncoder.encode(query, "UTF-8") + viewbox
         val body = httpGet(url, mapOf("User-Agent" to USER_AGENT, "Accept-Language" to "pl")) ?: return null
         val array = org.json.JSONArray(body)
         if (array.length() == 0) return null
-        val first = array.getJSONObject(0)
-        GeoPoint(first.getString("lat").toDouble(), first.getString("lon").toDouble())
+        var chosen: JSONObject? = null
+        for (i in 0 until array.length()) {
+            val o = array.getJSONObject(i)
+            val pc = o.optJSONObject("address")?.optString("postcode").orEmpty()
+            if (postal == null || pc.isBlank() || pc == postal) { chosen = o; break }
+        }
+        val pick = chosen ?: return null
+        GeoPoint(pick.getString("lat").toDouble(), pick.getString("lon").toDouble())
     }.getOrNull()
 
     // ---- routing -------------------------------------------------------------------

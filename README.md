@@ -1,4 +1,4 @@
-# FUJARA 1.5.0
+# FUJARA 1.6.0
 
 Android app for local courier-offer profitability analysis.
 
@@ -6,7 +6,7 @@ Android app for local courier-offer profitability analysis.
 - applicationId / namespace: `pl.fujara.app`
 - targetSdk / compileSdk: 36
 - versionCode: 47
-- versionName: 1.5.0
+- versionName: 1.6.0
 - signed AAB workflow: `.github/workflows/build-play-aab.yml`
 - debug APK workflow: `.github/workflows/test-apk.yml`
 - privacy page: `docs/privacy.html`

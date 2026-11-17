@@ -34,6 +34,8 @@ class ActiveJobStore(context: Context) {
                     .put("confirmed", j.confirmed)
                     .put("extraPickups", JSONArray(j.extraPickups))
                     .put("extraDropoffs", JSONArray(j.extraDropoffs))
+                    .put("nearPickupAt", j.nearPickupAtMillis ?: JSONObject.NULL)
+                    .put("nearDropAt", j.nearDropAtMillis ?: JSONObject.NULL)
             )
         }
         prefs.edit().putString("jobs_v3", array.toString()).apply()
@@ -53,7 +55,7 @@ class ActiveJobStore(context: Context) {
                 ActiveJob(
                     platform = CourierPlatform.entries.firstOrNull { it.key == o.optString("platform") } ?: return@runCatching,
                     acceptedAtMillis = o.getLong("acceptedAt"),
-                    restaurant = o.optString("restaurant").takeIf { !o.isNull("restaurant") },
+                    restaurant = o.optString("restaurant").takeIf { !o.isNull("restaurant") && !UiNoise.isNoise(it) },
                     pickupAddress = o.optString("pickup").takeIf { !o.isNull("pickup") },
                     dropoffAddress = o.optString("dropoff").takeIf { !o.isNull("dropoff") },
                     pickupMinuteOfDay = if (o.isNull("pickupMin")) null else o.optInt("pickupMin"),
@@ -68,7 +70,9 @@ class ActiveJobStore(context: Context) {
                     pickedUpAtMillis = if (o.isNull("pickedUpAt")) null else o.optLong("pickedUpAt"),
                     confirmed = o.optBoolean("confirmed", false),
                     extraPickups = o.optJSONArray("extraPickups")?.let { a -> (0 until a.length()).map { a.optString(it) } }.orEmpty(),
-                    extraDropoffs = o.optJSONArray("extraDropoffs")?.let { a -> (0 until a.length()).map { a.optString(it) } }.orEmpty()
+                    extraDropoffs = o.optJSONArray("extraDropoffs")?.let { a -> (0 until a.length()).map { a.optString(it) } }.orEmpty(),
+                    nearPickupAtMillis = if (o.isNull("nearPickupAt")) null else o.optLong("nearPickupAt"),
+                    nearDropAtMillis = if (o.isNull("nearDropAt")) null else o.optLong("nearDropAt")
                 ).let(out::add)
             }
         }

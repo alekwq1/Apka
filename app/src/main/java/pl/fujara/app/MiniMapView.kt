@@ -73,6 +73,8 @@ object TileCache {
  */
 class MiniMapView(context: Context) : View(context) {
     private var points: List<MapPoint> = emptyList()
+    private var activeRoute: List<GeoPoint> = emptyList()
+    private var newRoute: List<GeoPoint> = emptyList()
     private var tilesEnabled = true
     private var zoom = 13
     private var originPxX = 0.0
@@ -82,8 +84,10 @@ class MiniMapView(context: Context) : View(context) {
     private val dimPaint = Paint().apply { color = Color.argb(70, 255, 255, 255) }
     private val bgPaint = Paint().apply { color = Color.rgb(38, 42, 52) }
     private val gridPaint = Paint().apply { color = Color.argb(60, 255, 255, 255); strokeWidth = 1f }
-    private val activeLine = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(255, 140, 0); strokeWidth = dp(3f); style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
-    private val newLine = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(46, 204, 113); strokeWidth = dp(3f); style = Paint.Style.STROKE; pathEffect = DashPathEffect(floatArrayOf(dp(6f), dp(5f)), 0f); strokeCap = Paint.Cap.ROUND }
+    // 1.6: biezaca trasa (zlecenia w trakcie) – ZIELONA; trasa z nowa oferta – pomaranczowa, pod spodem.
+    private val activeLine = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(46, 204, 113); strokeWidth = dp(3.5f); style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
+    private val newLine = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(220, 255, 140, 0); strokeWidth = dp(6f); style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
+    private val newLineDashed = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(255, 140, 0); strokeWidth = dp(3f); style = Paint.Style.STROKE; pathEffect = DashPathEffect(floatArrayOf(dp(6f), dp(5f)), 0f); strokeCap = Paint.Cap.ROUND }
     private val markerFill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val markerStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.STROKE; strokeWidth = dp(2f) }
     private val markerText = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = dp(10f); textAlign = Paint.Align.CENTER; isFakeBoldText = true }
@@ -93,8 +97,10 @@ class MiniMapView(context: Context) : View(context) {
     private val attributionBg = Paint().apply { color = Color.argb(150, 255, 255, 255) }
     private val scalePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK; strokeWidth = dp(2f); textSize = dp(8f) }
 
-    fun setData(points: List<MapPoint>, tilesEnabled: Boolean) {
+    fun setData(points: List<MapPoint>, tilesEnabled: Boolean, activeRoute: List<GeoPoint> = emptyList(), newRoute: List<GeoPoint> = emptyList()) {
         this.points = points
+        this.activeRoute = activeRoute
+        this.newRoute = newRoute
         this.tilesEnabled = tilesEnabled
         requestLayout()
         invalidate()
@@ -110,8 +116,9 @@ class MiniMapView(context: Context) : View(context) {
 
     private fun fitView() {
         if (points.isEmpty() || width == 0 || height == 0) return
-        val lats = points.map { it.point.lat }
-        val lons = points.map { it.point.lon }
+        val all = points.map { it.point } + activeRoute + newRoute
+        val lats = all.map { it.lat }
+        val lons = all.map { it.lon }
         val minLat = lats.min(); val maxLat = lats.max()
         val minLon = lons.min(); val maxLon = lons.max()
         val pad = dp(26f)
@@ -159,26 +166,22 @@ class MiniMapView(context: Context) : View(context) {
             while (y < height) { canvas.drawLine(0f, y, width.toFloat(), y, gridPaint); y += 64f }
         }
 
-        // Linie: ja → punkty biezacych (pomaranczowa), nowy odbior → nowa dostawa (zielona przerywana)
-        val me = points.firstOrNull { it.kind == MapPoint.Kind.ME }
-        val active = points.filter { it.kind == MapPoint.Kind.ACTIVE_PICKUP || it.kind == MapPoint.Kind.ACTIVE_DROP }
-        if (active.isNotEmpty()) {
-            val path = Path()
-            val seq = listOfNotNull(me) + active
-            seq.forEachIndexed { index, mp ->
-                val (x, y) = toScreen(mp.point)
-                if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
-            }
-            canvas.drawPath(path, activeLine)
+        // Linie: najpierw trasa z nowa oferta (szeroka, pomaranczowa), na niej biezaca (zielona).
+        fun pathOf(geo: List<GeoPoint>): Path = Path().apply {
+            geo.forEachIndexed { i, g -> val (x, y) = toScreen(g); if (i == 0) moveTo(x, y) else lineTo(x, y) }
         }
-        val newPoints = points.filter { it.kind == MapPoint.Kind.NEW_PICKUP } + points.filter { it.kind == MapPoint.Kind.NEW_DROP }
-        if (newPoints.isNotEmpty()) {
-            val path = Path()
-            val start = me ?: newPoints.first()
-            val (sx, sy) = toScreen(start.point)
-            path.moveTo(sx, sy)
-            newPoints.forEach { mp -> val (x, y) = toScreen(mp.point); path.lineTo(x, y) }
-            canvas.drawPath(path, newLine)
+        val me = points.firstOrNull { it.kind == MapPoint.Kind.ME }
+        if (newRoute.size >= 2) {
+            canvas.drawPath(pathOf(newRoute), newLine)
+        } else {
+            val newPoints = points.filter { it.kind == MapPoint.Kind.NEW_PICKUP } + points.filter { it.kind == MapPoint.Kind.NEW_DROP }
+            if (newPoints.isNotEmpty()) canvas.drawPath(pathOf(listOfNotNull(me?.point) + newPoints.map { it.point }), newLineDashed)
+        }
+        if (activeRoute.size >= 2) {
+            canvas.drawPath(pathOf(activeRoute), activeLine)
+        } else {
+            val active = points.filter { it.kind == MapPoint.Kind.ACTIVE_PICKUP || it.kind == MapPoint.Kind.ACTIVE_DROP }
+            if (active.isNotEmpty()) canvas.drawPath(pathOf(listOfNotNull(me?.point) + active.map { it.point }), activeLine)
         }
 
         // Markery
@@ -188,10 +191,10 @@ class MiniMapView(context: Context) : View(context) {
             val radius = if (mp.kind == MapPoint.Kind.ME) dp(6f) else dp(9f)
             markerFill.color = when (mp.kind) {
                 MapPoint.Kind.ME -> Color.rgb(66, 133, 244)
-                MapPoint.Kind.ACTIVE_PICKUP -> Color.rgb(255, 140, 0)
-                MapPoint.Kind.ACTIVE_DROP -> Color.rgb(230, 90, 0)
-                MapPoint.Kind.NEW_PICKUP -> Color.rgb(46, 204, 113)
-                MapPoint.Kind.NEW_DROP -> Color.rgb(24, 160, 90)
+                MapPoint.Kind.ACTIVE_PICKUP -> Color.rgb(46, 204, 113)
+                MapPoint.Kind.ACTIVE_DROP -> Color.rgb(24, 150, 80)
+                MapPoint.Kind.NEW_PICKUP -> Color.rgb(255, 140, 0)
+                MapPoint.Kind.NEW_DROP -> Color.rgb(220, 90, 0)
             }
             canvas.drawCircle(x, y, radius, markerFill)
             canvas.drawCircle(x, y, radius, markerStroke)

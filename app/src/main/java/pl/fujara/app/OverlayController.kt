@@ -852,7 +852,7 @@ class OverlayController(
         }
         miniMap?.apply {
             if (extras.mapPoints.size >= 2) {
-                setData(extras.mapPoints, extras.mapTiles)
+                setData(extras.mapPoints, extras.mapTiles, extras.activeRoute, extras.newRoute)
                 visibility = View.VISIBLE
             } else {
                 visibility = View.GONE
@@ -1253,6 +1253,8 @@ data class OverlayExtras(
     val spatialVerdict: SpatialVerdict.Verdict? = null,
     val mapPoints: List<MapPoint> = emptyList(),
     val mapTiles: Boolean = true,
+    val activeRoute: List<GeoPoint> = emptyList(),
+    val newRoute: List<GeoPoint> = emptyList(),
     val voiceState: VoiceState? = null,
     val voiceHint: String? = null,
     val voiceKeyword: String = "",

@@ -14,6 +14,11 @@ enum class ScreenKind {
 }
 
 object ScreenClassifier {
+    /** Pyszne bez zlecen: "Szukamy dla Ciebie zleceń / Powiadomimy Cię, gdy pojawi się nowe zlecenie". */
+    private val pyszneIdle = Regex("""(?i)szukamy\s+dla\s+ciebie\s+zlece|powiadomimy\s+ci[eę],?\s+gdy\s+pojawi\s+si[eę]\s+nowe\s+zlecenie""")
+
+    fun isPyszneIdle(text: String): Boolean = pyszneIdle.containsMatchIn(text)
+
     private val acceptMarker = Regex(
         """(?i)(?<!\p{L})(?:akceptuj|zaakceptuj|accept|jestem\s+zainteresowany|przyjmij|прийняти|принять)(?!\p{L})"""
     )
@@ -129,15 +134,18 @@ object PyszneOfferDetailsParser {
                 if (restaurant == null) {
                     val candidates = (if (inline.isNotBlank()) listOf(inline) else emptyList()) + lines.drop(i + 1).take(4)
                     restaurant = candidates.firstOrNull { c ->
-                        !AddressLines.isAddress(c) && !timeLine.containsMatchIn(c) && !noise.containsMatchIn(c) && c.length in 2..80
+                        !AddressLines.isAddress(c) && !timeLine.containsMatchIn(c) && !noise.containsMatchIn(c) && c.length in 2..80 && !UiNoise.isNoise(c)
                     }
                 }
-                AddressLines.firstAddress(lines, i + 1, 4)?.let { if (it !in pickups) pickups += it }
+                AddressLines.firstAddress(lines, i + 1, 4)?.let { a -> if (pickups.none { AddressKey.of(it) == AddressKey.of(a) }) pickups += a }
                 i++
                 continue
             }
             if (dropoffLabel.find(line) != null && !timeLine.containsMatchIn(line)) {
-                AddressLines.firstAddress(lines, i + 1, 3)?.let { if (it !in drops && it !in pickups) drops += it }
+                AddressLines.firstAddress(lines, i + 1, 3)?.let { a ->
+                    val key = AddressKey.of(a)
+                    if (drops.none { AddressKey.of(it) == key } && pickups.none { AddressKey.of(it) == key }) drops += a
+                }
             }
             i++
         }
@@ -192,7 +200,7 @@ object PyszneActiveScreenParser {
         val after = if (anchor >= 0) lines.drop(anchor + 1) else lines
         val firstAddressIdx = after.indexOfFirst { AddressLines.isAddress(it) }
         if (!pickedUp) {
-            restaurant = after.take(if (firstAddressIdx >= 0) firstAddressIdx else 3).firstOrNull { !skip.containsMatchIn(it) && it.length in 2..80 }
+            restaurant = after.take(if (firstAddressIdx >= 0) firstAddressIdx else 3).firstOrNull { !skip.containsMatchIn(it) && it.length in 2..80 && !UiNoise.isNoise(it) }
             pickupAddress = after.getOrNull(firstAddressIdx)
             val orderIdx = after.indexOfFirst { orderMarker.containsMatchIn(it) }
             dropoffAddress = if (orderIdx >= 0) {
@@ -239,7 +247,10 @@ data class ActiveJob(
     val confirmed: Boolean = true,
     /** Kolejne odbiory / dostawy (paczki Wolt "2 dostaw(y) od"). */
     val extraPickups: List<String> = emptyList(),
-    val extraDropoffs: List<String> = emptyList()
+    val extraDropoffs: List<String> = emptyList(),
+    /** Kiedy lokalizacja byla pierwszy raz przy odbiorze / u klienta (postep bez klikniec). */
+    val nearPickupAtMillis: Long? = null,
+    val nearDropAtMillis: Long? = null
 ) {
     enum class Stage { TO_PICKUP, TO_CUSTOMER }
 
@@ -272,10 +283,12 @@ data class ActiveJob(
 
     /** Czy wiadomo cokolwiek konkretnego o zleceniu (bez tego nie pokazujemy go jako aktywnego). */
     val hasIdentity: Boolean
-        get() = !restaurant.isNullOrBlank() || !pickupAddress.isNullOrBlank() || !dropoffAddress.isNullOrBlank()
+        get() = (!restaurant.isNullOrBlank() && !UiNoise.isNoise(restaurant)) || !pickupAddress.isNullOrBlank() || !dropoffAddress.isNullOrBlank()
 
     val label: String
-        get() = restaurant ?: pickupAddress ?: platform.key.replaceFirstChar { it.uppercase() }
+        get() = restaurant?.takeUnless { UiNoise.isNoise(it) }
+            ?: (if (stage == Stage.TO_CUSTOMER) dropoffAddress else pickupAddress)?.substringBefore(',')
+            ?: platform.key.replaceFirstChar { it.uppercase() }
 
     private fun normalizeAfter(minute: Int, now: Int): Int = if (minute < now - 12 * 60) minute + 24 * 60 else minute
 }
@@ -304,7 +317,7 @@ class ActiveJobTracker(
         jobs[platform] = ActiveJob(
             platform = platform,
             acceptedAtMillis = nowMillis,
-            restaurant = restaurant,
+            restaurant = restaurant?.takeUnless { UiNoise.isNoise(it) },
             pickupAddress = pickupAddress,
             dropoffAddress = dropoffAddress,
             pickupMinuteOfDay = offer.pickupTimeMinutesOfDay,
@@ -325,12 +338,13 @@ class ActiveJobTracker(
         nowMillis: Long,
         pickupMinute: Int?,
         deliveryMinute: Int?,
-        restaurant: String?,
+        rawRestaurant: String?,
         pickedUp: Boolean,
         pickupAddress: String? = null,
         dropoffAddress: String? = null,
         etaMinutes: Int? = null
     ) {
+        val restaurant = rawRestaurant?.takeUnless { UiNoise.isNoise(it) }
         val existing = jobs[platform]?.takeIf { nowMillis - it.lastSeenAtMillis <= staleAfterMs }
         // Inna restauracja niz w zapamietanym zleceniu = nowe zlecenie tej platformy.
         val sameJob = existing != null && (
@@ -407,6 +421,11 @@ class ActiveJobTracker(
     fun hasJob(platform: CourierPlatform, nowMillis: Long): Boolean = activeJobs(nowMillis).any { it.platform == platform }
 
     fun snapshot(): List<ActiveJob> = jobs.values.toList()
+
+    /** Zastepuje zlecenie (np. po aktualizacji postepu z lokalizacji). */
+    fun replace(job: ActiveJob) {
+        if (jobs.containsKey(job.platform)) jobs[job.platform] = job
+    }
 
     fun activeJobs(nowMillis: Long): List<ActiveJob> {
         jobs.entries.removeIf { nowMillis - it.value.lastSeenAtMillis > staleAfterMs }
