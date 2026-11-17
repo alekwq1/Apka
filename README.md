@@ -5,7 +5,7 @@ Android app for local courier-offer profitability analysis.
 ## Google Play readiness
 - applicationId / namespace: `pl.fujara.app`
 - targetSdk / compileSdk: 36
-- versionCode: 47
+- versionCode: 48
 - versionName: 1.6.0
 - signed AAB workflow: `.github/workflows/build-play-aab.yml`
 - debug APK workflow: `.github/workflows/test-apk.yml`
