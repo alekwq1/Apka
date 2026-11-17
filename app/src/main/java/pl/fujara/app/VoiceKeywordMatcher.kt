@@ -9,7 +9,7 @@ object VoiceKeywordMatcher {
         Normalizer.normalize(text.lowercase(Locale.ROOT), Normalizer.Form.NFD)
             .replace(Regex("""\p{M}+"""), "")
             .replace('ł', 'l')
-            .replace(Regex("""[^a-z0-9 ]"""), " ")
+            .replace(Regex("""[^\p{L}0-9 ]"""), " ")
             .replace(Regex("""\s+"""), " ")
             .trim()
 
@@ -34,5 +34,34 @@ object VoiceKeywordMatcher {
     fun isNegation(hypotheses: List<String>): Boolean = hypotheses.any { h ->
         val n = normalize(h)
         n.split(' ').any { it in setOf("nie", "anuluj", "stop", "no", "cancel", "ні", "нет") }
+    }
+}
+
+/** 1.7: komendy glosowe sterujace panelem i mapa aplikacji kurierskiej. */
+enum class VoiceCommand { COLLAPSE, EXPAND, ZOOM_IN, ZOOM_OUT }
+
+object VoiceCommandMatcher {
+    private val stems: List<Pair<VoiceCommand, List<String>>> = listOf(
+        // kolejnosc ma znaczenie: "rozwin" przed "zwin"
+        VoiceCommand.EXPAND to listOf("rozwin", "pokaz", "wiecej", "szczegol", "expand", "show", "розгорн", "разверн", "покажи"),
+        VoiceCommand.COLLAPSE to listOf("zwin", "schowaj", "ukryj", "minimaliz", "collapse", "hide", "згорн", "сверн", "сховай", "скрой"),
+        VoiceCommand.ZOOM_IN to listOf("przybliz", "powieksz", "blizej", "наблиз", "приблиз", "збільш", "увелич"),
+        VoiceCommand.ZOOM_OUT to listOf("oddal", "pomniejsz", "oddalic", "віддал", "отдал", "зменш", "уменьш")
+    )
+
+    private val normalized by lazy { stems.map { (c, l) -> c to l.map { VoiceKeywordMatcher.normalize(it) } } }
+
+    fun parse(hypotheses: List<String>): VoiceCommand? {
+        for (h in hypotheses) {
+            val n = VoiceKeywordMatcher.normalize(h)
+            if (n.isBlank()) continue
+            if (Regex("""\bzoom (in|w gore)\b""").containsMatchIn(n)) return VoiceCommand.ZOOM_IN
+            if (Regex("""\bzoom (out|w dol)\b""").containsMatchIn(n)) return VoiceCommand.ZOOM_OUT
+            val words = n.split(' ')
+            for ((cmd, list) in normalized) {
+                if (words.any { w -> list.any { st -> w.startsWith(st) } }) return cmd
+            }
+        }
+        return null
     }
 }

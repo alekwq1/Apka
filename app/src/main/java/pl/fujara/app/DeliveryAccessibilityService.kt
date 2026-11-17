@@ -137,7 +137,8 @@ class DeliveryAccessibilityService : AccessibilityService() {
                     overlay.updateExtras(overlay.currentExtras().copy(voiceState = state, voiceHint = hint, voiceKeyword = prefs.voiceRejectKeyword))
                 }
             },
-            onConfirmedReject = { performVoiceReject() }
+            onConfirmedReject = { performVoiceReject() },
+            onCommand = { command -> handleVoiceCommand(command) }
         )
         // Klikniecia Akceptuj/Odrzuc sa potrzebne do statystyk decyzji.
         runCatching {
@@ -1188,7 +1189,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
             val seenRestaurant = updateActiveJobFromScreen(platform, sourceText, offer, details, nowMillis)
             decisionTracker.activeDeliveryScreenSeen(platform, nowMillis, seenRestaurant, previousJob?.restaurant, previousJob != null)
             persistDecisions()
-            onOfferGone()
+            onOfferGone(keepVoiceSession = true)
             val jobsNow = activeJobTracker.displayJobs(nowMillis)
             val activeSig = "active|" + jobsNow.joinToString(";") { it.platform.key + it.stage.name + it.remainingAddresses().joinToString("/") { a -> a.first } }
             val cachedActive = lastActiveAdvice?.takeIf { lastActiveSignature == activeSig }
@@ -1222,9 +1223,13 @@ class DeliveryAccessibilityService : AccessibilityService() {
                     mapPoints = if (prefs.showMiniMap && cachedActive != null && cachedActive.points.size >= 2) cachedActive.points else emptyList(),
                     activeRoute = cachedActive?.activeRoute.orEmpty(),
                     mapTiles = prefs.mapTilesEnabled,
+                    voiceState = if (prefs.voiceCommandsEnabled) voiceState else null,
+                    voiceHint = voiceHint,
+                    voiceKeyword = prefs.voiceRejectKeyword,
                     decisionCounter = decisionCounterLabel()
                 )
             )
+            voice?.panelAppeared()
             return
         }
 
@@ -1767,10 +1772,27 @@ class DeliveryAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun onOfferGone() {
+    private fun onOfferGone(keepVoiceSession: Boolean = false) {
         decisionTracker.offerNotVisible(System.currentTimeMillis())
         persistDecisions()
-        voice?.offerGone()
+        if (keepVoiceSession) voice?.offerHiddenKeepSession() else voice?.offerGone()
+    }
+
+    /**
+     * 1.7: komendy glosowe. Zwin/rozwin steruja panelem FUJARY; przybliz/oddal robia gest
+     * dwoma palcami na mapie aplikacji kurierskiej (tylko gdy Wolt / Pyszne jest na wierzchu).
+     */
+    private fun handleVoiceCommand(command: VoiceCommand): Boolean {
+        if (!::overlay.isInitialized) return false
+        return when (command) {
+            VoiceCommand.COLLAPSE -> overlay.voiceCollapse()
+            VoiceCommand.EXPAND -> overlay.voiceExpand()
+            VoiceCommand.ZOOM_IN, VoiceCommand.ZOOM_OUT -> {
+                val pkg = rootInActiveWindow?.packageName?.toString().orEmpty()
+                if (!isDeliveryPackage(pkg)) return false
+                RejectActionPerformer.pinch(this, zoomIn = command == VoiceCommand.ZOOM_IN, centerXFraction = 0.5f, centerYFraction = 0.40f)
+            }
+        }
     }
 
     private fun persistDecisions() {

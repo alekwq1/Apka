@@ -256,6 +256,16 @@ class AppPrefs(private val context: Context) {
         get() = prefs.getBoolean("show_mini_map", true)
         set(value) = prefs.edit().putBoolean("show_mini_map", value).apply()
 
+    /** 1.7: panel w widoku podstawowym – kwota, zł/h, zł/km; mapa i teksty dopiero po rozwinięciu. */
+    var overlayCompact: Boolean
+        get() = prefs.getBoolean("overlay_compact", true)
+        set(value) = prefs.edit().putBoolean("overlay_compact", value).apply()
+
+    /** 1.7: komendy głosowe zwiń / rozwiń / przybliż / oddal przy widocznym panelu. */
+    var voiceCommandsEnabled: Boolean
+        get() = prefs.getBoolean("voice_commands_enabled", true)
+        set(value) = prefs.edit().putBoolean("voice_commands_enabled", value).apply()
+
     /** Czy aplikacja juz raz poprosila o mikrofon i lokalizacje przy starcie. */
     var assistantPermissionsAsked: Int
         get() = prefs.getInt("assistant_permissions_asked", 0)

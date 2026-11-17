@@ -799,28 +799,9 @@ private fun HomeScreen(
         cashTipsPln = liveCashTips,
         extraPauseMinutes = storedToday?.extraPauseMinutes ?: 0
     )
-    // 1.5: suma dnia = Pyszne + Wolt, PLN/h z czasu pracy Start/Pauza/Stop.
-    val woltOrderStore = remember { WoltOrderStore(context) }
-    val offerEventStore = remember { OfferEventStore(context) }
-    val workStore = remember { WorkSessionStore(context) }
-    val woltToday = remember(refreshToken / 4) {
-        WoltDayPartCalculator.calculate(
-            date = today,
-            orders = woltOrderStore.mergedForDate(today),
-            officialDayTotal = woltOrderStore.dayTotal(today),
-            acceptedOffers = offerEventStore.forDate(today),
-            rules = prefs.rulesForPlatform(CourierPlatform.WOLT),
-            decisionBasis = prefs.decisionBasis,
-            zusPercent = if (prefs.zusEnabled) prefs.zusPercent else 0.0
-        )
-    }
-    // 1.6: PLN/h na zywo – czas pracy z Start/Pauza, a bez niego z aktywnosci dnia (przerwy > 25 min odpadaja).
-    val workMinutesToday = remember(refreshToken / 20) {
-        val now = System.currentTimeMillis()
-        val activity = offerEventStore.forDate(today).flatMap { listOfNotNull(it.shownAtMillis, it.decidedAtMillis) }
-        ActivityWorkTime.effective(workStore.todayMinutes(now), activity, now)
-    }
-    val todaySummary = CombinedDayCalculator.combine(pyszneSummary, woltToday, workMinutesToday)
+    // 1.7: zweryfikowany bilans dnia: oficjalne sumy Pyszne/Wolt, czas pracy Start/Pauza (albo z aktywnosci).
+    val todayAudit = rememberDayAudit(prefs, today, refreshToken, liveCashTips)
+    val todaySummary = todayAudit.asSummary(pyszneSummary)
     val active = serviceEnabled && analysisEnabled
     val goal = prefs.dailyGoalNetPln.coerceAtLeast(0.0)
     val progress = if (goal > 0.0) (todaySummary.netPln / goal).toFloat().coerceIn(0f, 1f) else 0f
@@ -880,7 +861,7 @@ private fun HomeScreen(
 
         WorkShiftCard(language = language.code)
 
-        WoltDayCard(language = language.code, date = today, refresh = refreshToken, compact = true)
+        DayAuditCard(language = language.code, audit = todayAudit)
 
         TodayPerformanceCard(
             summary = todaySummary,
@@ -1799,7 +1780,7 @@ private fun PyszneSummaryScreen(
         }
 
         WoltDayCard(language = language.code, date = selectedDate, refresh = refreshToken)
-        CombinedDayTotalCard(language = language.code, prefs = prefs, date = selectedDate, pyszne = summary, refresh = refreshToken)
+        DayAuditCard(language = language.code, audit = rememberDayAudit(prefs, selectedDate, refreshToken, cashTips))
 
         Surface(
             modifier = Modifier.fillMaxWidth().clickable { verificationExpanded = !verificationExpanded },

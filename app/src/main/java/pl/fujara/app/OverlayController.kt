@@ -48,6 +48,9 @@ class OverlayController(
     private var currentHistoryAlreadySaved: Boolean = false
     private var onSaveHistory: ((PyszneDeliveryLog) -> PyszneSaveResult)? = null
     private var userCollapsed = false
+    // 1.7: widok podstawowy (kwota, zł/h, zł/km); szczegoly pod przyciskiem ⋯ albo glosem "rozwiń".
+    private var detailsExpanded = false
+    private var detailsRoot: TextView? = null
     private var overlayLanguage = ""
     private var fujaraGauge: FujaraGaugeView? = null
     private var lastHapticSignature: String? = null
@@ -81,6 +84,7 @@ class OverlayController(
         platform: CourierPlatform? = null,
         extras: OverlayExtras = OverlayExtras()
     ) {
+        lastShowArgs = { show(result, applicationName, applicationIcon, blacklistHits, historyEntry, historyAlreadySaved, onSaveHistory, platform, lastExtras) }
         val language = prefs.languageCode
         if (root == null || overlayLanguage != language) {
             removeOverlayView()
@@ -262,12 +266,81 @@ class OverlayController(
             }
         }
         logicallyShown = true
+        enforceCompact()
+        syncDetailsToggle()
         if (isSuppressed()) applySuppression()
+    }
+
+    private fun compactActive(): Boolean = prefs.overlayCompact && !detailsExpanded
+
+    /** W widoku podstawowym chowamy wszystko poza kwota, zł/h i zł/km (i alertem czarnej listy). */
+    private fun enforceCompact() {
+        if (!compactActive()) return
+        listOfNotNull(distanceRow?.row, scheduleText, timeSourceText, zusText, assistantText, spatialText, miniMap, routeText, decisionCounterText)
+            .forEach { it.visibility = View.GONE }
+        if (lastExtras.voiceState != VoiceState.CONFIRMING) voiceText?.visibility = View.GONE
+    }
+
+    private fun syncDetailsToggle() {
+        val toggle = detailsRoot ?: return
+        val panelShown = root?.visibility == View.VISIBLE && !isSuppressed()
+        toggle.visibility = if (prefs.overlayCompact && panelShown) View.VISIBLE else View.GONE
+        toggle.text = if (detailsExpanded) "▴" else "⋯"
+    }
+
+    /** Pelny widok ↔ podstawowy (bez przebudowy panelu – odtwarzamy ostatnie dane). */
+    fun toggleDetails() { setDetailsExpanded(!detailsExpanded) }
+
+    private fun setDetailsExpanded(value: Boolean) {
+        detailsExpanded = value
+        val last = lastShowArgs
+        if (last != null && logicallyShown) last() else { applyExtras(lastExtras, prefs.languageCode); enforceCompact() }
+        syncDetailsToggle()
+    }
+
+    private fun collapsePanel() {
+        userCollapsed = true
+        root?.visibility = View.GONE
+        collapseRoot?.visibility = View.GONE
+        restoreRoot?.visibility = View.VISIBLE
+        saveHistoryRoot?.visibility = View.GONE
+        syncDetailsToggle()
+    }
+
+    private fun restorePanel() {
+        userCollapsed = false
+        restoreRoot?.visibility = View.GONE
+        root?.visibility = View.VISIBLE
+        collapseRoot?.visibility = View.VISIBLE
+        if (currentHistoryEntry != null) {
+            saveHistoryRoot?.visibility = View.VISIBLE
+            positionHistorySaveButton()
+        }
+        syncDetailsToggle()
+    }
+
+    /** Glos "zwiń": najpierw chowa szczegoly, potem caly panel. Zwraca opis wykonanej akcji. */
+    fun voiceCollapse(): Boolean {
+        if (!logicallyShown) return false
+        if (prefs.overlayCompact && detailsExpanded) setDetailsExpanded(false) else if (!userCollapsed) collapsePanel() else return false
+        return true
+    }
+
+    /** Glos "rozwiń": najpierw przywraca zwiniety panel, potem pokazuje szczegoly. */
+    fun voiceExpand(): Boolean {
+        if (!logicallyShown) return false
+        when {
+            userCollapsed -> restorePanel()
+            prefs.overlayCompact && !detailsExpanded -> setDetailsExpanded(true)
+            else -> return false
+        }
+        return true
     }
 
     // ---- 1.5: chwilowe ukrycie panelu na czas odczytu rozwinietej karty ----
     // OCR maskuje obszar panelu, wiec adresy pod panelem byly niewidoczne (brak dostawy Wolt).
     private var suppressedUntil = 0L
+    private var lastShowArgs: (() -> Unit)? = null
     private var logicallyShown = false
 
     private fun isSuppressed(): Boolean = System.currentTimeMillis() < suppressedUntil
@@ -277,6 +350,7 @@ class OverlayController(
         collapseRoot?.visibility = View.GONE
         restoreRoot?.visibility = View.GONE
         saveHistoryRoot?.visibility = View.GONE
+        detailsRoot?.visibility = View.GONE
     }
 
     fun suppress(durationMs: Long) {
@@ -295,12 +369,16 @@ class OverlayController(
             root?.visibility = View.VISIBLE
             collapseRoot?.visibility = View.VISIBLE
         }
+        syncDetailsToggle()
     }
 
     fun hide() {
         logicallyShown = false
         suppressedUntil = 0L
         userCollapsed = false
+        detailsExpanded = false
+        lastShowArgs = null
+        detailsRoot?.visibility = View.GONE
         root?.visibility = View.GONE
         collapseRoot?.visibility = View.GONE
         restoreRoot?.visibility = View.GONE
@@ -345,6 +423,8 @@ class OverlayController(
         collapseRoot?.let { runCatching { windowManager.removeView(it) } }
         restoreRoot?.let { runCatching { windowManager.removeView(it) } }
         saveHistoryRoot?.let { runCatching { windowManager.removeView(it) } }
+        detailsRoot?.let { runCatching { windowManager.removeView(it) } }
+        detailsRoot = null
         root = null
         collapseRoot = null
         restoreRoot = null
@@ -454,7 +534,7 @@ class OverlayController(
         // klikniec mapy/akceptacji pod soba.
         header.addView(
             View(service),
-            LinearLayout.LayoutParams(dp(30), dp(30))
+            LinearLayout.LayoutParams(if (prefs.overlayCompact) dp(62) else dp(30), dp(30))
         )
         panel.addView(header)
 
@@ -619,13 +699,7 @@ class OverlayController(
             isClickable = true
             isFocusable = false
             contentDescription = tr(language, "Ukryj panel (przeciągnij, aby przesunąć)", "Hide panel (drag to move)", "Сховати панель (перетягни, щоб пересунути)", "Скрыть панель (перетащи, чтобы переместить)")
-            setOnClickListener {
-                userCollapsed = true
-                panel.visibility = View.GONE
-                visibility = View.GONE
-                restoreRoot?.visibility = View.VISIBLE
-                saveHistoryRoot?.visibility = View.GONE
-            }
+            setOnClickListener { collapsePanel() }
             setOnTouchListener(DragHandleTouchListener(this))
         }
         val collapseParams = WindowManager.LayoutParams(
@@ -644,6 +718,35 @@ class OverlayController(
         windowManager.addView(collapse, collapseParams)
         collapseRoot = collapse
 
+        val details = TextView(service).apply {
+            text = "⋯"
+            textSize = 15f
+            gravity = Gravity.CENTER
+            setTextColor(white)
+            setTypeface(typeface, Typeface.BOLD)
+            background = pillBackground(gray)
+            isClickable = true
+            isFocusable = false
+            visibility = View.GONE
+            contentDescription = tr(language, "Pokaż / ukryj szczegóły", "Show / hide details", "Деталі", "Детали")
+            setOnClickListener { toggleDetails() }
+        }
+        val detailsParams = WindowManager.LayoutParams(
+            dp(30),
+            dp(30),
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.END
+            x = dp(43)
+            y = dp(66)
+        }
+        windowManager.addView(details, detailsParams)
+        detailsRoot = details
+
         val restore = TextView(service).apply {
             text = "FUJARA  👁"
             textSize = 10f
@@ -656,16 +759,7 @@ class OverlayController(
             isClickable = true
             isFocusable = false
             contentDescription = tr(language, "Pokaż panel FUJARA", "Show FUJARA panel", "Показати панель FUJARA", "Показать панель FUJARA")
-            setOnClickListener {
-                userCollapsed = false
-                visibility = View.GONE
-                panel.visibility = View.VISIBLE
-                collapseRoot?.visibility = View.VISIBLE
-                if (currentHistoryEntry != null) {
-                    saveHistoryRoot?.visibility = View.VISIBLE
-                    positionHistorySaveButton()
-                }
-            }
+            setOnClickListener { restorePanel() }
         }
         val restoreParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -746,6 +840,7 @@ class OverlayController(
         update(root, dp(8), currentTopOffsetPx)
         update(restoreRoot, dp(8), currentTopOffsetPx)
         update(collapseRoot, dp(11), currentTopOffsetPx + dp(8))
+        update(detailsRoot, dp(43), currentTopOffsetPx + dp(8))
         if (saveHistoryRoot?.visibility == View.VISIBLE) positionHistorySaveButton()
     }
 
@@ -809,6 +904,7 @@ class OverlayController(
         if (root == null) return
         lastExtras = extras
         applyExtras(extras, prefs.languageCode)
+        enforceCompact()
     }
 
     fun currentExtras(): OverlayExtras = lastExtras

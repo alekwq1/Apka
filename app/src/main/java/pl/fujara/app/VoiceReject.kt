@@ -34,7 +34,9 @@ class VoiceRejectController(
     private val service: AccessibilityService,
     private val prefs: AppPrefs,
     private val onStateChanged: (VoiceState, String?) -> Unit,
-    private val onConfirmedReject: () -> Unit
+    private val onConfirmedReject: () -> Unit,
+    /** 1.7: komenda glosowa (zwiń / rozwiń / przybliż / oddal); zwraca true, gdy wykonano. */
+    private val onCommand: (VoiceCommand) -> Boolean = { false }
 ) {
     private val handler = Handler(Looper.getMainLooper())
     private var recognizer: SpeechRecognizer? = null
@@ -42,6 +44,13 @@ class VoiceRejectController(
     private var ttsReady = false
     private var state: VoiceState = VoiceState.OFF
     private var offerVisible = false
+    /** Panel FUJARA widoczny (oferta albo zlecenie w trakcie) – nasluch komend. */
+    private var sessionActive = false
+    private var lastCommand: VoiceCommand? = null
+    private var lastCommandAt = 0L
+
+    private fun listeningWanted(): Boolean =
+        sessionActive && ((offerVisible && prefs.voiceRejectEnabled) || prefs.voiceCommandsEnabled)
     private var consecutiveErrors = 0
     private var confirmDeadline: Runnable? = null
     private var restartRunnable: Runnable? = null
@@ -54,7 +63,29 @@ class VoiceRejectController(
 
     fun offerAppeared() {
         offerVisible = true
-        if (!prefs.voiceRejectEnabled) return
+        sessionActive = true
+        startSessionIfNeeded()
+    }
+
+    /** Ekran zlecenia w trakcie: brak oferty do odrzucenia, ale komendy (zwiń, przybliż…) dzialaja. */
+    fun panelAppeared() {
+        offerVisible = false
+        sessionActive = true
+        startSessionIfNeeded()
+    }
+
+    /** Oferta zniknela, ale panel FUJARA nadal widoczny (np. ekran zlecenia w trakcie). */
+    fun offerHiddenKeepSession() {
+        offerVisible = false
+        if (state == VoiceState.CONFIRMING) {
+            confirmDeadline?.let(handler::removeCallbacks)
+            confirmDeadline = null
+            scheduleRestart(200L, confirmMode = false)
+        }
+    }
+
+    private fun startSessionIfNeeded() {
+        if (!listeningWanted()) return
         if (state == VoiceState.LISTENING || state == VoiceState.CONFIRMING || state == VoiceState.EXECUTING) return
         if (!hasPermission() || !SpeechRecognizer.isRecognitionAvailable(service)) {
             setState(VoiceState.UNAVAILABLE)
@@ -66,6 +97,7 @@ class VoiceRejectController(
 
     fun offerGone() {
         offerVisible = false
+        sessionActive = false
         stopAll()
         setState(VoiceState.OFF)
     }
@@ -91,7 +123,7 @@ class VoiceRejectController(
     }
 
     private fun startListening(confirmMode: Boolean) {
-        if (!offerVisible || !prefs.voiceRejectEnabled) return
+        if (!listeningWanted()) return
         val speech = ensureRecognizer() ?: run { setState(VoiceState.UNAVAILABLE); return }
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
@@ -114,7 +146,7 @@ class VoiceRejectController(
         restartRunnable?.let(handler::removeCallbacks)
         restartRunnable = Runnable {
             restartRunnable = null
-            if (offerVisible && prefs.voiceRejectEnabled) startListening(confirmMode)
+            if (listeningWanted()) startListening(confirmMode && offerVisible)
         }.also { handler.postDelayed(it, delayMs) }
     }
 
@@ -130,7 +162,22 @@ class VoiceRejectController(
         if (hypotheses.isEmpty()) return
         when (state) {
             VoiceState.LISTENING -> {
-                if (VoiceKeywordMatcher.matches(hypotheses, prefs.voiceRejectKeyword)) {
+                val command = if (prefs.voiceCommandsEnabled) VoiceCommandMatcher.parse(hypotheses) else null
+                if (command != null) {
+                    val now = System.currentTimeMillis()
+                    // Wyniki czastkowe i koncowe niosa te sama komende – wykonujemy raz.
+                    if (command == lastCommand && now - lastCommandAt < 2_000L) {
+                        if (final) scheduleRestart(250L, confirmMode = false)
+                        return
+                    }
+                    lastCommand = command
+                    lastCommandAt = now
+                    runCatching { recognizer?.cancel() }
+                    if (onCommand(command)) HapticLanguage.record(service)
+                    scheduleRestart(700L, confirmMode = false)
+                    return
+                }
+                if (offerVisible && prefs.voiceRejectEnabled && VoiceKeywordMatcher.matches(hypotheses, prefs.voiceRejectKeyword)) {
                     // 1.2: domyslnie haslo = odrzucenie od razu, bez pytania o potwierdzenie.
                     if (prefs.voiceRejectRequireConfirmation) enterConfirming() else executeReject()
                 } else if (final) {
@@ -229,7 +276,7 @@ class VoiceRejectController(
         override fun onEvent(eventType: Int, params: Bundle?) = Unit
 
         override fun onError(error: Int) {
-            if (!offerVisible) return
+            if (!listeningWanted()) return
             when (error) {
                 SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS,
                 SpeechRecognizer.ERROR_CLIENT -> {
@@ -419,6 +466,29 @@ object RejectActionPerformer {
         if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
         if (bounds.isEmpty) return false
         return tap(service, bounds.exactCenterX(), bounds.exactCenterY())
+    }
+
+    /**
+     * 1.7: gest dwoma palcami (szczypanie) – przyblizenie albo oddalenie mapy pod panelem.
+     * Panel FUJARY jest NOT_TOUCHABLE, wiec gest trafia do aplikacji kurierskiej.
+     */
+    fun pinch(service: AccessibilityService, zoomIn: Boolean, centerXFraction: Float = 0.5f, centerYFraction: Float = 0.4f, durationMs: Long = 420L): Boolean {
+        val m = service.resources.displayMetrics
+        val cx = m.widthPixels * centerXFraction
+        val cy = m.heightPixels * centerYFraction
+        val near = m.widthPixels * 0.06f
+        val far = m.widthPixels * 0.30f
+        val (from, to) = if (zoomIn) near to far else far to near
+        // Ukos (dx = dy * 0.6), zeby nie zlapac poziomego przewijania listy.
+        fun stroke(sign: Float): GestureDescription.StrokeDescription {
+            val path = Path().apply {
+                moveTo(cx + sign * from, cy + sign * from * 0.6f)
+                lineTo(cx + sign * to, cy + sign * to * 0.6f)
+            }
+            return GestureDescription.StrokeDescription(path, 0L, durationMs)
+        }
+        val gesture = GestureDescription.Builder().addStroke(stroke(1f)).addStroke(stroke(-1f)).build()
+        return runCatching { service.dispatchGesture(gesture, null, null) }.getOrDefault(false)
     }
 
     fun tap(service: AccessibilityService, x: Float, y: Float): Boolean {

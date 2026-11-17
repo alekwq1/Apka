@@ -52,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -843,50 +844,113 @@ internal fun WoltDayCard(language: String, date: LocalDate, refresh: Int, compac
     }
 }
 
-/**
- * 1.6: suma wybranego dnia Pyszne + Wolt i PLN/h z czasu pracy tego dnia (Start/Pauza,
- * a bez nich z aktywnosci – przerwy > 25 min nie sa liczone). Dla dzisiaj odswieza sie na zywo.
- */
+/** 1.7: zweryfikowany bilans dnia (Pyszne + Wolt + czas pracy). Odswiezany co ok. 10 s. */
 @Composable
-internal fun CombinedDayTotalCard(language: String, prefs: AppPrefs, date: LocalDate, pyszne: PyszneDaySummary, refresh: Int) {
+internal fun rememberDayAudit(prefs: AppPrefs, date: LocalDate, refresh: Int, cashTipsPln: Double = 0.0): DayAudit {
     val context = LocalContext.current
+    val logStore = remember { PyszneLogStore(context) }
     val orderStore = remember { WoltOrderStore(context) }
     val eventStore = remember { OfferEventStore(context) }
     val workStore = remember { WorkSessionStore(context) }
     val bucket = refresh / 20
-    val events = remember(bucket, date) { eventStore.forDate(date) }
-    val wolt = remember(bucket, date) {
-        WoltDayPartCalculator.calculate(
+    return remember(bucket, date, cashTipsPln) {
+        val now = System.currentTimeMillis()
+        val zus = if (prefs.zusEnabled) prefs.zusPercent else 0.0
+        val events = eventStore.forDate(date)
+        val logs = logStore.forDate(date)
+        val wolts = orderStore.mergedForDate(date)
+        val pyszne = DayAuditCalculator.pyszne(date, logs, logStore.dayReference(date), events, prefs.rulesForPlatform(CourierPlatform.PYSZNE), zus, cashTipsPln)
+        val wolt = DayAuditCalculator.wolt(date, wolts, orderStore.dayTotal(date), events, prefs.rulesForPlatform(CourierPlatform.WOLT), zus)
+        DayAuditCalculator.audit(
             date = date,
-            orders = orderStore.mergedForDate(date),
-            officialDayTotal = orderStore.dayTotal(date),
-            acceptedOffers = events,
-            rules = prefs.rulesForPlatform(CourierPlatform.WOLT),
-            decisionBasis = prefs.decisionBasis,
-            zusPercent = if (prefs.zusEnabled) prefs.zusPercent else 0.0
+            pyszne = pyszne,
+            wolt = wolt,
+            shiftMinutes = workStore.minutesForDate(date, now),
+            activityMillis = DayAuditCalculator.activityMillis(date, events, logs, wolts),
+            nowMillis = now,
+            isToday = date == LocalDate.now()
         )
     }
-    val workMinutes = remember(bucket, date) {
-        val now = System.currentTimeMillis()
-        val activity = events.flatMap { listOfNotNull(it.shownAtMillis, it.decidedAtMillis) }
-        val shift = workStore.minutesForDate(date, now)
-        if (shift > 0) shift else if (date == LocalDate.now()) ActivityWorkTime.minutes(activity, now) else ActivityWorkTime.minutes(activity, activity.maxOrNull() ?: now)
+}
+
+@Composable
+internal fun DayAuditCard(language: String, audit: DayAudit) {
+    if (audit.orders == 0 && audit.workMinutes == 0) return
+    var expanded by remember(audit.date) { mutableStateOf(false) }
+    fun sourceLabel(s: DayPlatformPart.Source) = when (s) {
+        DayPlatformPart.Source.OFFICIAL -> at(language, "✓ oficjalnie", "✓ official", "✓ офіційно", "✓ официально")
+        DayPlatformPart.Source.SAVED -> at(language, "zapisane", "saved", "збережено", "сохранено")
+        DayPlatformPart.Source.LIVE -> at(language, "pomiar FUJARY", "FUJARA measured", "вимір", "замер")
+        DayPlatformPart.Source.ESTIMATE -> at(language, "≈ szacunek", "≈ estimate", "≈ оцінка", "≈ оценка")
+        DayPlatformPart.Source.NONE -> "–"
     }
-    if (wolt.orders == 0 && wolt.grossPln <= 0.0) return
-    val combined = CombinedDayCalculator.combine(pyszne, wolt, workMinutes)
-    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f))) {
-        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(at(language, "RAZEM DZIEŃ · Pyszne + Wolt", "DAY TOTAL · Pyszne + Wolt", "РАЗОМ ДЕНЬ", "ИТОГО ДЕНЬ"), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelLarge)
-            Text(money(combined.netPln) + at(language, " netto", " net", " нетто", " нетто"), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
+    val workLabel = when (audit.workSource) {
+        DayAudit.WorkSource.SHIFT -> at(language, "Start/Pauza", "Start/Pause", "Старт/Пауза", "Старт/Пауза")
+        DayAudit.WorkSource.ACTIVITY -> at(language, "z aktywności", "from activity", "з активності", "по активности")
+        DayAudit.WorkSource.DELIVERIES -> at(language, "suma dostaw", "sum of deliveries", "сума доставок", "сумма доставок")
+        DayAudit.WorkSource.NONE -> "–"
+    }
+    val warnings = audit.allWarnings
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f))
+    ) {
+        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                at(language, "DZIEŃ · Pyszne + Wolt", "DAY · Pyszne + Wolt", "ДЕНЬ", "ДЕНЬ") + if (warnings.isEmpty()) "  ✓" else "  ⚠ ${warnings.size}",
+                color = if (warnings.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFFFFB020),
+                style = MaterialTheme.typography.labelLarge
+            )
+            Row(verticalAlignment = Alignment.Bottom) {
+                Column(Modifier.weight(1f)) {
+                    Text(audit.netPerHour?.let { String.format(plLocale, "%.0f zł/h", it) } ?: "-- zł/h", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
+                    Text(at(language, "netto na godzinę pracy", "net per work hour", "нетто/год", "нетто/час"), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(money(audit.netPln), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
+                    Text(money(audit.grossPln) + at(language, " brutto", " gross", " брутто", " брутто"), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                }
+            }
             Text(
                 listOfNotNull(
-                    at(language, "${combined.orderCount} dostaw", "${combined.orderCount} deliveries", "${combined.orderCount} доставок", "${combined.orderCount} доставок"),
-                    money(combined.grossPln) + at(language, " brutto", " gross", " брутто", " брутто"),
-                    if (workMinutes > 0) WorkAnalytics.formatHours(workMinutes) else null,
-                    combined.netPerHour?.let { String.format(plLocale, "%.0f zł/h", it) }
+                    at(language, "${audit.orders} dostaw", "${audit.orders} deliveries", "${audit.orders} доставок", "${audit.orders} доставок"),
+                    String.format(plLocale, "%.1f km", audit.distanceKm),
+                    audit.netPerKm?.let { String.format(plLocale, "%.2f zł/km", it) }
                 ).joinToString(" · "),
-                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium
+                style = MaterialTheme.typography.bodyMedium
             )
+            Text(
+                at(language, "Praca ", "Work ", "Робота ", "Работа ") + WorkAnalytics.formatHours(audit.workMinutes) + " ($workLabel)" +
+                    (if (audit.deliveryMinutes > 0) at(language, " · w dostawach ", " · delivering ", " · у доставках ", " · в доставках ") + WorkAnalytics.formatHours(audit.deliveryMinutes) else "") +
+                    (audit.utilization?.let { " (${(it * 100).roundToInt()}%)" } ?: ""),
+                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall
+            )
+            if (expanded) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                listOf(audit.pyszne, audit.wolt).filter { it.source != DayPlatformPart.Source.NONE }.forEach { part ->
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text((if (part.platform == CourierPlatform.WOLT) "Wolt" else "Pyszne") + " · " + sourceLabel(part.source), fontWeight = FontWeight.Bold)
+                            Text(
+                                listOfNotNull(
+                                    at(language, "${part.orders} dostaw", "${part.orders} deliveries", "${part.orders} доставок", "${part.orders} доставок"),
+                                    String.format(plLocale, "%.1f km", part.distanceKm),
+                                    if (part.deliveryMinutes > 0) WorkAnalytics.formatHours(part.deliveryMinutes) else null
+                                ).joinToString(" · "),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(money(part.grossPln), fontWeight = FontWeight.Black)
+                            Text(at(language, "netto ", "net ", "нетто ", "нетто ") + money(part.netPln), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+                warnings.forEach { w -> Text("⚠ $w", color = Color(0xFFFFB020), style = MaterialTheme.typography.bodySmall) }
+            } else if (warnings.isNotEmpty()) {
+                Text(at(language, "Dotknij, żeby zobaczyć szczegóły i niezgodności", "Tap for details and mismatches", "Торкнись для деталей", "Нажми для деталей"), color = Color(0xFFFFB020), style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }
@@ -971,6 +1035,19 @@ internal fun AssistantSettingsSection(prefs: AppPrefs, language: String) {
     }
 
     AssistantCard(title = at(language, "Odrzucanie głosem", "Voice decline", "Відхилення голосом", "Отклонение голосом")) {
+        var voiceCommands by remember { mutableStateOf(prefs.voiceCommandsEnabled) }
+        AssistantSwitch(at(language, "Komendy głosowe: zwiń / rozwiń / przybliż / oddal", "Voice commands: collapse / expand / zoom in / zoom out", "Голосові команди", "Голосовые команды"), voiceCommands) { wanted ->
+            if (wanted && !micGranted) micLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            voiceCommands = wanted; prefs.voiceCommandsEnabled = wanted
+        }
+        Text(
+            at(language,
+                "Przy widocznym panelu FUJARA (oferta albo zlecenie w trakcie): „zwiń” – chowa szczegóły, drugi raz cały panel; „rozwiń” – przywraca panel, drugi raz pokazuje szczegóły; „przybliż” / „oddal” – przybliża lub oddala mapę w Wolt / Pyszne (gest dwoma palcami).",
+                "While the FUJARA panel is visible: “collapse”, “expand”, “zoom in”, “zoom out” (pinch on the Wolt / Pyszne map).",
+                "Коли видно панель: «згорни», «розгорни», «наблизь», «віддали».",
+                "Когда видна панель: «сверни», «разверни», «приблизь», «отдали»."),
+            color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall
+        )
         AssistantSwitch(at(language, "Włącz hasło głosowe", "Enable voice keyword", "Увімкнути голосове слово", "Включить голосовое слово"), voiceEnabled) { wanted ->
             if (wanted && !micGranted) {
                 micLauncher.launch(Manifest.permission.RECORD_AUDIO)
@@ -1072,6 +1149,10 @@ internal fun AssistantSettingsSection(prefs: AppPrefs, language: String) {
         var autoDismiss by remember { mutableStateOf(prefs.autoDismissAfterReject) }
         AssistantSwitch(at(language, "Po odrzuceniu głosem zamknij pozostały arkusz gestem", "After voice decline, swipe away leftover sheet", "Після відхилення закрити аркуш жестом", "После отказа закрыть лист жестом"), autoDismiss) {
             autoDismiss = it; prefs.autoDismissAfterReject = it
+        }
+        var compactPanel by remember { mutableStateOf(prefs.overlayCompact) }
+        AssistantSwitch(at(language, "Panel podstawowy: tylko kwota, zł/h i zł/km (mapa i teksty pod ⋯)", "Basic panel: amount, PLN/h, PLN/km only (map and text under ⋯)", "Базова панель: сума, зл/год, зл/км", "Базовая панель: сумма, зл/ч, зл/км"), compactPanel) {
+            compactPanel = it; prefs.overlayCompact = it
         }
         var showMap by remember { mutableStateOf(prefs.showMiniMap) }
         AssistantSwitch(at(language, "Pokazuj mini-mapę w panelu", "Show mini-map in panel", "Показувати міні-мапу", "Показывать мини-карту"), showMap) {
