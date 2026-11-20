@@ -72,6 +72,7 @@ class OverlayController(
     private val amber = Color.rgb(255, 184, 77)
     private val white = Color.rgb(245, 247, 250)
     private val gray = Color.rgb(165, 170, 180)
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
 
     fun show(
         result: Profitability,
@@ -319,22 +320,80 @@ class OverlayController(
         syncDetailsToggle()
     }
 
-    /** Glos "zwiń": najpierw chowa szczegoly, potem caly panel. Zwraca opis wykonanej akcji. */
+    /** 1.8: glos "zwiń" – od razu zwija caly panel (kwota, zł/h, zł/km). */
     fun voiceCollapse(): Boolean {
-        if (!logicallyShown) return false
-        if (prefs.overlayCompact && detailsExpanded) setDetailsExpanded(false) else if (!userCollapsed) collapsePanel() else return false
+        if (!logicallyShown || userCollapsed) return false
+        if (detailsExpanded) detailsExpanded = false
+        collapsePanel()
         return true
     }
 
-    /** Glos "rozwiń": najpierw przywraca zwiniety panel, potem pokazuje szczegoly. */
+    /** 1.8: glos "rozwiń" – przywraca zwiniety panel. */
     fun voiceExpand(): Boolean {
-        if (!logicallyShown) return false
-        when {
-            userCollapsed -> restorePanel()
-            prefs.overlayCompact && !detailsExpanded -> setDetailsExpanded(true)
-            else -> return false
-        }
+        if (!logicallyShown || !userCollapsed) return false
+        restorePanel()
         return true
+    }
+
+    // ---- 1.8: pytanie o timer pracy ----
+    private var timerPromptRoot: View? = null
+    private val hideTimerPromptRunnable = Runnable { hideTimerPrompt() }
+
+    fun isTimerPromptVisible(): Boolean = timerPromptRoot != null
+
+    fun showTimerPrompt(message: String, startLabel: String, laterLabel: String, onStart: () -> Unit, onLater: () -> Unit) {
+        hideTimerPrompt()
+        val box = LinearLayout(service).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(10), dp(10), dp(10))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(18).toFloat()
+                setColor(Color.argb(240, 22, 24, 28))
+                setStroke(dp(2), green)
+            }
+        }
+        box.addView(TextView(service).apply {
+            text = message
+            textSize = 15f
+            setTextColor(white)
+            setTypeface(typeface, Typeface.BOLD)
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        fun button(label: String, color: Int, action: () -> Unit) = TextView(service).apply {
+            text = label
+            textSize = 16f
+            gravity = Gravity.CENTER
+            setTextColor(white)
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = GradientDrawable().apply { cornerRadius = dp(14).toFloat(); setColor(color) }
+            setOnClickListener { hideTimerPrompt(); action() }
+        }
+        box.addView(button(startLabel, green, onStart), LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) })
+        box.addView(button(laterLabel, Color.rgb(70, 74, 82), onLater), LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(6) })
+        val params = WindowManager.LayoutParams(
+            (service.resources.displayMetrics.widthPixels * 0.94f).toInt(),
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            y = dp(56)
+        }
+        if (runCatching { windowManager.addView(box, params) }.isSuccess) {
+            timerPromptRoot = box
+            handler.removeCallbacks(hideTimerPromptRunnable)
+            handler.postDelayed(hideTimerPromptRunnable, 30_000L)
+        }
+    }
+
+    fun hideTimerPrompt() {
+        handler.removeCallbacks(hideTimerPromptRunnable)
+        timerPromptRoot?.let { runCatching { windowManager.removeView(it) } }
+        timerPromptRoot = null
     }
 
     // ---- 1.5: chwilowe ukrycie panelu na czas odczytu rozwinietej karty ----

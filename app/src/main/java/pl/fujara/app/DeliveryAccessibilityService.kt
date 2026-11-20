@@ -716,6 +716,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
             }
             if (platform == CourierPlatform.WOLT) captureWoltData(text, "")
             if (platform != null) noteActiveJobScreen(platform, text)
+            if (platform != null) maybeAskForTimer()
             val applicationName = platform?.displayName
                 ?: if (configuredPackage.isNotBlank() && pkg == configuredPackage) appLabel(pkg) else null
 
@@ -1234,6 +1235,7 @@ class DeliveryAccessibilityService : AccessibilityService() {
         }
 
         // ---- karta nowej oferty ----
+        if (overlay.isTimerPromptVisible()) overlay.hideTimerPrompt()
         val activeJobs = activeJobTracker.displayJobs(nowMillis)
         val pending = if (prefs.decisionTrackingEnabled) {
             decisionTracker.offerVisible(
@@ -1495,7 +1497,8 @@ class DeliveryAccessibilityService : AccessibilityService() {
     /** Zlecenie oznaczone jako dostarczone: Wolt (i inne bez historii) zapisujemy z pomiarem czasu. */
     private fun onJobDelivered(job: ActiveJob, nowMillis: Long) {
         if (job.platform == CourierPlatform.PYSZNE) return // Pyszne ma wlasna historie (auto-zapis szczegolow)
-        if (job.amountPln <= 0.0 && job.restaurant == null) return
+        // 1.8: bez kwoty nie zapisujemy (wczesniej powstawaly wpisy 0,00 zł z samym adresem).
+        if (job.amountPln <= 0.0) return
         val accepted = DecisionAnalytics.localDateTime(job.acceptedAtMillis)
         val duration = ((nowMillis - job.acceptedAtMillis) / 60_000L).toInt().coerceIn(1, 240)
         val order = WoltOrder(
@@ -1520,8 +1523,51 @@ class DeliveryAccessibilityService : AccessibilityService() {
                 "✓ Збережено Wolt: ${order.venue} · ${duration} хв",
                 "✓ Сохранено Wolt: ${order.venue} · ${duration} мин"
             )
-            runCatching { android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_LONG).show() }
+            val today = woltOrderStore.mergedForDate(order.date)
+            showSavedToast(message + "\n" + tr(language, "Wolt dziś: ${today.size} · ${moneyLabel(today.sumOf { it.grossPln })}", "Wolt today: ${today.size} · ${moneyLabel(today.sumOf { it.grossPln })}", "Wolt сьогодні: ${today.size}", "Wolt сегодня: ${today.size}"))
         }
+    }
+
+    /**
+     * 1.8: kurier otwiera Pyszne / Wolt, a timer pracy stoi → pytamy, czy go wlaczyc.
+     * Po odpowiedzi (albo braku) nie pytamy ponownie przez godzine.
+     */
+    private fun maybeAskForTimer() {
+        if (!::overlay.isInitialized || !::workSessionStore.isInitialized || !prefs.askToStartTimer) return
+        if (overlay.isTimerPromptVisible()) return
+        val state = workSessionStore.state()
+        if (state == WorkState.RUNNING) return
+        val now = System.currentTimeMillis()
+        if (now - prefs.lastTimerPromptAtMillis < 60 * 60_000L) return
+        prefs.lastTimerPromptAtMillis = now
+        val language = prefs.languageCode
+        val paused = state == WorkState.PAUSED
+        overlay.showTimerPrompt(
+            message = if (paused) tr(language, "⏱ Timer pracy na pauzie. Wznowić?", "⏱ Work timer paused. Resume?", "⏱ Таймер на паузі. Продовжити?", "⏱ Таймер на паузе. Продолжить?")
+                else tr(language, "⏱ Zaczynasz zmianę? Włączyć timer pracy?", "⏱ Starting a shift? Start the work timer?", "⏱ Починаєш зміну? Увімкнути таймер?", "⏱ Начинаешь смену? Включить таймер?"),
+            startLabel = if (paused) tr(language, "▶ Wznów", "▶ Resume", "▶ Далі", "▶ Дальше") else "▶ Start",
+            laterLabel = tr(language, "Nie", "No", "Ні", "Нет"),
+            onStart = {
+                workSessionStore.start(System.currentTimeMillis())
+                HapticLanguage.record(this)
+                showSavedToast(tr(language, "⏱ Timer pracy włączony – zł/h liczy się od teraz", "⏱ Work timer started", "⏱ Таймер увімкнено", "⏱ Таймер включён"))
+            },
+            onLater = { prefs.lastTimerPromptAtMillis = System.currentTimeMillis() }
+        )
+    }
+
+    private fun moneyLabel(v: Double): String = String.format(java.util.Locale.forLanguageTag("pl-PL"), "%.2f zł", v)
+
+    private var lastSavedToastText: String? = null
+    private var lastSavedToastAt = 0L
+
+    /** Komunikat o zapisie (jak w Pyszne) – bez powtarzania tego samego tekstu co chwile. */
+    private fun showSavedToast(text: String) {
+        val now = System.currentTimeMillis()
+        if (text == lastSavedToastText && now - lastSavedToastAt < 10 * 60_000L) return
+        lastSavedToastText = text
+        lastSavedToastAt = now
+        runCatching { android.widget.Toast.makeText(this, text, android.widget.Toast.LENGTH_LONG).show() }
     }
 
     /** Gesty startuja po przeciwnej stronie niz panel FUJARY, zeby nie trafic w nakladke. */
@@ -1790,7 +1836,9 @@ class DeliveryAccessibilityService : AccessibilityService() {
             VoiceCommand.ZOOM_IN, VoiceCommand.ZOOM_OUT -> {
                 val pkg = rootInActiveWindow?.packageName?.toString().orEmpty()
                 if (!isDeliveryPackage(pkg)) return false
-                RejectActionPerformer.pinch(this, zoomIn = command == VoiceCommand.ZOOM_IN, centerXFraction = 0.5f, centerYFraction = 0.40f)
+                // 1.8: Pyszne ma karte oferty nizej na srodku – gest wyzej; maly krok (~1,5×) zamiast "na ful".
+                val centerY = if (platformForPackage(pkg) == CourierPlatform.PYSZNE) 0.27f else 0.38f
+                RejectActionPerformer.pinch(this, zoomIn = command == VoiceCommand.ZOOM_IN, centerXFraction = 0.5f, centerYFraction = centerY)
             }
         }
     }
@@ -1840,11 +1888,24 @@ class DeliveryAccessibilityService : AccessibilityService() {
         texts.forEach { text ->
             val totals = WoltHistoryParser.parseDailySummary(text)
             if (totals.isNotEmpty() && woltOrderStore.saveDayTotals(totals) > 0) HapticLanguage.record(this)
-            WoltHistoryParser.parseDayDetails(text)?.let { day ->
-                var changed = 0
-                day.totalPln?.let { changed += woltOrderStore.saveDayTotals(listOf(WoltDayTotal(day.date, it))) }
-                changed += woltOrderStore.saveOrders(day.orders)
-                if (changed > 0) HapticLanguage.record(this)
+        }
+        // 1.8: dzien z listy zlecen – bierzemy odczyt zgodny z suma dnia i mowimy, co zapisano.
+        WoltHistoryParser.bestDayDetails(texts)?.let { day ->
+            var changed = 0
+            day.totalPln?.let { changed += woltOrderStore.saveDayTotals(listOf(WoltDayTotal(day.date, it))) }
+            val ordersToSave = if (day.totalPln == null || day.matchesTotal) day.orders else day.orders.filter { day.ordersSum <= day.totalPln + 0.05 }
+            changed += woltOrderStore.saveOrders(ordersToSave)
+            if (changed > 0) HapticLanguage.record(this)
+            run {
+                val merged = woltOrderStore.mergedForDate(day.date)
+                val sum = merged.sumOf { it.grossPln }
+                val check = when {
+                    day.totalPln == null -> ""
+                    kotlin.math.abs(sum - day.totalPln) < 0.06 -> " ✓ zgodne z Wolt"
+                    else -> " ⚠ Wolt pokazuje ${moneyLabel(day.totalPln)}"
+                }
+                val verb = if (changed > 0) "zapisano" else "zapisane"
+                showSavedToast("✓ Wolt ${day.date.dayOfMonth}.${"%02d".format(day.date.monthValue)}: $verb ${merged.size} zleceń · ${moneyLabel(sum)}$check")
             }
         }
         texts.firstOrNull()?.let { noteActiveJobScreen(CourierPlatform.WOLT, it) }

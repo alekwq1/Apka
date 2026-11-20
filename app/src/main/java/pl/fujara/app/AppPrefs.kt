@@ -13,7 +13,28 @@ class AppPrefs(private val context: Context) {
         migrateOverlayDefaultsIfNeeded()
         clearDeprecatedTargetPackageIfNeeded()
         migrateProfitabilityDefaultsV077()
+        migrateDefaultsV18()
     }
+
+    /** 1.8: mapa i automatyczny swipe po adresy wylaczone (kurier ich nie potrzebuje, swipe psul odczyt Wolt). */
+    private fun migrateDefaultsV18() {
+        if (prefs.getBoolean("defaults_v18_applied", false)) return
+        prefs.edit()
+            .putBoolean("show_mini_map", false)
+            .putBoolean("wolt_auto_expand_offer", false)
+            .putBoolean("pyszne_auto_expand_offer", false)
+            .putBoolean("defaults_v18_applied", true)
+            .apply()
+    }
+
+    /** 1.8: pytaj o wlaczenie timera pracy, gdy widze aplikacje kurierska, a timer stoi. */
+    var askToStartTimer: Boolean
+        get() = prefs.getBoolean("ask_to_start_timer", true)
+        set(value) = prefs.edit().putBoolean("ask_to_start_timer", value).apply()
+
+    var lastTimerPromptAtMillis: Long
+        get() = prefs.getLong("last_timer_prompt_at", 0L)
+        set(value) = prefs.edit().putLong("last_timer_prompt_at", value).apply()
 
     var analysisEnabled: Boolean
         get() = prefs.getBoolean("analysis_enabled", true)
@@ -253,7 +274,7 @@ class AppPrefs(private val context: Context) {
 
     /** Pokazuj mini-mape w panelu oferty. */
     var showMiniMap: Boolean
-        get() = prefs.getBoolean("show_mini_map", true)
+        get() = prefs.getBoolean("show_mini_map", false)
         set(value) = prefs.edit().putBoolean("show_mini_map", value).apply()
 
     /** 1.7: panel w widoku podstawowym – kwota, zł/h, zł/km; mapa i teksty dopiero po rozwinięciu. */
@@ -283,12 +304,12 @@ class AppPrefs(private val context: Context) {
 
     /** Wolt: po pojawieniu sie oferty rozwin arkusz gestem, zeby odczytac adresy odbioru i dostawy. */
     var woltAutoExpandOffer: Boolean
-        get() = prefs.getBoolean("wolt_auto_expand_offer", true)
+        get() = prefs.getBoolean("wolt_auto_expand_offer", false)
         set(value) = prefs.edit().putBoolean("wolt_auto_expand_offer", value).apply()
 
     /** Pyszne: przy kilku przystankach rozwin karte, zeby odczytac wszystkie dostawy. */
     var pyszneAutoExpandOffer: Boolean
-        get() = prefs.getBoolean("pyszne_auto_expand_offer", true)
+        get() = prefs.getBoolean("pyszne_auto_expand_offer", false)
         set(value) = prefs.edit().putBoolean("pyszne_auto_expand_offer", value).apply()
 
     /** Po odrzuceniu glosem: jesli zostal "ogon" arkusza oferty, zamknij go gestem. */

@@ -796,16 +796,19 @@ internal fun WoltDayCard(language: String, date: LocalDate, refresh: Int, compac
     val orders = remember(refresh, date) { orderStore.mergedForDate(date) }
     val officialTotal = remember(refresh, date) { orderStore.dayTotal(date) }
     val acceptedEvents = remember(refresh, date) { eventStore.forDate(date).filter { it.platform == CourierPlatform.WOLT && it.decision == OfferDecision.ACCEPTED } }
-    if (orders.isEmpty() && officialTotal == null && acceptedEvents.isEmpty()) return
+    if (orders.isEmpty() && officialTotal == null) return
 
-    val total = officialTotal ?: orders.sumOf { it.grossPln }.takeIf { it > 0 } ?: acceptedEvents.sumOf { it.amountPln }
-    val count = if (orders.isNotEmpty()) orders.size else acceptedEvents.size
-    val km = orders.mapNotNull { it.distanceKm }.sum().takeIf { it > 0 } ?: acceptedEvents.sumOf { it.distanceKm }
+    // 1.8: suma zapisanych zlecen (jak Pyszne); suma dnia z Wolt tylko do kontroli.
+    val total = if (orders.isNotEmpty()) orders.sumOf { it.grossPln } else officialTotal ?: 0.0
+    val count = orders.size
+    val km = orders.mapNotNull { it.distanceKm }.sum()
     val measuredMinutes = orders.mapNotNull { it.durationMinutes }.sum()
     val source = when {
-        officialTotal != null -> at(language, "oficjalnie z Wolt", "official from Wolt", "офіційно з Wolt", "официально из Wolt")
-        orders.any { it.source == WoltOrder.SOURCE_LIVE } -> at(language, "zmierzone przez FUJARĘ", "measured by FUJARA", "виміряно FUJARA", "измерено FUJARA")
-        else -> at(language, "szacunek z przyjętych ofert", "estimate from accepted offers", "оцінка", "оценка")
+        orders.isNotEmpty() && officialTotal != null && kotlin.math.abs(total - officialTotal) < 0.06 -> at(language, "✓ zgodne z Wolt", "✓ matches Wolt", "✓ збігається", "✓ совпадает")
+        orders.isNotEmpty() && officialTotal != null -> at(language, "Wolt pokazuje ", "Wolt shows ", "Wolt: ", "Wolt: ") + money(officialTotal)
+        orders.any { it.source == WoltOrder.SOURCE_OFFICIAL } -> at(language, "z Zarobków Wolt", "from Wolt earnings", "з Wolt", "из Wolt")
+        orders.isNotEmpty() -> at(language, "zapisane po realizacji", "saved after delivery", "збережено", "сохранено")
+        else -> at(language, "suma dnia, brak listy", "day total, no list", "сума дня", "сумма дня")
     }
 
     Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFF00C2E8).copy(alpha = 0.12f))) {
@@ -873,22 +876,19 @@ internal fun rememberDayAudit(prefs: AppPrefs, date: LocalDate, refresh: Int, ca
     }
 }
 
+/**
+ * 1.8: podsumowanie dnia tak, jak liczy kurier: ile z Pyszne, ile z Wolt, razem –
+ * podzielone przez czas z timera pracy (Start/Pauza/Stop).
+ */
 @Composable
 internal fun DayAuditCard(language: String, audit: DayAudit) {
-    if (audit.orders == 0 && audit.workMinutes == 0) return
     var expanded by remember(audit.date) { mutableStateOf(false) }
     fun sourceLabel(s: DayPlatformPart.Source) = when (s) {
-        DayPlatformPart.Source.OFFICIAL -> at(language, "✓ oficjalnie", "✓ official", "✓ офіційно", "✓ официально")
+        DayPlatformPart.Source.OFFICIAL -> at(language, "✓ potwierdzone", "✓ confirmed", "✓ підтверджено", "✓ подтверждено")
         DayPlatformPart.Source.SAVED -> at(language, "zapisane", "saved", "збережено", "сохранено")
-        DayPlatformPart.Source.LIVE -> at(language, "pomiar FUJARY", "FUJARA measured", "вимір", "замер")
+        DayPlatformPart.Source.LIVE -> at(language, "zapisane po realizacji", "saved after delivery", "збережено", "сохранено")
         DayPlatformPart.Source.ESTIMATE -> at(language, "≈ szacunek", "≈ estimate", "≈ оцінка", "≈ оценка")
-        DayPlatformPart.Source.NONE -> "–"
-    }
-    val workLabel = when (audit.workSource) {
-        DayAudit.WorkSource.SHIFT -> at(language, "Start/Pauza", "Start/Pause", "Старт/Пауза", "Старт/Пауза")
-        DayAudit.WorkSource.ACTIVITY -> at(language, "z aktywności", "from activity", "з активності", "по активности")
-        DayAudit.WorkSource.DELIVERIES -> at(language, "suma dostaw", "sum of deliveries", "сума доставок", "сумма доставок")
-        DayAudit.WorkSource.NONE -> "–"
+        DayPlatformPart.Source.NONE -> at(language, "brak", "none", "немає", "нет")
     }
     val warnings = audit.allWarnings
     Card(
@@ -896,60 +896,54 @@ internal fun DayAuditCard(language: String, audit: DayAudit) {
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f))
     ) {
-        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                at(language, "DZIEŃ · Pyszne + Wolt", "DAY · Pyszne + Wolt", "ДЕНЬ", "ДЕНЬ") + if (warnings.isEmpty()) "  ✓" else "  ⚠ ${warnings.size}",
+                at(language, "PODSUMOWANIE DNIA", "DAY SUMMARY", "ПІДСУМОК ДНЯ", "ИТОГ ДНЯ") + if (warnings.isEmpty()) "  ✓" else "  ⚠ ${warnings.size}",
                 color = if (warnings.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFFFFB020),
                 style = MaterialTheme.typography.labelLarge
             )
-            Row(verticalAlignment = Alignment.Bottom) {
-                Column(Modifier.weight(1f)) {
-                    Text(audit.netPerHour?.let { String.format(plLocale, "%.0f zł/h", it) } ?: "-- zł/h", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
-                    Text(at(language, "netto na godzinę pracy", "net per work hour", "нетто/год", "нетто/час"), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(money(audit.netPln), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
-                    Text(money(audit.grossPln) + at(language, " brutto", " gross", " брутто", " брутто"), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+            listOf(audit.pyszne, audit.wolt).forEach { part ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(if (part.platform == CourierPlatform.WOLT) "Wolt" else "Pyszne", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            at(language, "${part.orders} zleceń", "${part.orders} orders", "${part.orders} замовлень", "${part.orders} заказов") + " · " + sourceLabel(part.source),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    Text(money(part.grossPln), fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleLarge)
                 }
             }
-            Text(
-                listOfNotNull(
-                    at(language, "${audit.orders} dostaw", "${audit.orders} deliveries", "${audit.orders} доставок", "${audit.orders} доставок"),
-                    String.format(plLocale, "%.1f km", audit.distanceKm),
-                    audit.netPerKm?.let { String.format(plLocale, "%.2f zł/km", it) }
-                ).joinToString(" · "),
-                style = MaterialTheme.typography.bodyMedium
-            )
-            Text(
-                at(language, "Praca ", "Work ", "Робота ", "Работа ") + WorkAnalytics.formatHours(audit.workMinutes) + " ($workLabel)" +
-                    (if (audit.deliveryMinutes > 0) at(language, " · w dostawach ", " · delivering ", " · у доставках ", " · в доставках ") + WorkAnalytics.formatHours(audit.deliveryMinutes) else "") +
-                    (audit.utilization?.let { " (${(it * 100).roundToInt()}%)" } ?: ""),
-                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall
-            )
-            if (expanded) {
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-                listOf(audit.pyszne, audit.wolt).filter { it.source != DayPlatformPart.Source.NONE }.forEach { part ->
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text((if (part.platform == CourierPlatform.WOLT) "Wolt" else "Pyszne") + " · " + sourceLabel(part.source), fontWeight = FontWeight.Bold)
-                            Text(
-                                listOfNotNull(
-                                    at(language, "${part.orders} dostaw", "${part.orders} deliveries", "${part.orders} доставок", "${part.orders} доставок"),
-                                    String.format(plLocale, "%.1f km", part.distanceKm),
-                                    if (part.deliveryMinutes > 0) WorkAnalytics.formatHours(part.deliveryMinutes) else null
-                                ).joinToString(" · "),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text(money(part.grossPln), fontWeight = FontWeight.Black)
-                            Text(at(language, "netto ", "net ", "нетто ", "нетто ") + money(part.netPln), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(at(language, "Razem", "Total", "Разом", "Итого") + " · ${audit.orders}", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                Text(money(audit.grossPln), fontWeight = FontWeight.Black, style = MaterialTheme.typography.headlineSmall)
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+                Column(Modifier.weight(1f)) {
+                    Text(at(language, "Czas pracy (timer)", "Work time (timer)", "Час роботи", "Время работы"), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                    Text(if (audit.workMinutes > 0) WorkAnalytics.formatHours(audit.workMinutes) else at(language, "timer wyłączony", "timer off", "таймер вимкнено", "таймер выключен"), fontWeight = FontWeight.Bold)
                 }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(audit.grossPerHour?.let { String.format(plLocale, "%.0f zł/h", it) } ?: "-- zł/h", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
+                    Text(
+                        at(language, "netto ", "net ", "нетто ", "нетто ") + (audit.netPerHour?.let { String.format(plLocale, "%.0f zł/h", it) } ?: "--") + " · " + money(audit.netPln),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+            if (expanded) {
+                Text(
+                    listOfNotNull(
+                        String.format(plLocale, "%.1f km", audit.distanceKm),
+                        audit.netPerKm?.let { String.format(plLocale, "%.2f zł/km netto", it) },
+                        if (audit.deliveryMinutes > 0) at(language, "w dostawach ", "delivering ", "у доставках ", "в доставках ") + WorkAnalytics.formatHours(audit.deliveryMinutes) else null
+                    ).joinToString(" · "),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall
+                )
                 warnings.forEach { w -> Text("⚠ $w", color = Color(0xFFFFB020), style = MaterialTheme.typography.bodySmall) }
             } else if (warnings.isNotEmpty()) {
-                Text(at(language, "Dotknij, żeby zobaczyć szczegóły i niezgodności", "Tap for details and mismatches", "Торкнись для деталей", "Нажми для деталей"), color = Color(0xFFFFB020), style = MaterialTheme.typography.bodySmall)
+                Text(at(language, "Dotknij – szczegóły i niezgodności", "Tap for details", "Торкнись для деталей", "Нажми для деталей"), color = Color(0xFFFFB020), style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -1154,9 +1148,9 @@ internal fun AssistantSettingsSection(prefs: AppPrefs, language: String) {
         AssistantSwitch(at(language, "Panel podstawowy: tylko kwota, zł/h i zł/km (mapa i teksty pod ⋯)", "Basic panel: amount, PLN/h, PLN/km only (map and text under ⋯)", "Базова панель: сума, зл/год, зл/км", "Базовая панель: сумма, зл/ч, зл/км"), compactPanel) {
             compactPanel = it; prefs.overlayCompact = it
         }
-        var showMap by remember { mutableStateOf(prefs.showMiniMap) }
-        AssistantSwitch(at(language, "Pokazuj mini-mapę w panelu", "Show mini-map in panel", "Показувати міні-мапу", "Показывать мини-карту"), showMap) {
-            showMap = it; prefs.showMiniMap = it
+        var askTimer by remember { mutableStateOf(prefs.askToStartTimer) }
+        AssistantSwitch(at(language, "Pytaj o włączenie timera pracy po otwarciu Pyszne / Wolt", "Ask to start the work timer when Pyszne / Wolt opens", "Питати про таймер роботи", "Спрашивать про таймер работы"), askTimer) {
+            askTimer = it; prefs.askToStartTimer = it
         }
         var mapTiles by remember { mutableStateOf(prefs.mapTilesEnabled) }
         AssistantSwitch(at(language, "Mini-mapa w panelu z podkładem OpenStreetMap", "Mini-map in panel with OpenStreetMap tiles", "Міні-мапа з OSM", "Мини-карта с OSM"), mapTiles) {

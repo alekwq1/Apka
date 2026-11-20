@@ -251,40 +251,27 @@ object DayAuditCalculator {
             // Brak km przy czesci zlecen – uzupelniamy srednia.
             return known.sum() / known.size * list.size
         }
+        // 1.8: tak jak Pyszne – suma zapisanych zlecen (po realizacji + potwierdzone w Zarobkach Wolt).
+        // Suma dnia z Wolt sluzy tylko do sprawdzenia.
         val count: Int
         val gross: Double
         val km: Double
         val source: DayPlatformPart.Source
         when {
-            officialDayTotal != null && officialDayTotal > 0.0 -> {
-                gross = officialDayTotal
-                count = maxOf(day.size, offers.size.takeIf { day.isEmpty() } ?: 0, 1)
-                km = kmOf(day)
-                source = DayPlatformPart.Source.OFFICIAL
-                if (official.isNotEmpty() && kotlin.math.abs(official.sumOf { it.grossPln } - officialDayTotal) > 1.0) {
-                    warnings += "Wolt: suma dnia ${money(officialDayTotal)}, a z listy zleceń ${money(official.sumOf { it.grossPln })} – przewiń listę dnia w Wolt"
-                }
-                if (day.isEmpty()) warnings += "Wolt: jest suma dnia, ale brak listy zleceń – otwórz dzień w Zarobkach Wolt"
-            }
-            official.isNotEmpty() -> {
-                gross = ordersGross; count = day.size; km = kmOf(day)
-                source = DayPlatformPart.Source.OFFICIAL
-                if (live.isNotEmpty()) warnings += "Wolt: ${live.size} zleceń tylko z pomiaru FUJARY (brak w historii Wolt)"
-            }
             day.isNotEmpty() -> {
                 gross = ordersGross; count = day.size; km = kmOf(day)
-                source = DayPlatformPart.Source.LIVE
-                warnings += "Wolt: kwoty z pomiaru FUJARY – potwierdź w Wolt → Zarobki"
+                source = if (official.isNotEmpty()) DayPlatformPart.Source.OFFICIAL else DayPlatformPart.Source.LIVE
+                if (officialDayTotal != null && officialDayTotal > 0.0 && kotlin.math.abs(ordersGross - officialDayTotal) > 0.06) {
+                    warnings += "Wolt pokazuje ${money(officialDayTotal)}, zapisane ${money(ordersGross)} – otwórz ten dzień w Wolt → Zarobki"
+                }
+                if (official.isEmpty()) warnings += "Wolt: ${live.size} zleceń zapisanych po realizacji – potwierdzą się po otwarciu dnia w Wolt → Zarobki"
             }
-            offers.isNotEmpty() -> {
-                gross = offers.sumOf { it.amountPln }; count = offers.size; km = offersKm
-                source = DayPlatformPart.Source.ESTIMATE
-                warnings += "Wolt: kwota szacunkowa z przyjętych ofert (${offers.size})"
+            officialDayTotal != null && officialDayTotal > 0.0 -> {
+                gross = officialDayTotal; count = offers.size; km = offersKm
+                source = DayPlatformPart.Source.OFFICIAL
+                warnings += "Wolt: jest suma dnia, ale brak listy zleceń – otwórz dzień w Wolt → Zarobki"
             }
             else -> return DayPlatformPart(CourierPlatform.WOLT, 0, 0.0, 0.0, 0, 0.0, DayPlatformPart.Source.NONE, emptyList())
-        }
-        if (offers.size > count && source != DayPlatformPart.Source.ESTIMATE) {
-            warnings += "Wolt: przyjęto ${offers.size} ofert, policzono $count zleceń"
         }
         return DayPlatformPart(CourierPlatform.WOLT, count, gross, km, measured, net(gross, km, rules, zusPercent), source, warnings)
     }
@@ -302,20 +289,16 @@ object DayAuditCalculator {
         val deliveries = pyszne.deliveryMinutes + wolt.deliveryMinutes
         val activityEnd = if (isToday) nowMillis else (activityMillis.maxOrNull() ?: nowMillis)
         val activity = ActivityWorkTime.minutes(activityMillis, activityEnd)
-        val (work, source) = when {
-            shiftMinutes > 0 -> shiftMinutes to DayAudit.WorkSource.SHIFT
-            activity > 0 -> maxOf(activity, deliveries) to DayAudit.WorkSource.ACTIVITY
-            deliveries > 0 -> deliveries to DayAudit.WorkSource.DELIVERIES
-            else -> 0 to DayAudit.WorkSource.NONE
+        // 1.8: zł/h dzielimy wylacznie przez czas z timera (Start/Pauza/Stop) – tak jak chce kurier.
+        val (work, source) = if (shiftMinutes > 0) shiftMinutes to DayAudit.WorkSource.SHIFT else 0 to DayAudit.WorkSource.NONE
+        if (shiftMinutes <= 0 && (activity > 0 || deliveries > 0)) {
+            warnings += "Timer pracy nie był włączony – zł/h się nie policzy (aktywność ok. ${WorkAnalytics.formatHours(maxOf(activity, deliveries))})"
         }
         if (source == DayAudit.WorkSource.SHIFT && deliveries > shiftMinutes + 15) {
             warnings += "Czas dostaw (${WorkAnalytics.formatHours(deliveries)}) dłuższy niż czas pracy (${WorkAnalytics.formatHours(shiftMinutes)}) – czy Start był włączony od początku?"
         }
         if (source == DayAudit.WorkSource.SHIFT && activity > shiftMinutes + 30) {
             warnings += "Aktywność w aplikacjach ${WorkAnalytics.formatHours(activity)}, a Start/Pauza ${WorkAnalytics.formatHours(shiftMinutes)} – możliwe, że zapomniałeś włączyć Start"
-        }
-        if (source != DayAudit.WorkSource.SHIFT && work > 0) {
-            warnings += "Czas pracy liczony z aktywności (bez Start) – przerwy > 25 min pominięte"
         }
         val gross = pyszne.grossPln + wolt.grossPln
         if (work >= 30 && gross / (work / 60.0) > 150.0) {

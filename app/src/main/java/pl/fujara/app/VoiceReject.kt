@@ -52,6 +52,36 @@ class VoiceRejectController(
     private fun listeningWanted(): Boolean =
         sessionActive && ((offerVisible && prefs.voiceRejectEnabled) || prefs.voiceCommandsEnabled)
     private var consecutiveErrors = 0
+    /** 1.8: ostatni sygnal od rozpoznawacza – straznik restartuje nasluch, gdy ucichnie. */
+    private var lastRecognizerEventAt = 0L
+    private var stateChangedAt = 0L
+    private val watchdog = object : Runnable {
+        override fun run() {
+            if (!listeningWanted()) return
+            val now = android.os.SystemClock.elapsedRealtime()
+            when (state) {
+                VoiceState.LISTENING, VoiceState.CONFIRMING -> if (now - lastRecognizerEventAt > 12_000L) {
+                    runCatching { recognizer?.destroy() }
+                    recognizer = null
+                    startListening(state == VoiceState.CONFIRMING && offerVisible)
+                }
+                VoiceState.EXECUTING -> if (now - stateChangedAt > 4_000L) startListening(false)
+                VoiceState.UNAVAILABLE -> if (now - stateChangedAt > 20_000L && hasPermission()) {
+                    consecutiveErrors = 0
+                    runCatching { recognizer?.destroy() }
+                    recognizer = null
+                    startListening(false)
+                }
+                VoiceState.OFF -> startListening(false)
+            }
+            handler.postDelayed(this, 4_000L)
+        }
+    }
+
+    private fun armWatchdog() {
+        handler.removeCallbacks(watchdog)
+        handler.postDelayed(watchdog, 4_000L)
+    }
     private var confirmDeadline: Runnable? = null
     private var restartRunnable: Runnable? = null
 
@@ -86,7 +116,9 @@ class VoiceRejectController(
 
     private fun startSessionIfNeeded() {
         if (!listeningWanted()) return
-        if (state == VoiceState.LISTENING || state == VoiceState.CONFIRMING || state == VoiceState.EXECUTING) return
+        armWatchdog()
+        if (state == VoiceState.LISTENING || state == VoiceState.CONFIRMING) return
+        if (state == VoiceState.EXECUTING && android.os.SystemClock.elapsedRealtime() - stateChangedAt < 3_000L) return
         if (!hasPermission() || !SpeechRecognizer.isRecognitionAvailable(service)) {
             setState(VoiceState.UNAVAILABLE)
             return
@@ -111,6 +143,7 @@ class VoiceRejectController(
     }
 
     private fun setState(newState: VoiceState, hint: String? = null) {
+        if (newState != state) stateChangedAt = android.os.SystemClock.elapsedRealtime()
         state = newState
         onStateChanged(newState, hint)
     }
@@ -137,6 +170,7 @@ class VoiceRejectController(
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
         }
         runCatching { speech.cancel() }
+        lastRecognizerEventAt = android.os.SystemClock.elapsedRealtime()
         runCatching { speech.startListening(intent) }
             .onFailure { setState(VoiceState.UNAVAILABLE) }
             .onSuccess { setState(if (confirmMode) VoiceState.CONFIRMING else VoiceState.LISTENING) }
@@ -151,6 +185,7 @@ class VoiceRejectController(
     }
 
     private fun stopAll() {
+        handler.removeCallbacks(watchdog)
         restartRunnable?.let(handler::removeCallbacks)
         restartRunnable = null
         confirmDeadline?.let(handler::removeCallbacks)
@@ -159,7 +194,11 @@ class VoiceRejectController(
     }
 
     private fun handleHypotheses(hypotheses: List<String>, final: Boolean) {
-        if (hypotheses.isEmpty()) return
+        if (hypotheses.isEmpty()) {
+            // 1.8: pusty wynik koncowy zostawial nasluch "martwy" (stan LISTENING bez rozpoznawacza).
+            if (final) scheduleRestart(200L, confirmMode = state == VoiceState.CONFIRMING)
+            return
+        }
         when (state) {
             VoiceState.LISTENING -> {
                 val command = if (prefs.voiceCommandsEnabled) VoiceCommandMatcher.parse(hypotheses) else null
@@ -268,14 +307,15 @@ class VoiceRejectController(
     }
 
     private val listener = object : RecognitionListener {
-        override fun onReadyForSpeech(params: Bundle?) = Unit
-        override fun onBeginningOfSpeech() = Unit
-        override fun onRmsChanged(rmsdB: Float) = Unit
+        override fun onReadyForSpeech(params: Bundle?) { lastRecognizerEventAt = android.os.SystemClock.elapsedRealtime() }
+        override fun onBeginningOfSpeech() { lastRecognizerEventAt = android.os.SystemClock.elapsedRealtime() }
+        override fun onRmsChanged(rmsdB: Float) { lastRecognizerEventAt = android.os.SystemClock.elapsedRealtime() }
         override fun onBufferReceived(buffer: ByteArray?) = Unit
         override fun onEndOfSpeech() = Unit
         override fun onEvent(eventType: Int, params: Bundle?) = Unit
 
         override fun onError(error: Int) {
+            lastRecognizerEventAt = android.os.SystemClock.elapsedRealtime()
             if (!listeningWanted()) return
             when (error) {
                 SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS,
@@ -305,6 +345,7 @@ class VoiceRejectController(
         }
 
         override fun onResults(results: Bundle?) {
+            lastRecognizerEventAt = android.os.SystemClock.elapsedRealtime()
             consecutiveErrors = 0
             val list = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
             handleHypotheses(list, final = true)
@@ -472,12 +513,13 @@ object RejectActionPerformer {
      * 1.7: gest dwoma palcami (szczypanie) – przyblizenie albo oddalenie mapy pod panelem.
      * Panel FUJARY jest NOT_TOUCHABLE, wiec gest trafia do aplikacji kurierskiej.
      */
-    fun pinch(service: AccessibilityService, zoomIn: Boolean, centerXFraction: Float = 0.5f, centerYFraction: Float = 0.4f, durationMs: Long = 420L): Boolean {
+    fun pinch(service: AccessibilityService, zoomIn: Boolean, centerXFraction: Float = 0.5f, centerYFraction: Float = 0.4f, durationMs: Long = 550L): Boolean {
         val m = service.resources.displayMetrics
         val cx = m.widthPixels * centerXFraction
         val cy = m.heightPixels * centerYFraction
-        val near = m.widthPixels * 0.06f
-        val far = m.widthPixels * 0.30f
+        // 1.8: krok ok. 1,5× (wczesniej 5× – oddalalo od razu do konca).
+        val near = m.widthPixels * 0.12f
+        val far = m.widthPixels * 0.18f
         val (from, to) = if (zoomIn) near to far else far to near
         // Ukos (dx = dy * 0.6), zeby nie zlapac poziomego przewijania listy.
         fun stroke(sign: Float): GestureDescription.StrokeDescription {

@@ -45,7 +45,35 @@ data class WoltOrder(
     }
 }
 
-data class WoltDayDetails(val date: LocalDate, val totalPln: Double?, val orders: List<WoltOrder>)
+data class WoltDayDetails(val date: LocalDate, val totalPln: Double?, val orders: List<WoltOrder>) {
+    val ordersSum: Double get() = orders.sumOf { it.grossPln }
+    val matchesTotal: Boolean get() = totalPln != null && orders.isNotEmpty() && kotlin.math.abs(ordersSum - totalPln) < 0.06
+}
+
+/** 1.8: odsiew smieci z odczytu Wolt (pasek statusu, naglowek z data, okienko nawigacji). */
+object WoltOrderSanity {
+    private val monthDate = Regex("""(?i)\b\d{1,2}\s+(sty|lut|mar|kwi|maj|cze|lip|sie|wrz|pa[zź]|lis|gru)\w*\s+\d{4}\b""")
+    private val navigation = Regex("""(?i)kieruj|w\s*kierunku|skr[eę][cć]\s+w|zjed[zź]|nawigac|[↑↗↖←→↙↘]""")
+    private val statusBar = Regex("""^\d{1,2}:\d{2}\b.*\d""")
+
+    fun isGarbageVenue(venue: String): Boolean {
+        val v = venue.trim()
+        if (v.isBlank()) return true
+        if (monthDate.containsMatchIn(v) || navigation.containsMatchIn(v) || statusBar.containsMatchIn(v)) return true
+        val letters = v.count { it.isLetter() }
+        return letters < 3
+    }
+
+    /** Usuwa smieci i "zlecenie" rowne sumie dnia, gdy reszta juz sie do niej sumuje. */
+    fun clean(orders: List<WoltOrder>, dayTotal: Double?): List<WoltOrder> {
+        val ok = orders.filter { it.grossPln > 0.0 && (it.source == WoltOrder.SOURCE_LIVE || !isGarbageVenue(it.venue)) }
+        if (dayTotal == null || ok.size < 2) return ok
+        val suspicious = ok.filter { kotlin.math.abs(it.grossPln - dayTotal) < 0.06 }
+        return ok.filterNot { s ->
+            s in suspicious && kotlin.math.abs(ok.filter { it !== s }.sumOf { it.grossPln } - dayTotal) < 0.06 * ok.size
+        }
+    }
+}
 
 object WoltHistoryParser {
     private val amount = Regex("""(\d{1,3}(?:[   ]\d{3})*|\d{1,6})[,.](\d{2})\s*(?:zł|zl|PLN)""", RegexOption.IGNORE_CASE)
@@ -151,7 +179,9 @@ object WoltHistoryParser {
         val total = lines.drop(headerLineIndex + 1).take(2).firstNotNullOfOrNull { amount.find(it)?.let(::money) }
 
         val ordersStart = lines.indexOfFirst { Regex("""(?i)zrealizowane\s+zam[oó]wienia|completed\s+orders""").containsMatchIn(it) }
-        val body = if (ordersStart >= 0) lines.drop(ordersStart + 1) else lines
+        // 1.8: nigdy nie czytamy naglowka (data + suma dnia) ani paska statusu jako zlecenia.
+        val totalLine = if (total != null) lines.drop(headerLineIndex + 1).take(2).indexOfFirst { amount.containsMatchIn(it) }.let { if (it < 0) headerLineIndex else headerLineIndex + 1 + it } else headerLineIndex
+        val body = lines.drop(maxOf(ordersStart + 1, totalLine + 1, 0))
         val orders = mutableListOf<WoltOrder>()
 
         var venue: String? = null
@@ -159,7 +189,11 @@ object WoltHistoryParser {
         var km: Double? = null
         var stops = 1
         fun flush(amountPln: Double) {
-            val v = venue?.replace(bundle, "")?.replace(Regex("""\s+"""), " ")?.trim()?.takeIf { it.isNotBlank() } ?: return
+            val v = venue?.replace(bundle, "")?.replace(Regex("""\s+"""), " ")?.trim()?.takeIf { it.isNotBlank() }
+            if (v == null || WoltOrderSanity.isGarbageVenue(v) || amountPln <= 0.0) {
+                venue = null; minute = null; km = null; stops = 1
+                return
+            }
             val m = minute ?: return
             orders += WoltOrder(date, m, v, amountPln, km, stops)
             venue = null; minute = null; km = null; stops = 1
@@ -196,7 +230,17 @@ object WoltHistoryParser {
             }
             if (line.length in 1..80) addVenueText(line)
         }
-        return WoltDayDetails(date, total, orders.distinctBy { it.key })
+        return WoltDayDetails(date, total, WoltOrderSanity.clean(orders.distinctBy { it.key }, total))
+    }
+
+    /**
+     * Z kilku odczytow tego samego ekranu (drzewo dostepnosci, OCR) wybieramy ten, ktorego
+     * zlecenia sumuja sie do sumy dnia; OCR bywa zasmiecony paskiem statusu i nawigacja.
+     */
+    fun bestDayDetails(texts: List<String>): WoltDayDetails? {
+        val parsed = texts.mapNotNull { parseDayDetails(it) }
+        if (parsed.isEmpty()) return null
+        return parsed.firstOrNull { it.matchesTotal } ?: parsed.maxByOrNull { d -> d.orders.size - if (d.totalPln != null && d.orders.sumOf { it.grossPln } > d.totalPln + 0.05) 100 else 0 }
     }
 }
 
@@ -272,7 +316,7 @@ class WoltOrderStore(context: Context) {
      * Zlecenia dnia bez duplikatow: oficjalny wpis Wolt i zmierzony przez FUJARE wpis "live"
      * o tej samej kwocie sa laczone (kwota/dystans z Wolt, czas realizacji z pomiaru).
      */
-    fun mergedForDate(date: LocalDate): List<WoltOrder> = WoltOrderMerger.merge(ordersForDate(date))
+    fun mergedForDate(date: LocalDate): List<WoltOrder> = WoltOrderMerger.merge(WoltOrderSanity.clean(ordersForDate(date), dayTotal(date)))
 
     /** Zapis zmierzonego zlecenia (akceptacja → dostarczone). Zwraca true, gdy dodano nowy wpis. */
     fun saveLive(order: WoltOrder): Boolean = saveOrders(listOf(order.copy(source = WoltOrder.SOURCE_LIVE))) > 0
@@ -395,7 +439,10 @@ object WoltOrderMerger {
         val live = orders.filter { it.source == WoltOrder.SOURCE_LIVE }.toMutableList()
         val out = mutableListOf<WoltOrder>()
         official.forEach { off ->
+            // Zmierzony wpis "live" ma nazwe z ekranu zlecenia (czasem adres), wiec laczymy tez po kwocie.
             val match = live.firstOrNull { it.matchKey == off.matchKey && kotlin.math.abs(it.minuteOfDay - off.minuteOfDay) <= 90 }
+                ?: live.filter { kotlin.math.abs(it.grossPln - off.grossPln) <= 1.0 && kotlin.math.abs(it.minuteOfDay - off.minuteOfDay) <= 120 }
+                    .minByOrNull { kotlin.math.abs(it.minuteOfDay - off.minuteOfDay) }
             if (match != null) {
                 live.remove(match)
                 out += off.copy(durationMinutes = match.durationMinutes, acceptedAtMillis = match.acceptedAtMillis, deliveredAtMillis = match.deliveredAtMillis)
